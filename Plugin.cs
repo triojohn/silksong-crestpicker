@@ -40,6 +40,7 @@ public sealed class Plugin : BaseUnityPlugin
     private ConfigEntry<KeyboardShortcut> _testHotkey = null!;
 
     private bool _choosing;
+    private bool _loggedAlive;
     private List<ToolCrest> _choices = new List<ToolCrest>();
 
     private void Awake()
@@ -49,7 +50,7 @@ public sealed class Plugin : BaseUnityPlugin
         Probe.Enabled = Config.Bind("Probe", "Enabled", true,
             "Log dialogue FSMs of early scenes and the collectable/tool name lists.").Value;
 
-        _grantAllCrests = Config.Bind("General", "GrantAllCrests", false,
+        _grantAllCrests = Config.Bind("General", "GrantAllCrests", true,
             "Выдавать все 7 знаков независимо от сейва");
         _testHotkey = Config.Bind("General", "TestHotkey", new KeyboardShortcut(KeyCode.F9),
             "Клавиша тестового выбора знака");
@@ -64,6 +65,12 @@ public sealed class Plugin : BaseUnityPlugin
 
     private void Update()
     {
+        if (!_loggedAlive)
+        {
+            _loggedAlive = true;
+            Log.LogInfo($"[CREST] Update alive (gameState={DescribeGameState()}).");
+        }
+
         if (!IsInGame())
         {
             return;
@@ -77,8 +84,16 @@ public sealed class Plugin : BaseUnityPlugin
 
         if (_testHotkey.Value.IsDown())
         {
+            Log.LogInfo($"[CREST] Hotkey {_testHotkey.Value} pressed.");
             BeginSelection();
         }
+    }
+
+    /// <summary>Current game state for diagnostics, never throws.</summary>
+    private static string DescribeGameState()
+    {
+        GameManager? manager = GameManager.instance;
+        return manager == null ? "no GameManager" : manager.GameState.ToString();
     }
 
     /// <summary>True only while a loaded scene is being played.</summary>
@@ -124,14 +139,19 @@ public sealed class Plugin : BaseUnityPlugin
 
         for (int i = 0; i < 7; i++)
         {
-            if (!Input.GetKeyDown(KeyCode.Alpha1 + i))
+            bool pressed = Input.GetKeyDown(KeyCode.Alpha1 + i) || Input.GetKeyDown(KeyCode.Keypad1 + i);
+            if (!pressed)
             {
                 continue;
             }
 
+            Log.LogInfo($"[CREST] Digit {i + 1} pressed (gameState={DescribeGameState()}).");
+
             if (i >= _choices.Count)
             {
-                Log.LogWarning($"[CREST] No crest at position {i + 1}.");
+                Log.LogWarning(
+                    $"[CREST] No crest at position {i + 1} (only {_choices.Count} selectable; " +
+                    "set GrantAllCrests=true in the config to offer all crests).");
                 return;
             }
 
