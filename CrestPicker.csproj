@@ -47,6 +47,22 @@
       <HintPath>$(GameManagedDir)/UnityEngine.InputLegacyModule.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <Reference Include="UnityEngine.UI">
+      <HintPath>$(GameManagedDir)/UnityEngine.UI.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.UIModule">
+      <HintPath>$(GameManagedDir)/UnityEngine.UIModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.TextRenderingModule">
+      <HintPath>$(GameManagedDir)/UnityEngine.TextRenderingModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="TeamCherry.Localization">
+      <HintPath>$(GameManagedDir)/TeamCherry.Localization.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
     <Reference Include="PlayMaker">
       <HintPath>$(GameManagedDir)/PlayMaker.dll</HintPath>
       <Private>false</Private>

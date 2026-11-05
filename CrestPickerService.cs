@@ -44,6 +44,35 @@ internal static class CrestPickerService
     }
 
     /// <summary>
+    /// Returns the label to show for a crest: the localised display name when the
+    /// game provides one, otherwise the asset name.
+    /// </summary>
+    /// <param name="crest">Crest to label; may be null.</param>
+    /// <returns>Non-empty label when possible.</returns>
+    internal static string GetLabel(ToolCrest crest)
+    {
+        if (crest == null)
+        {
+            return string.Empty;
+        }
+
+        try
+        {
+            string localised = crest.DisplayName;
+            if (!string.IsNullOrWhiteSpace(localised))
+            {
+                return localised;
+            }
+        }
+        catch (Exception ex)
+        {
+            Plugin.Log.LogWarning($"[CREST] DisplayName lookup failed for '{crest.name}': {ex.Message}");
+        }
+
+        return crest.name ?? string.Empty;
+    }
+
+    /// <summary>
     /// Unlocks the crest if needed, equips it and forces the game to refresh
     /// equipped state and the hero's tool bindings.
     /// </summary>

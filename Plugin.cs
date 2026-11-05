@@ -1,4 +1,3 @@
-using System.Collections.Generic;
 using BepInEx;
 using BepInEx.Configuration;
 using BepInEx.Logging;
@@ -29,19 +28,12 @@ public sealed class Plugin : BaseUnityPlugin
     /// <summary>Shared log source for static patch code.</summary>
     internal static ManualLogSource Log = null!;
 
-    private static readonly string[] ChoiceKeys =
-    {
-        "1", "2", "3", "4", "5", "6", "7",
-    };
-
     private Harmony? _harmony;
 
     private ConfigEntry<bool> _grantAllCrests = null!;
     private ConfigEntry<KeyboardShortcut> _testHotkey = null!;
 
-    private bool _choosing;
     private bool _loggedAlive;
-    private List<ToolCrest> _choices = new List<ToolCrest>();
 
     private void Awake()
     {
@@ -56,6 +48,7 @@ public sealed class Plugin : BaseUnityPlugin
             "Клавиша тестового выбора знака");
 
         CrestPickerService.GrantAllCrests = _grantAllCrests.Value;
+        CrestSelectMenu.RunSelfCheck();
 
         _harmony = new Harmony(PluginGuid);
         _harmony.PatchAll();
@@ -71,21 +64,15 @@ public sealed class Plugin : BaseUnityPlugin
             Log.LogInfo($"[CREST] Update alive (gameState={DescribeGameState()}).");
         }
 
-        if (!IsInGame())
+        if (!IsInGame() || CrestSelectMenu.IsOpen)
         {
-            return;
-        }
-
-        if (_choosing)
-        {
-            HandleChoiceInput();
             return;
         }
 
         if (_testHotkey.Value.IsDown())
         {
             Log.LogInfo($"[CREST] Hotkey {_testHotkey.Value} pressed.");
-            BeginSelection();
+            CrestSelectMenu.TryOpen();
         }
     }
 
@@ -101,64 +88,6 @@ public sealed class Plugin : BaseUnityPlugin
     {
         GameManager? manager = GameManager.instance;
         return manager != null && manager.GameState == GameState.PLAYING;
-    }
-
-    /// <summary>Snapshots the selectable crests and logs the numbered list.</summary>
-    private void BeginSelection()
-    {
-        _choices = CrestPickerService.GetSelectableCrests();
-        _choosing = true;
-
-        if (_grantAllCrests.Value && _choices.Count != 7)
-        {
-            Log.LogWarning(
-                $"[CREST] GrantAllCrests is on but {_choices.Count} base crests were found (expected 7).");
-        }
-
-        Log.LogInfo($"[CREST] Selectable crests ({_choices.Count}):");
-        for (int i = 0; i < _choices.Count; i++)
-        {
-            ToolCrest crest = _choices[i];
-            string key = i < ChoiceKeys.Length ? ChoiceKeys[i] : "?";
-            Log.LogInfo(
-                $"[CREST]   {key}) {crest.name} unlocked={crest.IsUnlocked} equipped={crest.IsEquipped}");
-        }
-
-        Log.LogInfo("[CREST] Press 1..7 to apply a crest, Esc to cancel.");
-    }
-
-    /// <summary>Reads the number keys and Escape while a selection is open.</summary>
-    private void HandleChoiceInput()
-    {
-        if (Input.GetKeyDown(KeyCode.Escape))
-        {
-            _choosing = false;
-            Log.LogInfo("[CREST] Selection cancelled.");
-            return;
-        }
-
-        for (int i = 0; i < 7; i++)
-        {
-            bool pressed = Input.GetKeyDown(KeyCode.Alpha1 + i) || Input.GetKeyDown(KeyCode.Keypad1 + i);
-            if (!pressed)
-            {
-                continue;
-            }
-
-            Log.LogInfo($"[CREST] Digit {i + 1} pressed (gameState={DescribeGameState()}).");
-
-            if (i >= _choices.Count)
-            {
-                Log.LogWarning(
-                    $"[CREST] No crest at position {i + 1} (only {_choices.Count} selectable; " +
-                    "set GrantAllCrests=true in the config to offer all crests).");
-                return;
-            }
-
-            _choosing = false;
-            CrestPickerService.ApplyCrest(_choices[i]);
-            return;
-        }
     }
 
     private void OnDestroy()
