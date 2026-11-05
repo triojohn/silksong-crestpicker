@@ -295,6 +295,7 @@ internal static class ShopCrestMenu
         Transform reference = _root.Find("Window/Shop_Backboard") ?? _root.Find("Window") ?? _root;
         Vector3 panelCentre = reference.position;
         Vector3 offset = _origPosition - panelCentre;
+        offset.z = 0f;
         Vector3 hero = HeroPosition();
         Vector3 target = hero;
         target.y += UiLift;
