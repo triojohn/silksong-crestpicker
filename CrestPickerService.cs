@@ -4,6 +4,16 @@ using System.Linq;
 
 namespace CrestPicker;
 
+/// <summary>Which crests the picker offers.</summary>
+internal enum CrestPoolMode
+{
+    /// <summary>Every normal base crest, regardless of save state.</summary>
+    All,
+
+    /// <summary>Only crests already unlocked in the current save.</summary>
+    Unlocked,
+}
+
 /// <summary>
 /// Core crest selection logic with no UI dependency. All game calls are wrapped
 /// in try/catch so a failure never takes the game down.
@@ -11,15 +21,15 @@ namespace CrestPicker;
 internal static class CrestPickerService
 {
     /// <summary>
-    /// When true, every base crest is offered regardless of save state.
-    /// Set from the BepInEx config in <see cref="Plugin.Awake"/>.
+    /// Crest pool source. Set from the BepInEx config in <see cref="Plugin.Awake"/>;
+    /// defaults to <see cref="CrestPoolMode.All"/>.
     /// </summary>
-    internal static bool GrantAllCrests;
+    internal static CrestPoolMode PoolMode = CrestPoolMode.All;
 
     /// <summary>
     /// Returns the crests the player may pick: base versions that are not hidden,
-    /// limited to unlocked ones unless <see cref="GrantAllCrests"/> is set. The
-    /// currently equipped crest is always excluded.
+    /// limited to <see cref="CrestPoolMode.Unlocked"/> only when that mode is set.
+    /// The currently equipped crest is always excluded.
     /// </summary>
     /// <returns>Selectable crests in crest-list order; empty on failure.</returns>
     internal static List<ToolCrest> GetSelectableCrests()
@@ -28,11 +38,12 @@ internal static class CrestPickerService
         {
             List<ToolCrest> pool = ToolItemManager.GetAllCrests()
                 .Where(crest => crest != null && crest.IsBaseVersion && !crest.IsHidden)
-                .Where(crest => GrantAllCrests || crest.IsUnlocked)
+                .Where(crest => PoolMode == CrestPoolMode.All || crest.IsUnlocked)
                 .ToList();
 
             int excluded = pool.RemoveAll(SafeIsEquipped);
-            Plugin.Log.LogInfo($"[CREST] crest pool: {pool.Count} selectable, {excluded} equipped excluded.");
+            Plugin.Log.LogInfo(
+                $"[CREST] crest pool ({PoolMode}): {pool.Count} selectable, {excluded} equipped excluded.");
             return pool;
         }
         catch (Exception ex)

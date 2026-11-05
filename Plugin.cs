@@ -44,9 +44,11 @@ public sealed class Plugin : BaseUnityPlugin
     private Harmony? _harmony;
 
     private ConfigEntry<bool> _grantAllCrests = null!;
+    private ConfigEntry<CrestPoolMode> _crestPool = null!;
     private ConfigEntry<bool> _enableSnailChoice = null!;
     private ConfigEntry<bool> _useShopMenu = null!;
     private ConfigEntry<KeyboardShortcut> _testHotkey = null!;
+    private ConfigEntry<KeyboardShortcut> _shopDumpHotkey = null!;
 
     private bool _loggedAlive;
 
@@ -60,17 +62,23 @@ public sealed class Plugin : BaseUnityPlugin
             "Log dialogue FSMs of early scenes and the collectable/tool name lists.").Value;
 
         _grantAllCrests = Config.Bind("General", "GrantAllCrests", false,
-            "Выдавать все 7 знаков независимо от сейва");
+            "Устаревший ключ: true трактуется как CrestPool=All");
+        _crestPool = Config.Bind("General", "CrestPool", CrestPoolMode.All,
+            "Пул знаков для выбора: All — все 7 нормальных, Unlocked — только открытые в сейве");
         _enableSnailChoice = Config.Bind("General", "EnableSnailChoice", true,
             "Предлагать выбор знака после диалога с прислужницей капеллы");
         _testHotkey = Config.Bind("General", "TestHotkey", new KeyboardShortcut(KeyCode.F9),
             "Клавиша тестового выбора знака");
+        _shopDumpHotkey = Config.Bind("General", "ShopDumpHotkey", new KeyboardShortcut(KeyCode.F8),
+            "Клавиша дампа живого магазина (объекты, FSM, строки)");
         _useShopMenu = Config.Bind("General", "UseShopMenu", false,
             "Пробовать клон ванильного окна магазина вместо своего меню (экспериментально)");
 
-        CrestPickerService.GrantAllCrests = _grantAllCrests.Value;
+        CrestPickerService.PoolMode = _grantAllCrests.Value ? CrestPoolMode.All : _crestPool.Value;
         EnableSnailChoice = _enableSnailChoice.Value;
         UseShopMenu = _useShopMenu.Value;
+        Logger.LogInfo($"[CREST] crest pool mode: {CrestPickerService.PoolMode}" +
+            $" (GrantAllCrests={_grantAllCrests.Value}, CrestPool={_crestPool.Value}).");
         CrestSelectMenu.Closed += OnMenuClosed;
         CrestSelectMenu.RunSelfCheck();
         CrestOfferState.RunSelfCheck();
@@ -90,6 +98,12 @@ public sealed class Plugin : BaseUnityPlugin
         }
 
         UpdatePendingOffer();
+
+        if (_shopDumpHotkey.Value.IsDown())
+        {
+            Log.LogInfo($"[CREST] Hotkey {_shopDumpHotkey.Value} pressed: shop dump.");
+            ShopDiag.DumpLiveShop();
+        }
 
         if (!IsInGame() || CrestSelectMenu.IsOpen)
         {
