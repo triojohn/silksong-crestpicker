@@ -9,9 +9,8 @@ using UnityEngine;
 namespace CrestPicker;
 
 /// <summary>
-/// BepInEx entry point for the CrestPicker mod.
-/// Planned feature: let the player pick a starting crest at the first snail shaman
-/// instead of receiving the vanilla one.
+/// BepInEx entry point for the CrestPicker mod: after the chapel maid dialogue at
+/// Bonetown/Churchkeeper the player gets to pick a crest instead of the vanilla one.
 /// </summary>
 [BepInPlugin(PluginGuid, PluginName, PluginVersion)]
 [BepInProcess("Hollow Knight Silksong.exe")]
@@ -24,7 +23,7 @@ public sealed class Plugin : BaseUnityPlugin
     public const string PluginName = "CrestPicker";
 
     /// <summary>Semantic version of the plugin.</summary>
-    public const string PluginVersion = "0.1.0";
+    public const string PluginVersion = "1.0.0";
 
     /// <summary>Shared log source for static patch code.</summary>
     internal static ManualLogSource Log = null!;
@@ -49,10 +48,10 @@ public sealed class Plugin : BaseUnityPlugin
     {
         Log = Logger;
 
-        Probe.Enabled = Config.Bind("Probe", "Enabled", true,
+        Probe.Enabled = Config.Bind("Probe", "Enabled", false,
             "Log dialogue FSMs of early scenes and the collectable/tool name lists.").Value;
 
-        _grantAllCrests = Config.Bind("General", "GrantAllCrests", true,
+        _grantAllCrests = Config.Bind("General", "GrantAllCrests", false,
             "Выдавать все 7 знаков независимо от сейва");
         _enableSnailChoice = Config.Bind("General", "EnableSnailChoice", true,
             "Предлагать выбор знака после диалога с прислужницей капеллы");
@@ -200,13 +199,4 @@ public sealed class Plugin : BaseUnityPlugin
         CrestSelectMenu.Closed -= OnMenuClosed;
         _harmony?.UnpatchSelf();
     }
-}
-
-/// <summary>
-/// Placeholder container for Harmony patches. No patches exist yet: the FSM hook
-/// on the snail shaman dialogue lands in stage 3 (see PLAN.md).
-/// </summary>
-internal static class HarmonyPatches
-{
-    // TODO(stage 3): patch the snail shaman FSM end state and open the crest picker UI.
 }
