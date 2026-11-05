@@ -28,7 +28,7 @@ internal static class ShopDiag
     /// <param name="scene">Scene that just loaded.</param>
     internal static void OnSceneLoaded(Scene scene)
     {
-        if (!Plugin.UseShopMenu || _logged || scene.name != TargetScene)
+        if (!Plugin.UseLiveShop || _logged || scene.name != TargetScene)
         {
             return;
         }

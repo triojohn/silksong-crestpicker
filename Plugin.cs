@@ -32,11 +32,10 @@ public sealed class Plugin : BaseUnityPlugin
     internal static bool EnableSnailChoice;
 
     /// <summary>
-    /// When true, the picker tries the cloned vanilla shop window instead of the
-    /// custom menu. Off by default: the shop window is driven by a PlayMaker FSM
-    /// that the clone does not run, so it stays invisible.
+    /// When true, the picker reuses the live shop window of the scene instead of
+    /// the custom menu. Vanilla stock and position are restored afterwards.
     /// </summary>
-    internal static bool UseShopMenu;
+    internal static bool UseLiveShop;
 
     /// <summary>Seconds to wait for a playable state before dropping an offer.</summary>
     private const float OfferGrace = 2f;
@@ -46,7 +45,7 @@ public sealed class Plugin : BaseUnityPlugin
     private ConfigEntry<bool> _grantAllCrests = null!;
     private ConfigEntry<CrestPoolMode> _crestPool = null!;
     private ConfigEntry<bool> _enableSnailChoice = null!;
-    private ConfigEntry<bool> _useShopMenu = null!;
+    private ConfigEntry<bool> _useLiveShop = null!;
     private ConfigEntry<KeyboardShortcut> _testHotkey = null!;
     private ConfigEntry<KeyboardShortcut> _shopDumpHotkey = null!;
 
@@ -71,12 +70,12 @@ public sealed class Plugin : BaseUnityPlugin
             "Клавиша тестового выбора знака");
         _shopDumpHotkey = Config.Bind("General", "ShopDumpHotkey", new KeyboardShortcut(KeyCode.F8),
             "Клавиша дампа живого магазина (объекты, FSM, строки)");
-        _useShopMenu = Config.Bind("General", "UseShopMenu", false,
-            "Пробовать клон ванильного окна магазина вместо своего меню (экспериментально)");
+        _useLiveShop = Config.Bind("General", "UseLiveShop", true,
+            "Показывать выбор знака в настоящем окне магазина (сток и позиция восстанавливаются)");
 
         CrestPickerService.PoolMode = _grantAllCrests.Value ? CrestPoolMode.All : _crestPool.Value;
         EnableSnailChoice = _enableSnailChoice.Value;
-        UseShopMenu = _useShopMenu.Value;
+        UseLiveShop = _useLiveShop.Value;
         Logger.LogInfo($"[CREST] crest pool mode: {CrestPickerService.PoolMode}" +
             $" (GrantAllCrests={_grantAllCrests.Value}, CrestPool={_crestPool.Value}).");
         CrestSelectMenu.Closed += OnMenuClosed;

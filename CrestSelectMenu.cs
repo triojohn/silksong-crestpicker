@@ -74,7 +74,7 @@ internal sealed class CrestSelectMenu : MonoBehaviour
                 return false;
             }
 
-            if (Plugin.UseShopMenu && ShopCrestMenu.TryOpen(crests, fromDialogue))
+            if (Plugin.UseLiveShop && ShopCrestMenu.TryOpen(crests, fromDialogue))
             {
                 return true;
             }
