@@ -28,8 +28,8 @@ internal sealed class CrestSelectMenu : MonoBehaviour
     private bool _heroBlocked;
     private bool _fromDialogue;
 
-    /// <summary>True while a picker menu exists in the scene.</summary>
-    internal static bool IsOpen { get; private set; }
+    /// <summary>True while a picker menu (custom or cloned shop) exists in the scene.</summary>
+    internal static bool IsOpen { get; set; }
 
     /// <summary>
     /// Raised when a picker closes. Args: true when a crest was selected, and true
@@ -54,8 +54,13 @@ internal sealed class CrestSelectMenu : MonoBehaviour
             List<ToolCrest> crests = CrestPickerService.GetSelectableCrests();
             if (crests.Count == 0)
             {
-                Plugin.Log.LogWarning("[CREST] No selectable crests to show.");
+                Plugin.Log.LogWarning("[CREST] No selectable crests to show, menu not opened.");
                 return false;
+            }
+
+            if (ShopCrestMenu.TryOpen(crests, fromDialogue))
+            {
+                return true;
             }
 
             UIManager? ui = UIManager.instance;

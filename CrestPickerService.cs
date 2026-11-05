@@ -18,28 +18,41 @@ internal static class CrestPickerService
 
     /// <summary>
     /// Returns the crests the player may pick: base versions that are not hidden,
-    /// limited to unlocked ones unless <see cref="GrantAllCrests"/> is set.
+    /// limited to unlocked ones unless <see cref="GrantAllCrests"/> is set. The
+    /// currently equipped crest is always excluded.
     /// </summary>
     /// <returns>Selectable crests in crest-list order; empty on failure.</returns>
     internal static List<ToolCrest> GetSelectableCrests()
     {
         try
         {
-            List<ToolCrest> baseCrests = ToolItemManager.GetAllCrests()
+            List<ToolCrest> pool = ToolItemManager.GetAllCrests()
                 .Where(crest => crest != null && crest.IsBaseVersion && !crest.IsHidden)
+                .Where(crest => GrantAllCrests || crest.IsUnlocked)
                 .ToList();
 
-            if (GrantAllCrests)
-            {
-                return baseCrests;
-            }
-
-            return baseCrests.Where(crest => crest.IsUnlocked).ToList();
+            int excluded = pool.RemoveAll(SafeIsEquipped);
+            Plugin.Log.LogInfo($"[CREST] crest pool: {pool.Count} selectable, {excluded} equipped excluded.");
+            return pool;
         }
         catch (Exception ex)
         {
             Plugin.Log.LogError($"[CREST] GetSelectableCrests failed: {ex}");
             return new List<ToolCrest>();
+        }
+    }
+
+    /// <summary>Equipped check that never throws when player data is not ready.</summary>
+    private static bool SafeIsEquipped(ToolCrest crest)
+    {
+        try
+        {
+            return crest.IsEquipped;
+        }
+        catch (Exception ex)
+        {
+            Plugin.Log.LogWarning($"[CREST] IsEquipped failed for '{crest.name}': {ex.Message}");
+            return false;
         }
     }
 

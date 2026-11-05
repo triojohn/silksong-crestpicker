@@ -155,7 +155,7 @@ public sealed class Plugin : BaseUnityPlugin
     }
 
     /// <summary>Consumes the one-time flag only for a real selection made by the dialogue offer.</summary>
-    private static void OnMenuClosed(bool selected, bool fromDialogue)
+    internal static void OnMenuClosed(bool selected, bool fromDialogue)
     {
         if (!selected || !fromDialogue)
         {
