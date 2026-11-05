@@ -101,7 +101,9 @@ public sealed class Plugin : BaseUnityPlugin
         if (_shopDumpHotkey.Value.IsDown())
         {
             Log.LogInfo($"[CREST] Hotkey {_shopDumpHotkey.Value} pressed: shop dump.");
+            ShopDiag.DumpShopNpc();
             ShopDiag.DumpLiveShop();
+            ShopTrace.Begin("hotkey");
         }
 
         if (!IsInGame() || CrestSelectMenu.IsOpen)

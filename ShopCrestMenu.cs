@@ -137,6 +137,7 @@ internal static class ShopCrestMenu
 
             MoveToHero();
             control.SendEvent(OpenEvent);
+            ShopTrace.Begin("SHOP UP");
 
             IsOpen = true;
             CrestSelectMenu.IsOpen = true;
