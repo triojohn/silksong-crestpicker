@@ -31,6 +31,13 @@ internal static class Probe
     private static readonly Regex DialogueStatePattern =
         new Regex("Dlg|Dialog|Convo|Talk|Speak", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
+    /// <summary>Scene where full FSM transition graphs are dumped.</summary>
+    private const string EdgesScene = "Bonetown";
+
+    /// <summary>FSM names worth dumping transitions for; others are skipped to keep the log small.</summary>
+    private static readonly Regex EdgesFsmPattern =
+        new Regex("^(Conversation|Dialogue|Control)$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
     private static bool _itemsLogged;
     private static bool _toolsLogged;
 
@@ -45,6 +52,11 @@ internal static class Probe
         if (IsLoggedScene(scene.name))
         {
             LogSceneFsms(scene);
+        }
+
+        if (scene.name == EdgesScene)
+        {
+            LogSceneEdges(scene);
         }
 
         if (!_itemsLogged)
@@ -122,6 +134,74 @@ internal static class Probe
         }
 
         return builder.ToString();
+    }
+
+    /// <summary>Dumps FSM transition graphs for dialogue FSMs of <see cref="EdgesScene"/>.</summary>
+    private static void LogSceneEdges(Scene scene)
+    {
+        try
+        {
+            foreach (PlayMakerFSM fsm in Resources.FindObjectsOfTypeAll<PlayMakerFSM>())
+            {
+                if (fsm == null || fsm.gameObject == null || fsm.gameObject.scene != scene)
+                {
+                    continue;
+                }
+
+                if (fsm.FsmName == null || !EdgesFsmPattern.IsMatch(fsm.FsmName))
+                {
+                    continue;
+                }
+
+                LogFsmEdges(scene.name, fsm);
+            }
+        }
+        catch (Exception ex)
+        {
+            Plugin.Log.LogWarning($"[PROBE-EDGES] failed in scene {scene.name}: {ex}");
+        }
+    }
+
+    private static void LogFsmEdges(string sceneName, PlayMakerFSM fsm)
+    {
+        string prefix = $"[PROBE-EDGES] {sceneName} | {fsm.gameObject.name} | fsm={fsm.FsmName} | ";
+        LogTransitions(prefix + "GLOBAL", fsm.Fsm == null ? null : fsm.Fsm.GlobalTransitions);
+
+        FsmState[]? states = fsm.FsmStates;
+        if (states == null)
+        {
+            return;
+        }
+
+        foreach (FsmState state in states)
+        {
+            if (state == null || state.Transitions == null)
+            {
+                continue;
+            }
+
+            LogTransitions(prefix + state.Name, state.Transitions);
+        }
+    }
+
+    private static void LogTransitions(string label, FsmTransition[]? transitions)
+    {
+        if (transitions == null)
+        {
+            return;
+        }
+
+        foreach (FsmTransition transition in transitions)
+        {
+            if (transition == null)
+            {
+                continue;
+            }
+
+            string eventName = transition.EventName ?? "<none>";
+            string target = transition.ToState ?? "<none>";
+            Plugin.Log.LogInfo($"{label} -> event={eventName} -> {target}");
+        }
     }
 
     /// <summary>Dumps every collectable item once per session.</summary>
