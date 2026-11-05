@@ -48,6 +48,9 @@ public sealed class Plugin : BaseUnityPlugin
     private ConfigEntry<bool> _useLiveShop = null!;
     private ConfigEntry<KeyboardShortcut> _testHotkey = null!;
     private ConfigEntry<KeyboardShortcut> _shopDumpHotkey = null!;
+    private ConfigEntry<float> _crestIconScale = null!;
+    private ConfigEntry<string> _confirmText = null!;
+    private ConfigEntry<bool> _shrinkCrestName = null!;
 
     private bool _loggedAlive;
 
@@ -72,10 +75,19 @@ public sealed class Plugin : BaseUnityPlugin
             "Клавиша дампа живого магазина (объекты, FSM, строки)");
         _useLiveShop = Config.Bind("General", "UseLiveShop", true,
             "Показывать выбор знака в настоящем окне магазина (сток и позиция восстанавливаются)");
+        _crestIconScale = Config.Bind("General", "CrestIconScale", 0.2f,
+            "Множитель масштаба иконок знаков в окне магазина (1 — как у обычного предмета)");
+        _confirmText = Config.Bind("General", "ConfirmText", "Вы уверены?",
+            "Текст подтверждения покупки знака");
+        _shrinkCrestName = Config.Bind("General", "ShrinkCrestNameToFit", true,
+            "Уменьшать шрифт названия знака, чтобы оно влезло в строку");
 
         CrestPickerService.PoolMode = _grantAllCrests.Value ? CrestPoolMode.All : _crestPool.Value;
         EnableSnailChoice = _enableSnailChoice.Value;
         UseLiveShop = _useLiveShop.Value;
+        ShopCosmetics.IconScale = _crestIconScale.Value;
+        ShopCosmetics.ConfirmText = _confirmText.Value;
+        ShopCosmetics.ShrinkNameToFit = _shrinkCrestName.Value;
         Logger.LogInfo($"[CREST] crest pool mode: {CrestPickerService.PoolMode}" +
             $" (GrantAllCrests={_grantAllCrests.Value}, CrestPool={_crestPool.Value}).");
         CrestSelectMenu.Closed += OnMenuClosed;

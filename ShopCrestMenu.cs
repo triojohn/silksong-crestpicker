@@ -162,6 +162,7 @@ internal static class ShopCrestMenu
             LogStock("after SHOP UP");
             ShopRenderDiag.Capture("after SHOP UP", root.transform);
 
+            ShopCosmetics.Begin(root.transform);
             root.AddComponent<ShopCrestSession>();
             LogState($"opened with {count} crest entries");
             return true;
@@ -177,6 +178,18 @@ internal static class ShopCrestMenu
                 Restore();
             }
         }
+    }
+
+    /// <summary>Crest behind a temp shop entry; null for any other item.</summary>
+    /// <param name="item">Entry shown in a shop row.</param>
+    internal static ToolCrest? CrestFor(ShopItem? item)
+    {
+        if (item == null || !TempItems.TryGetValue(item, out int index))
+        {
+            return null;
+        }
+
+        return index >= 0 && index < _crests.Count ? _crests[index] : null;
     }
 
     /// <summary>Builds one free temp shop entry per offered crest and records its index.</summary>
@@ -292,6 +305,7 @@ internal static class ShopCrestMenu
         Plugin.Log.LogWarning($"{StockTrace.Tag} stock overwritten during session, re-applying [{StockTrace.Names(_swapItems)}]");
         SwapStock(_swapItems);
         BuildLists();
+        ShopCosmetics.Tick();
         LogStock("reasserted");
     }
 
@@ -466,6 +480,7 @@ internal static class ShopCrestMenu
 
         try
         {
+            ShopCosmetics.End();
             foreach (KeyValuePair<ShopMenuStock, ShopItem[]> pair in Swapped)
             {
                 if (pair.Key != null)
@@ -902,6 +917,7 @@ internal sealed class ShopCrestSession : MonoBehaviour
             }
 
             ShopCrestMenu.ReassertStock();
+            ShopCosmetics.Tick();
 
             if (ShopCrestMenu.ClosedByFsm())
             {
