@@ -43,6 +43,10 @@
       <HintPath>$(GameManagedDir)/UnityEngine.CoreModule.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <Reference Include="UnityEngine.InputLegacyModule">
+      <HintPath>$(GameManagedDir)/UnityEngine.InputLegacyModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
     <Reference Include="PlayMaker">
       <HintPath>$(GameManagedDir)/PlayMaker.dll</HintPath>
       <Private>false</Private>
