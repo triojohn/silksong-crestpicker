@@ -37,6 +37,9 @@ internal static class ShopCosmetics
     /// <summary>Vanilla local scale of every crest icon we rescaled.</summary>
     private static readonly Dictionary<Transform, Vector3> IconScales = new Dictionary<Transform, Vector3>();
 
+    /// <summary>Vanilla local position of every row object we shifted.</summary>
+    private static readonly Dictionary<Transform, Vector3> PositionStates = new Dictionary<Transform, Vector3>();
+
     /// <summary>Vanilla active state of every object we hid.</summary>
     private static readonly Dictionary<GameObject, bool> ObjectStates = new Dictionary<GameObject, bool>();
 
@@ -52,6 +55,12 @@ internal static class ShopCosmetics
 
     /// <summary>Multiplier applied to the vanilla crest icon scale; 0.2 = five times smaller.</summary>
     internal static float IconScale = 0.2f;
+
+    /// <summary>Shift of the row icon along the row, toward the centre.</summary>
+    internal static float CrestIconOffsetX = 0.4f;
+
+    /// <summary>Shift of the row crest name along the row, toward the centre.</summary>
+    internal static float CrestNameOffsetX = -0.4f;
 
     /// <summary>Confirmation text written over the vanilla purchase prompt.</summary>
     internal static string ConfirmText = "Вы уверены?";
@@ -70,6 +79,7 @@ internal static class ShopCosmetics
             _missingLogged = false;
             HideCounters(root);
             Apply(root);
+            ShopCrestSchema.Begin(root);
         }
         catch (Exception ex)
         {
@@ -91,6 +101,7 @@ internal static class ShopCosmetics
         try
         {
             Apply(_root);
+            ShopCrestSchema.Tick();
             if (_frames++ % CounterSweepInterval == 0)
             {
                 HideCounters(_root);
@@ -108,11 +119,20 @@ internal static class ShopCosmetics
         _root = null;
         try
         {
+            ShopCrestSchema.End();
             foreach (KeyValuePair<Transform, Vector3> pair in IconScales)
             {
                 if (pair.Key != null)
                 {
                     pair.Key.localScale = pair.Value;
+                }
+            }
+
+            foreach (KeyValuePair<Transform, Vector3> pair in PositionStates)
+            {
+                if (pair.Key != null)
+                {
+                    pair.Key.localPosition = pair.Value;
                 }
             }
 
@@ -141,6 +161,7 @@ internal static class ShopCosmetics
         finally
         {
             IconScales.Clear();
+            PositionStates.Clear();
             ObjectStates.Clear();
             TextStates.Clear();
             _confirm = null;
@@ -166,9 +187,51 @@ internal static class ShopCosmetics
 
             ScaleIcon(row);
             ReplacePrice(row, crest.DisplayName);
+            OffsetRow(row);
         }
 
         ApplyConfirm(root);
+    }
+
+    /// <summary>Pulls the row icon and the row name toward the centre of the row.</summary>
+    private static void OffsetRow(ShopItemStats row)
+    {
+        if (ItemSpriteField?.GetValue(row) is SpriteRenderer icon && icon != null)
+        {
+            ShiftX(icon.transform, CrestIconOffsetX);
+        }
+
+        if (CostTextField?.GetValue(row) is TMP_Text label && label != null)
+        {
+            ShiftX(label.transform, CrestNameOffsetX);
+        }
+    }
+
+    /// <summary>Applies <paramref name="dx"/> on top of the vanilla local position.</summary>
+    private static void ShiftX(Transform target, float dx)
+    {
+        if (!PositionStates.TryGetValue(target, out Vector3 original))
+        {
+            original = target.localPosition;
+            PositionStates[target] = original;
+            Plugin.Log.LogInfo(
+                $"[SHOPFX] row offset '{target.name}' orig={original.x:F3},{original.y:F3}" +
+                $" dx={dx:F3} now={original.x + dx:F3}" +
+                $" (CrestIconOffsetX={CrestIconOffsetX:F3} CrestNameOffsetX={CrestNameOffsetX:F3})");
+        }
+
+        Vector3 wanted = original + new Vector3(dx, 0f, 0f);
+        if (target.localPosition != wanted)
+        {
+            target.localPosition = wanted;
+        }
+    }
+
+    /// <summary>Row icon renderer, used by the details schema as a sorting reference.</summary>
+    /// <param name="row">Row view of one shop entry.</param>
+    internal static SpriteRenderer? RowIcon(ShopItemStats? row)
+    {
+        return row != null ? ItemSpriteField?.GetValue(row) as SpriteRenderer : null;
     }
 
     /// <summary>Shrinks the row's item sprite by <see cref="IconScale"/>.</summary>
