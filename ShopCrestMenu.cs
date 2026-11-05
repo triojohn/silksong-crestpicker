@@ -1,8 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Reflection;
+using HarmonyLib;
 using UnityEngine;
-using UnityEngine.Events;
 
 namespace CrestPicker;
 
@@ -22,6 +22,14 @@ internal static class ShopCrestMenu
     private static readonly FieldInfo? SpawnedShopField =
         typeof(ShopOwnerBase).GetField("_spawnedShop", PrivateStatic);
 
+    /// <summary>Temp shop entries on screen mapped to their crest index, filled per session.</summary>
+    private static readonly Dictionary<ShopItem, int> TempItems = new Dictionary<ShopItem, int>();
+
+    private static List<ToolCrest> _crests = new List<ToolCrest>();
+    private static ShopMenuStock? _stock;
+    private static GameObject? _clone;
+    private static bool _fromDialogue;
+
     /// <summary>True while a cloned shop window is on screen.</summary>
     internal static bool IsOpen { get; set; }
 
@@ -39,6 +47,7 @@ internal static class ShopCrestMenu
             return false;
         }
 
+        ResetSession();
         GameObject? clone = null;
         try
         {
@@ -63,7 +72,11 @@ internal static class ShopCrestMenu
 
             PlaceLikeLiveShop(clone.transform);
             stock.MasterList = null;
-            stock.SetStock(BuildItems(crests, fromDialogue));
+            _crests = new List<ToolCrest>(crests);
+            _stock = stock;
+            _clone = clone;
+            _fromDialogue = fromDialogue;
+            stock.SetStock(BuildItems());
             stock.BuildItemList();
             if (stock.GetItemCount() == 0)
             {
@@ -87,25 +100,30 @@ internal static class ShopCrestMenu
         }
         finally
         {
-            if (!IsOpen && clone != null)
+            if (!IsOpen)
             {
-                UnityEngine.Object.Destroy(clone);
+                ResetSession();
+                if (clone != null)
+                {
+                    UnityEngine.Object.Destroy(clone);
+                }
             }
         }
     }
 
-    /// <summary>Builds one free temp shop entry per crest and hooks its purchase.</summary>
-    private static ShopItem[] BuildItems(List<ToolCrest> crests, bool fromDialogue)
+    /// <summary>Builds one free temp shop entry per offered crest and records its index.</summary>
+    private static ShopItem[] BuildItems()
     {
-        ShopItem[] items = new ShopItem[crests.Count];
-        for (int i = 0; i < crests.Count; i++)
+        TempItems.Clear();
+        ShopItem[] items = new ShopItem[_crests.Count];
+        for (int i = 0; i < _crests.Count; i++)
         {
-            ToolCrest crest = crests[i];
+            ToolCrest crest = _crests[i];
             ShopItem item = ShopItem.CreateTemp(crest.name);
             item.OverrideCostDelegate = ZeroCost;
             CopyCrestText(item, crest);
             SetField(item, "itemSprite", crest.CrestSprite);
-            HookPurchase(item, crest, fromDialogue);
+            TempItems[item] = i;
             items[i] = item;
         }
 
@@ -131,34 +149,84 @@ internal static class ShopCrestMenu
         }
     }
 
-    /// <summary>Applies the crest when the player buys this temp shop entry.</summary>
-    private static void HookPurchase(ShopItem item, ToolCrest crest, bool fromDialogue)
+    /// <summary>
+    /// Harmony postfix target: applies the crest when the game buys one of the temp
+    /// entries. Vanilla shop items are ignored because they are not in the map.
+    /// </summary>
+    /// <param name="stats">Item view whose purchase just completed; may be null.</param>
+    internal static void HandleTempPurchase(ShopItemStats? stats)
     {
         try
         {
-            if (item.GetType().GetField("onPurchase", PrivateInstance)?.GetValue(item) is not UnityEvent purchase)
+            ShopItem? item = stats != null ? stats.Item : null;
+            if (item == null || !TempItems.TryGetValue(item, out int index))
             {
-                Plugin.Log.LogWarning($"[SHOP] no purchase event on temp item '{crest.name}'.");
                 return;
             }
 
-            purchase.AddListener(() =>
+            TempItems.Remove(item);
+            if (index < 0 || index >= _crests.Count)
             {
-                try
-                {
-                    CrestPickerService.ApplyCrest(crest);
-                    Plugin.OnMenuClosed(true, fromDialogue);
-                }
-                catch (Exception ex)
-                {
-                    Plugin.Log.LogError($"[SHOP] crest purchase handler failed: {ex}");
-                }
-            });
+                return;
+            }
+
+            ToolCrest crest = _crests[index];
+            Plugin.Log.LogInfo($"[SHOP] temp position purchased: {crest.name} (index={index})");
+            CrestPickerService.ApplyCrest(crest);
+
+            if (_fromDialogue)
+            {
+                Plugin.OnMenuClosed(true, true);
+                CloseClone();
+                return;
+            }
+
+            _crests.RemoveAt(index);
+            RebuildStock();
         }
         catch (Exception ex)
         {
-            Plugin.Log.LogWarning($"[SHOP] purchase hook failed for '{crest.name}': {ex.Message}");
+            Plugin.Log.LogError($"[SHOP] temp purchase handler failed: {ex}");
         }
+    }
+
+    /// <summary>Drops the bought crest from the list and closes the menu when nothing is left.</summary>
+    private static void RebuildStock()
+    {
+        if (_stock == null)
+        {
+            CloseClone();
+            return;
+        }
+
+        ShopItem[] items = BuildItems();
+        if (items.Length == 0)
+        {
+            CloseClone();
+            return;
+        }
+
+        _stock.SetStock(items);
+        _stock.BuildItemList();
+    }
+
+    /// <summary>Tears down the cloned window; its session resets the shared state.</summary>
+    private static void CloseClone()
+    {
+        if (_clone != null)
+        {
+            UnityEngine.Object.Destroy(_clone);
+        }
+    }
+
+    /// <summary>Clears per-session state before a menu is built and after it is torn down.</summary>
+    internal static void ResetSession()
+    {
+        TempItems.Clear();
+        _crests = new List<ToolCrest>();
+        _stock = null;
+        _clone = null;
+        _fromDialogue = false;
     }
 
     /// <summary>Places the clone at the live shop instance so it appears where the shop is.</summary>
@@ -257,5 +325,19 @@ internal sealed class ShopCrestSession : MonoBehaviour
     {
         ShopCrestMenu.IsOpen = false;
         CrestSelectMenu.IsOpen = false;
+        ShopCrestMenu.ResetSession();
+    }
+}
+
+/// <summary>
+/// Applies the crest after a successful purchase of a temp shop entry. Postfix so
+/// the vanilla charge, onComplete callback and FSM transitions still run first.
+/// </summary>
+[HarmonyPatch(typeof(ShopItemStats), "SetPurchased")]
+internal static class ShopTempPurchasePatch
+{
+    private static void Postfix(ShopItemStats __instance)
+    {
+        ShopCrestMenu.HandleTempPurchase(__instance);
     }
 }
