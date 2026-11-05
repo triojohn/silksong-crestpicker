@@ -26,18 +26,27 @@ internal sealed class CrestSelectMenu : MonoBehaviour
     private int _index;
     private bool _closed;
     private bool _heroBlocked;
+    private bool _fromDialogue;
 
     /// <summary>True while a picker menu exists in the scene.</summary>
     internal static bool IsOpen { get; private set; }
 
     /// <summary>
+    /// Raised when a picker closes. Args: true when a crest was selected, and true
+    /// when the picker was opened by the dialogue offer rather than the test hotkey.
+    /// </summary>
+    internal static event Action<bool, bool>? Closed;
+
+    /// <summary>
     /// Builds and shows the picker when the game is ready. Never throws.
     /// </summary>
-    internal static void TryOpen()
+    /// <param name="fromDialogue">True when opened by the maid dialogue offer.</param>
+    /// <returns>True when the menu was created and is on screen.</returns>
+    internal static bool TryOpen(bool fromDialogue = false)
     {
         if (IsOpen)
         {
-            return;
+            return false;
         }
 
         try
@@ -46,14 +55,14 @@ internal sealed class CrestSelectMenu : MonoBehaviour
             if (crests.Count == 0)
             {
                 Plugin.Log.LogWarning("[CREST] No selectable crests to show.");
-                return;
+                return false;
             }
 
             UIManager? ui = UIManager.instance;
             if (ui == null || ui.UICanvas == null)
             {
                 Plugin.Log.LogWarning("[CREST] UIManager or UICanvas is unavailable, menu not opened.");
-                return;
+                return false;
             }
 
             GameObject root = new GameObject("CrestPickerMenu",
@@ -62,12 +71,14 @@ internal sealed class CrestSelectMenu : MonoBehaviour
             root.transform.SetAsLastSibling();
 
             CrestSelectMenu menu = root.AddComponent<CrestSelectMenu>();
-            menu.Init(crests);
+            menu.Init(crests, fromDialogue);
+            return true;
         }
         catch (Exception ex)
         {
             Plugin.Log.LogError($"[CREST] Failed to open the crest menu: {ex}");
             IsOpen = false;
+            return false;
         }
     }
 
@@ -106,9 +117,10 @@ internal sealed class CrestSelectMenu : MonoBehaviour
         return ok;
     }
 
-    private void Init(List<ToolCrest> crests)
+    private void Init(List<ToolCrest> crests, bool fromDialogue)
     {
         _crests = crests;
+        _fromDialogue = fromDialogue;
 
         RectTransform rect = (RectTransform)transform;
         float rowsHeight = RowHeight * crests.Count + RowSpacing * (crests.Count - 1);
@@ -301,7 +313,8 @@ internal sealed class CrestSelectMenu : MonoBehaviour
         _closed = true;
         IsOpen = false;
 
-        if (apply && _index >= 0 && _index < _crests.Count)
+        bool applied = apply && _index >= 0 && _index < _crests.Count;
+        if (applied)
         {
             PlaySubmitSound();
             CrestPickerService.ApplyCrest(_crests[_index]);
@@ -311,6 +324,8 @@ internal sealed class CrestSelectMenu : MonoBehaviour
             PlayCancelSound();
             Plugin.Log.LogInfo("[CREST] Selection cancelled, crest unchanged.");
         }
+
+        Closed?.Invoke(applied, _fromDialogue);
 
         UnblockHero();
         Destroy(gameObject);

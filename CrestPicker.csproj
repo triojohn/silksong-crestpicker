@@ -67,6 +67,10 @@
       <HintPath>$(GameManagedDir)/PlayMaker.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <Reference Include="Newtonsoft.Json">
+      <HintPath>$(GameManagedDir)/Newtonsoft.Json.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
   </ItemGroup>
 
   <!-- Copy the built plugin into BepInEx/plugins so the game picks it up. -->
