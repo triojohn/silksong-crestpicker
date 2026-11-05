@@ -31,6 +31,9 @@ public sealed class Plugin : BaseUnityPlugin
     {
         Log = Logger;
 
+        Probe.Enabled = Config.Bind("Probe", "Enabled", true,
+            "Log dialogue FSMs of early scenes and the collectable/tool name lists.").Value;
+
         _harmony = new Harmony(PluginGuid);
         _harmony.PatchAll();
 
