@@ -1,0 +1,10 @@
+SilksongPath.props
+thunderstore/temp
+thunderstore/dist
+
+bin/
+obj/
+*.user
+*.suo
+*.userprefs
+*.log

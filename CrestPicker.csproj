@@ -1,0 +1,56 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Imports silksong path properties (gitignored) so CI can override the game path. -->
+  <Import Condition="Exists('SilksongPath.props')" Project="SilksongPath.props" />
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <AssemblyName>CrestPicker</AssemblyName>
+    <RootNamespace>CrestPicker</RootNamespace>
+    <Product>CrestPicker</Product>
+    <!-- Ignore processor architecture mismatch from game assemblies. -->
+    <NoWarn>$(NoWarn);MSB3270</NoWarn>
+  </PropertyGroup>
+
+  <!--
+    Reference the game and BepInEx assemblies straight from the local install.
+    Avoids the bepinex.dev NuGet feed, which is unreachable/slow on this machine.
+  -->
+  <PropertyGroup>
+    <GameManagedDir>$(SilksongFolder)/Hollow Knight Silksong_Data/Managed</GameManagedDir>
+    <BepInExCoreDir>$(SilksongFolder)/BepInEx/core</BepInExCoreDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="BepInEx">
+      <HintPath>$(BepInExCoreDir)/BepInEx.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="0Harmony">
+      <HintPath>$(BepInExCoreDir)/0Harmony.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Assembly-CSharp">
+      <HintPath>$(GameManagedDir)/Assembly-CSharp.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine">
+      <HintPath>$(GameManagedDir)/UnityEngine.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.CoreModule">
+      <HintPath>$(GameManagedDir)/UnityEngine.CoreModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="PlayMaker">
+      <HintPath>$(GameManagedDir)/PlayMaker.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <!-- Copy the built plugin into BepInEx/plugins so the game picks it up. -->
+  <Target Name="CopyToPlugins" AfterTargets="Build" Condition="Exists('$(SilksongPluginsFolder)')">
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(SilksongPluginsFolder)" />
+  </Target>
+</Project>
