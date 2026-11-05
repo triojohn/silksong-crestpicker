@@ -31,6 +31,13 @@ public sealed class Plugin : BaseUnityPlugin
     /// <summary>When true, the chapel maid dialogue offers the crest choice.</summary>
     internal static bool EnableSnailChoice;
 
+    /// <summary>
+    /// When true, the picker tries the cloned vanilla shop window instead of the
+    /// custom menu. Off by default: the shop window is driven by a PlayMaker FSM
+    /// that the clone does not run, so it stays invisible.
+    /// </summary>
+    internal static bool UseShopMenu;
+
     /// <summary>Seconds to wait for a playable state before dropping an offer.</summary>
     private const float OfferGrace = 2f;
 
@@ -38,6 +45,7 @@ public sealed class Plugin : BaseUnityPlugin
 
     private ConfigEntry<bool> _grantAllCrests = null!;
     private ConfigEntry<bool> _enableSnailChoice = null!;
+    private ConfigEntry<bool> _useShopMenu = null!;
     private ConfigEntry<KeyboardShortcut> _testHotkey = null!;
 
     private bool _loggedAlive;
@@ -57,9 +65,12 @@ public sealed class Plugin : BaseUnityPlugin
             "Предлагать выбор знака после диалога с прислужницей капеллы");
         _testHotkey = Config.Bind("General", "TestHotkey", new KeyboardShortcut(KeyCode.F9),
             "Клавиша тестового выбора знака");
+        _useShopMenu = Config.Bind("General", "UseShopMenu", false,
+            "Пробовать клон ванильного окна магазина вместо своего меню (экспериментально)");
 
         CrestPickerService.GrantAllCrests = _grantAllCrests.Value;
         EnableSnailChoice = _enableSnailChoice.Value;
+        UseShopMenu = _useShopMenu.Value;
         CrestSelectMenu.Closed += OnMenuClosed;
         CrestSelectMenu.RunSelfCheck();
         CrestOfferState.RunSelfCheck();

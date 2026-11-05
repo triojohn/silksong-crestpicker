@@ -7,21 +7,37 @@ using UnityEngine.UI;
 namespace CrestPicker;
 
 /// <summary>
-/// In-game crest picker built from scratch: a uGUI panel with one row per crest,
-/// driven by the game's own input actions, menu sounds and hero input blockers.
+/// In-game crest picker built from scratch: a full-screen dim layer with a centred
+/// list of crests, driven by the game's own input actions, menu sounds and hero
+/// input blockers.
 /// </summary>
 internal sealed class CrestSelectMenu : MonoBehaviour
 {
     private const float RowHeight = 40f;
-    private const float RowSpacing = 10f;
-    private const float PanelWidth = 640f;
-    private const float PanelPadding = 20f;
+    private const float RowSpacing = 8f;
+    private const float RowPadding = 12f;
+    private const float IconSize = 40f;
+    private const float IconSpacing = 10f;
+    private const float TitleHeight = 56f;
     private const float LabelFontSize = 32f;
+    private const float TitleFontSize = 40f;
+    private const string TitleLabel = "Выберите знак";
+    private const string KeepCurrentLabel = "Оставить как есть";
 
     private static readonly Color SelectedColor = Color.white;
     private static readonly Color IdleColor = new Color(0.55f, 0.55f, 0.55f, 1f);
+    private static readonly Color SelectedBackdrop = new Color(1f, 1f, 1f, 0.15f);
+    private static readonly Color ClearBackdrop = new Color(1f, 1f, 1f, 0f);
+    private static readonly Color DimColor = new Color(0f, 0f, 0f, 0.55f);
 
-    private readonly List<TMP_Text> _rows = new List<TMP_Text>();
+    /// <summary>One selectable line: its label and the backdrop that marks the cursor.</summary>
+    private sealed class Row
+    {
+        internal TMP_Text Text = null!;
+        internal Image Backdrop = null!;
+    }
+
+    private readonly List<Row> _rows = new List<Row>();
     private List<ToolCrest> _crests = new List<ToolCrest>();
     private int _index;
     private bool _closed;
@@ -58,7 +74,7 @@ internal sealed class CrestSelectMenu : MonoBehaviour
                 return false;
             }
 
-            if (ShopCrestMenu.TryOpen(crests, fromDialogue))
+            if (Plugin.UseShopMenu && ShopCrestMenu.TryOpen(crests, fromDialogue))
             {
                 return true;
             }
@@ -128,16 +144,15 @@ internal sealed class CrestSelectMenu : MonoBehaviour
         _fromDialogue = fromDialogue;
 
         RectTransform rect = (RectTransform)transform;
-        float rowsHeight = RowHeight * crests.Count + RowSpacing * (crests.Count - 1);
-        rect.anchorMin = new Vector2(0.5f, 0.5f);
-        rect.anchorMax = new Vector2(0.5f, 0.5f);
+        rect.anchorMin = Vector2.zero;
+        rect.anchorMax = Vector2.one;
         rect.pivot = new Vector2(0.5f, 0.5f);
-        rect.anchoredPosition = Vector2.zero;
-        rect.sizeDelta = new Vector2(PanelWidth, rowsHeight + PanelPadding * 2f);
+        rect.offsetMin = Vector2.zero;
+        rect.offsetMax = Vector2.zero;
 
-        Image background = GetComponent<Image>();
-        background.color = new Color(0f, 0f, 0f, 0.75f);
-        background.raycastTarget = false;
+        Image dim = GetComponent<Image>();
+        dim.color = DimColor;
+        dim.raycastTarget = false;
 
         VerticalLayoutGroup layout = GetComponent<VerticalLayoutGroup>();
         layout.spacing = RowSpacing;
@@ -145,16 +160,18 @@ internal sealed class CrestSelectMenu : MonoBehaviour
         layout.childControlHeight = false;
         layout.childControlWidth = true;
         layout.childForceExpandHeight = false;
-        layout.childForceExpandWidth = true;
-        layout.padding = new RectOffset(
-            (int)PanelPadding, (int)PanelPadding, (int)PanelPadding, (int)PanelPadding);
+        layout.childForceExpandWidth = false;
+        layout.padding = new RectOffset(0, 0, 0, 0);
 
         TMP_FontAsset? font = FindGameFont();
+        CreateTitle(transform, font);
 
         for (int i = 0; i < crests.Count; i++)
         {
-            _rows.Add(CreateRow(transform, i, CrestPickerService.GetLabel(crests[i]), font));
+            _rows.Add(CreateRow(transform, i, crests[i], font));
         }
+
+        _rows.Add(CreateTextRow(transform, "KeepCurrent", KeepCurrentLabel, font));
 
         _index = 0;
         RefreshHighlight();
@@ -189,28 +206,121 @@ internal sealed class CrestSelectMenu : MonoBehaviour
         return null;
     }
 
-    private static TMP_Text CreateRow(Transform parent, int index, string label, TMP_FontAsset? font)
+    /// <summary>Adds the menu heading above the crest list.</summary>
+    private static void CreateTitle(Transform parent, TMP_FontAsset? font)
     {
-        GameObject row = new GameObject($"CrestRow{index}",
-            typeof(RectTransform), typeof(LayoutElement));
-        row.transform.SetParent(parent, false);
+        GameObject go = new GameObject("CrestTitle", typeof(RectTransform), typeof(LayoutElement));
+        go.transform.SetParent(parent, false);
 
-        RectTransform rect = (RectTransform)row.transform;
-        rect.sizeDelta = new Vector2(0f, RowHeight);
+        LayoutElement element = go.GetComponent<LayoutElement>();
+        element.minHeight = TitleHeight;
+        element.preferredHeight = TitleHeight;
+        element.flexibleHeight = 0f;
 
-        LayoutElement element = row.GetComponent<LayoutElement>();
+        TextMeshProUGUI text = go.AddComponent<TextMeshProUGUI>();
+        text.text = TitleLabel;
+        text.font = font != null ? font : TMP_FontAsset.defaultFontAsset;
+        text.fontSize = TitleFontSize;
+        text.alignment = TextAlignmentOptions.Center;
+        text.raycastTarget = false;
+    }
+
+    /// <summary>Adds one crest line: optional icon on the left, name to its right.</summary>
+    private static Row CreateRow(Transform parent, int index, ToolCrest crest, TMP_FontAsset? font)
+    {
+        Row row = CreateRowShell(parent, $"CrestRow{index}");
+
+        Sprite? sprite = CrestSprite(crest);
+        if (sprite != null)
+        {
+            CreateIcon(row, sprite);
+        }
+
+        row.Text = CreateLabel(row, "Name", CrestPickerService.GetLabel(crest), font, LabelFontSize);
+        return row;
+    }
+
+    /// <summary>Adds a plain text line without an icon; used for the keep-current entry.</summary>
+    private static Row CreateTextRow(Transform parent, string name, string label, TMP_FontAsset? font)
+    {
+        Row row = CreateRowShell(parent, name);
+        row.Text = CreateLabel(row, "Name", label, font, LabelFontSize);
+        return row;
+    }
+
+    /// <summary>Builds the row container: backdrop image plus horizontal flow for its content.</summary>
+    private static Row CreateRowShell(Transform parent, string name)
+    {
+        GameObject go = new GameObject(name,
+            typeof(RectTransform), typeof(Image), typeof(HorizontalLayoutGroup), typeof(LayoutElement));
+        go.transform.SetParent(parent, false);
+
+        LayoutElement element = go.GetComponent<LayoutElement>();
         element.minHeight = RowHeight;
         element.preferredHeight = RowHeight;
         element.flexibleHeight = 0f;
 
-        TextMeshProUGUI text = row.AddComponent<TextMeshProUGUI>();
+        Image backdrop = go.GetComponent<Image>();
+        backdrop.color = ClearBackdrop;
+        backdrop.raycastTarget = false;
+
+        HorizontalLayoutGroup flow = go.GetComponent<HorizontalLayoutGroup>();
+        flow.spacing = IconSpacing;
+        flow.childAlignment = TextAnchor.MiddleCenter;
+        flow.childControlHeight = true;
+        flow.childControlWidth = true;
+        flow.childForceExpandHeight = false;
+        flow.childForceExpandWidth = false;
+        flow.padding = new RectOffset((int)RowPadding, (int)RowPadding, 0, 0);
+
+        return new Row { Backdrop = backdrop };
+    }
+
+    private static void CreateIcon(Row row, Sprite sprite)
+    {
+        GameObject go = new GameObject("Icon", typeof(RectTransform), typeof(Image), typeof(LayoutElement));
+        go.transform.SetParent(row.Backdrop.transform, false);
+
+        LayoutElement element = go.GetComponent<LayoutElement>();
+        element.minWidth = IconSize;
+        element.preferredWidth = IconSize;
+        element.minHeight = IconSize;
+        element.preferredHeight = IconSize;
+        element.flexibleWidth = 0f;
+
+        Image icon = go.GetComponent<Image>();
+        icon.sprite = sprite;
+        icon.preserveAspect = true;
+        icon.raycastTarget = false;
+    }
+
+    private static TMP_Text CreateLabel(
+        Row row, string name, string label, TMP_FontAsset? font, float fontSize)
+    {
+        GameObject go = new GameObject(name, typeof(RectTransform));
+        go.transform.SetParent(row.Backdrop.transform, false);
+
+        TextMeshProUGUI text = go.AddComponent<TextMeshProUGUI>();
         text.text = label;
         text.font = font != null ? font : TMP_FontAsset.defaultFontAsset;
-        text.fontSize = LabelFontSize;
+        text.fontSize = fontSize;
         text.alignment = TextAlignmentOptions.Center;
         text.raycastTarget = false;
-
         return text;
+    }
+
+    /// <summary>Crest sprite lookup that never throws; null means the row has no icon.</summary>
+    private static Sprite? CrestSprite(ToolCrest crest)
+    {
+        try
+        {
+            return crest.CrestSprite;
+        }
+        catch (Exception ex)
+        {
+            Plugin.Log.LogWarning($"[CREST] CrestSprite lookup failed for '{crest.name}': {ex.Message}");
+            return null;
+        }
     }
 
     private void Update()
@@ -262,7 +372,7 @@ internal sealed class CrestSelectMenu : MonoBehaviour
         {
             if (actions.MenuSubmit.WasPressed)
             {
-                Close(apply: true);
+                Submit();
             }
             else if (actions.MenuCancel.WasPressed)
             {
@@ -275,7 +385,7 @@ internal sealed class CrestSelectMenu : MonoBehaviour
         switch (platform.GetMenuAction(actions))
         {
             case Platform.MenuActions.Submit:
-                Close(apply: true);
+                Submit();
                 break;
             case Platform.MenuActions.Cancel:
                 Close(apply: false);
@@ -296,15 +406,26 @@ internal sealed class CrestSelectMenu : MonoBehaviour
         PlaySelectSound();
     }
 
+    /// <summary>Confirms the cursor: applies a crest, or closes untouched on the last row.</summary>
+    private void Submit()
+    {
+        if (_index >= 0 && _index < _crests.Count)
+        {
+            Close(apply: true);
+            return;
+        }
+
+        Close(apply: false);
+    }
+
     private void RefreshHighlight()
     {
         for (int i = 0; i < _rows.Count; i++)
         {
-            TMP_Text? row = _rows[i];
-            if (row != null)
-            {
-                row.color = i == _index ? SelectedColor : IdleColor;
-            }
+            Row row = _rows[i];
+            bool selected = i == _index;
+            row.Text.color = selected ? SelectedColor : IdleColor;
+            row.Backdrop.color = selected ? SelectedBackdrop : ClearBackdrop;
         }
     }
 
