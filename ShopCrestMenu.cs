@@ -51,6 +51,7 @@ internal static class ShopCrestMenu
 
     private static List<ToolCrest> _crests = new List<ToolCrest>();
     private static List<ShopItem> _tempItems = new List<ShopItem>();
+    private static ShopItem[] _swapItems = Array.Empty<ShopItem>();
     private static ShopMenuStock? _stock;
     private static Transform? _root;
     private static PlayMakerFSM? _control;
@@ -140,20 +141,27 @@ internal static class ShopCrestMenu
 
             SwapStock(BuildItems());
             BuildLists();
-            int count = stock.GetItemCount();
-            if (count == 0)
+            if (stock.GetItemCount() == 0)
             {
                 return Fallback("live shop built an empty item list");
             }
 
+            // The open event runs FSM actions that read ShopObject, and that getter
+            // re-applies the owner's vanilla stock. Arm the session first so the
+            // owner guard holds, then put our stock back after the event anyway.
+            IsOpen = true;
+            CrestSelectMenu.IsOpen = true;
+
             MoveToHero();
             control.SendEvent(OpenEvent);
+            SwapStock(_swapItems);
+            BuildLists();
+            int count = stock.GetItemCount();
+
             ShopTrace.Begin("SHOP UP");
             LogStock("after SHOP UP");
             ShopRenderDiag.Capture("after SHOP UP", root.transform);
 
-            IsOpen = true;
-            CrestSelectMenu.IsOpen = true;
             root.AddComponent<ShopCrestSession>();
             LogState($"opened with {count} crest entries");
             return true;
@@ -234,7 +242,7 @@ internal static class ShopCrestMenu
     /// </summary>
     private static void SwapStock(ShopItem[] items)
     {
-        Swapped.Clear();
+        _swapItems = items;
         if (_root == null)
         {
             return;
@@ -242,14 +250,49 @@ internal static class ShopCrestMenu
 
         foreach (ShopMenuStock stock in _root.GetComponentsInChildren<ShopMenuStock>(true))
         {
-            if (StockArrayField?.GetValue(stock) is ShopItem[] original)
+            if (!Swapped.ContainsKey(stock) && StockArrayField?.GetValue(stock) is ShopItem[] original)
             {
                 Swapped[stock] = original;
             }
 
             stock.SetStock(items);
             stock.SetWasItemPurchased(false);
+            Plugin.Log.LogInfo(
+                $"{StockTrace.Tag} our swap: stock='{Path(stock.transform)}' array={items.Length}" +
+                $" items=[{StockTrace.Names(items)}] field={StockTrace.Field(stock)}");
         }
+    }
+
+    /// <summary>
+    /// Puts our stock back when the game overwrote the field after the window was
+    /// opened. Called every frame of the session; a reference check keeps it cheap.
+    /// </summary>
+    internal static void ReassertStock()
+    {
+        if (!IsOpen || _root == null || _swapItems.Length == 0)
+        {
+            return;
+        }
+
+        bool lost = false;
+        foreach (KeyValuePair<ShopMenuStock, ShopItem[]> pair in Swapped)
+        {
+            if (pair.Key != null && StockArrayField?.GetValue(pair.Key) != _swapItems)
+            {
+                lost = true;
+                break;
+            }
+        }
+
+        if (!lost)
+        {
+            return;
+        }
+
+        Plugin.Log.LogWarning($"{StockTrace.Tag} stock overwritten during session, re-applying [{StockTrace.Names(_swapItems)}]");
+        SwapStock(_swapItems);
+        BuildLists();
+        LogStock("reasserted");
     }
 
     /// <summary>
@@ -461,6 +504,7 @@ internal static class ShopCrestMenu
         TempItems.Clear();
         DestroyTempItems();
         Swapped.Clear();
+        _swapItems = Array.Empty<ShopItem>();
         _crests = new List<ToolCrest>();
         _stock = null;
         _root = null;
@@ -750,7 +794,7 @@ internal static class ShopCrestMenu
     }
 
     /// <summary>Scene path of a transform, for telling the two stock lists apart.</summary>
-    private static string Path(Transform transform)
+    internal static string Path(Transform transform)
     {
         string path = transform.name;
         Transform? current = transform.parent;
@@ -856,6 +900,8 @@ internal sealed class ShopCrestSession : MonoBehaviour
                 _renderCaptured = true;
                 ShopRenderDiag.Capture("session settled", transform);
             }
+
+            ShopCrestMenu.ReassertStock();
 
             if (ShopCrestMenu.ClosedByFsm())
             {
