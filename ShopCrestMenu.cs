@@ -40,6 +40,9 @@ internal static class ShopCrestMenu
     private static readonly FieldInfo? StockArrayField =
         typeof(ShopMenuStock).GetField("stock", PrivateInstance);
 
+    private static readonly FieldInfo? AvailableStockField =
+        typeof(ShopMenuStock).GetField("availableStock", PrivateInstance);
+
     private static readonly FieldInfo? TopYField = typeof(ShopItemStats).GetField("topY", PrivateInstance);
     private static readonly FieldInfo? BotYField = typeof(ShopItemStats).GetField("botY", PrivateInstance);
 
@@ -51,7 +54,10 @@ internal static class ShopCrestMenu
     private static ShopMenuStock? _stock;
     private static Transform? _root;
     private static PlayMakerFSM? _control;
-    private static ShopItem[]? _origStock;
+
+    /// <summary>Vanilla stock per swapped stock component, restored on close.</summary>
+    private static readonly Dictionary<ShopMenuStock, ShopItem[]> Swapped =
+        new Dictionary<ShopMenuStock, ShopItem[]>();
     private static Vector3 _origPosition;
     private static float _boundShift;
     private static bool _fromDialogue;
@@ -59,6 +65,12 @@ internal static class ShopCrestMenu
 
     /// <summary>True while the live shop window is showing our crests.</summary>
     internal static bool IsOpen { get; set; }
+
+    /// <summary>
+    /// True while the live shop window is ours: NPC dialogue must not pop up over it.
+    /// Set before the open event is sent, cleared when the session is reset.
+    /// </summary>
+    internal static bool SuppressDialogue { get; private set; }
 
     /// <summary>
     /// Swaps the live shop stock for <paramref name="crests"/> and opens the window.
@@ -121,14 +133,13 @@ internal static class ShopCrestMenu
             _stock = stock;
             _root = root.transform;
             _control = control;
-            _origStock = origStock;
             _origPosition = root.transform.position;
             _crests = new List<ToolCrest>(crests);
             _fromDialogue = fromDialogue;
+            SuppressDialogue = true;
 
-            stock.SetStock(BuildItems());
+            SwapStock(BuildItems());
             BuildLists();
-            stock.SetWasItemPurchased(false);
             int count = stock.GetItemCount();
             if (count == 0)
             {
@@ -138,6 +149,7 @@ internal static class ShopCrestMenu
             MoveToHero();
             control.SendEvent(OpenEvent);
             ShopTrace.Begin("SHOP UP");
+            LogStock("after SHOP UP");
             ShopRenderDiag.Capture("after SHOP UP", root.transform);
 
             IsOpen = true;
@@ -213,6 +225,30 @@ internal static class ShopCrestMenu
         foreach (ShopMenuStock stock in _root.GetComponentsInChildren<ShopMenuStock>(true))
         {
             stock.BuildItemList();
+        }
+    }
+
+    /// <summary>
+    /// Puts <paramref name="items"/> on the root window and on every nested stock
+    /// list, so no list keeps a vanilla array. Original arrays are kept for restore.
+    /// </summary>
+    private static void SwapStock(ShopItem[] items)
+    {
+        Swapped.Clear();
+        if (_root == null)
+        {
+            return;
+        }
+
+        foreach (ShopMenuStock stock in _root.GetComponentsInChildren<ShopMenuStock>(true))
+        {
+            if (StockArrayField?.GetValue(stock) is ShopItem[] original)
+            {
+                Swapped[stock] = original;
+            }
+
+            stock.SetStock(items);
+            stock.SetWasItemPurchased(false);
         }
     }
 
@@ -387,12 +423,17 @@ internal static class ShopCrestMenu
 
         try
         {
-            if (_stock != null && _origStock != null)
+            foreach (KeyValuePair<ShopMenuStock, ShopItem[]> pair in Swapped)
             {
-                _stock.SetStock(_origStock);
-                BuildLists();
-                _stock.SetWasItemPurchased(false);
+                if (pair.Key != null)
+                {
+                    pair.Key.SetStock(pair.Value);
+                    pair.Key.SetWasItemPurchased(false);
+                }
             }
+
+            Swapped.Clear();
+            BuildLists();
 
             if (_root != null)
             {
@@ -419,14 +460,15 @@ internal static class ShopCrestMenu
     {
         TempItems.Clear();
         DestroyTempItems();
+        Swapped.Clear();
         _crests = new List<ToolCrest>();
         _stock = null;
         _root = null;
         _control = null;
-        _origStock = null;
         _boundShift = 0f;
         _fromDialogue = false;
         _sawOpenState = false;
+        SuppressDialogue = false;
     }
 
     /// <summary>Destroys the temp scriptable objects so they do not accumulate.</summary>
@@ -640,6 +682,87 @@ internal static class ShopCrestMenu
         return string.Join(",", parts);
     }
 
+    /// <summary>
+    /// Read-only dump of the live window stock: every stock component with its item
+    /// count and list, then every row. Answers which object feeds the visible items.
+    /// </summary>
+    /// <param name="label">Moment the dump was taken, written into every line.</param>
+    internal static void LogStock(string label)
+    {
+        try
+        {
+            if (_root == null)
+            {
+                Plugin.Log.LogInfo($"[STOCK] {label}: no shop root.");
+                return;
+            }
+
+            foreach (ShopMenuStock stock in _root.GetComponentsInChildren<ShopMenuStock>(true))
+            {
+                LogStockComponent(label, stock);
+            }
+
+            ShopItemStats[] rows = _root.GetComponentsInChildren<ShopItemStats>(true);
+            Plugin.Log.LogInfo($"[STOCK] {label}: rows={rows.Length}");
+            foreach (ShopItemStats row in rows)
+            {
+                if (row == null)
+                {
+                    continue;
+                }
+
+                ShopItem? item = row.Item;
+                Plugin.Log.LogInfo(
+                    $"[STOCK] {label}: row '{Path(row.transform)}' num={row.ItemNumber}" +
+                    $" item='{(item != null ? item.name : "<none>")}' cost={(item != null ? item.Cost : -1)}" +
+                    $" activeSelf={row.gameObject.activeSelf} inHierarchy={row.gameObject.activeInHierarchy}");
+            }
+        }
+        catch (Exception ex)
+        {
+            Plugin.Log.LogWarning($"[STOCK] dump '{label}' failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>Logs one stock component: count, master list and each available entry.</summary>
+    private static void LogStockComponent(string label, ShopMenuStock stock)
+    {
+        List<ShopItemStats>? list = AvailableStockField?.GetValue(stock) as List<ShopItemStats>;
+        Plugin.Log.LogInfo(
+            $"[STOCK] {label}: stock '{Path(stock.transform)}' count={stock.GetItemCount()}" +
+            $" list={(list != null ? list.Count : -1)}" +
+            $" master={(stock.MasterList != null ? Path(stock.MasterList.transform) : "<none>")}");
+        if (list == null)
+        {
+            return;
+        }
+
+        for (int i = 0; i < list.Count; i++)
+        {
+            ShopItemStats? entry = list[i];
+            ShopItem? item = entry != null ? entry.Item : null;
+            Plugin.Log.LogInfo(
+                $"[STOCK] {label}:   [{i}] row='{(entry != null ? Path(entry.transform) : "<none>")}'" +
+                $" name='{(item != null ? item.name : "<none>")}'" +
+                $" display='{(item != null ? item.DisplayName : "<none>")}'" +
+                $" cost={(item != null ? item.Cost : -1)}");
+        }
+    }
+
+    /// <summary>Scene path of a transform, for telling the two stock lists apart.</summary>
+    private static string Path(Transform transform)
+    {
+        string path = transform.name;
+        Transform? current = transform.parent;
+        while (current != null)
+        {
+            path = current.name + "/" + path;
+            current = current.parent;
+        }
+
+        return path;
+    }
+
     private static float Float(FieldInfo? field, object target)
     {
         return field?.GetValue(target) is float value ? value : float.NaN;
@@ -703,11 +826,14 @@ internal sealed class ShopCrestSession : MonoBehaviour
 
     private int _frames;
     private float _deadline;
+    private float _openedAt;
     private bool _renderCaptured;
+    private bool _stockLogged;
 
     private void Start()
     {
         _deadline = Time.unscaledTime + TimeoutSeconds;
+        _openedAt = Time.unscaledTime;
     }
 
     private void Update()
@@ -717,6 +843,12 @@ internal sealed class ShopCrestSession : MonoBehaviour
             if (_frames++ == 1)
             {
                 ShopCrestMenu.LogRows();
+            }
+
+            if (!_stockLogged && Time.unscaledTime - _openedAt >= 0.5f)
+            {
+                _stockLogged = true;
+                ShopCrestMenu.LogStock("settled +0.5s");
             }
 
             if (!_renderCaptured && _frames > 40)
@@ -764,5 +896,72 @@ internal static class ShopTempPurchasePatch
     private static void Postfix(ShopItemStats __instance)
     {
         ShopCrestMenu.HandleTempPurchase(__instance);
+    }
+}
+
+/// <summary>
+/// Keeps every NPC dialogue out of the way while our shop window is up. The
+/// overload with the full argument list is the one the two shorter overloads
+/// delegate to, so one prefix covers all three entry points.
+/// </summary>
+[HarmonyPatch(typeof(DialogueBox), "StartConversation",
+    new[] { typeof(string), typeof(NPCControlBase), typeof(bool), typeof(DialogueBox.DisplayOptions), typeof(Action), typeof(Action) })]
+internal static class DialogueSuppressPatch
+{
+    private static bool Prefix(string text, NPCControlBase instigator)
+    {
+        try
+        {
+            if (!ShopCrestMenu.SuppressDialogue)
+            {
+                return true;
+            }
+
+            string who = instigator != null ? instigator.name : "<none>";
+            Plugin.Log.LogInfo($"[SHOP] dialogue suppressed: instigator='{who}' text='{Short(text)}'");
+            return false;
+        }
+        catch (Exception ex)
+        {
+            Plugin.Log.LogWarning($"[SHOP] dialogue suppress check failed: {ex.Message}");
+            return true;
+        }
+    }
+
+    private static string Short(string? text)
+    {
+        if (string.IsNullOrEmpty(text))
+        {
+            return string.Empty;
+        }
+
+        return text!.Length <= 60 ? text : text.Substring(0, 60) + "...";
+    }
+}
+
+/// <summary>
+/// Stops the owner from re-applying its vanilla stock over ours: touching
+/// <c>ShopObject</c> calls this, and SetStock would replace our temp entries.
+/// Skipped only while our live shop session is up; the window itself already exists.
+/// </summary>
+[HarmonyPatch(typeof(ShopOwnerBase), "SpawnUpdateShop")]
+internal static class ShopOwnerStockResetPatch
+{
+    private static bool Prefix()
+    {
+        try
+        {
+            if (ShopCrestMenu.IsOpen)
+            {
+                Plugin.Log.LogInfo("[STOCK] owner stock re-apply blocked during crest session");
+                return false;
+            }
+        }
+        catch (Exception ex)
+        {
+            Plugin.Log.LogWarning($"[STOCK] owner stock guard failed: {ex.Message}");
+        }
+
+        return true;
     }
 }
