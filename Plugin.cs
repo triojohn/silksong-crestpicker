@@ -104,6 +104,7 @@ public sealed class Plugin : BaseUnityPlugin
             ShopDiag.DumpShopNpc();
             ShopDiag.DumpLiveShop();
             ShopTrace.Begin("hotkey");
+            ShopRenderDiag.Capture("hotkey", null);
         }
 
         if (!IsInGame() || CrestSelectMenu.IsOpen)

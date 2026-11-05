@@ -138,6 +138,7 @@ internal static class ShopCrestMenu
             MoveToHero();
             control.SendEvent(OpenEvent);
             ShopTrace.Begin("SHOP UP");
+            ShopRenderDiag.Capture("after SHOP UP", root.transform);
 
             IsOpen = true;
             CrestSelectMenu.IsOpen = true;
@@ -307,6 +308,50 @@ internal static class ShopCrestMenu
         _boundShift = next.y - _origPosition.y;
         ShiftRowBounds(_boundShift);
         LogState($"placed at hero={Vec(hero)} panel={Vec(panelCentre)}");
+    }
+
+    /// <summary>
+    /// Alternative placement: shifts the window so the panel centre lands in the middle
+    /// of the HUD viewport, keeping the panel depth. Row fade bounds move with it.
+    /// </summary>
+    /// <returns>True when the window was moved.</returns>
+    internal static bool RecenterIntoViewport()
+    {
+        try
+        {
+            if (_root == null)
+            {
+                return false;
+            }
+
+            GameCameras? cams = GameCameras.SilentInstance;
+            Camera? cam = cams != null && cams.hudCamera != null ? cams.hudCamera : Camera.main;
+            if (cam == null)
+            {
+                Plugin.Log.LogWarning("[RENDER] recentre skipped: no HUD camera and no Camera.main.");
+                return false;
+            }
+
+            Transform reference = _root.Find("Window/Shop_Backboard") ?? _root.Find("Window") ?? _root;
+            Vector3 panel = reference.position;
+            Vector3 viewport = cam.WorldToViewportPoint(panel);
+            Vector3 target = cam.ViewportToWorldPoint(new Vector3(0.5f, 0.5f, viewport.z));
+            Vector3 delta = target - panel;
+            delta.z = 0f;
+            Vector3 before = _root.position;
+            _root.position = before + delta;
+            _boundShift += delta.y;
+            ShiftRowBounds(delta.y);
+            Plugin.Log.LogInfo(
+                $"[RENDER] recentre root {Vec(before)} -> {Vec(_root.position)}" +
+                $" delta={Vec(delta)} panelVpBefore={Vec(viewport)} cam='{cam.name}'");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Plugin.Log.LogWarning($"[RENDER] recentre failed: {ex.Message}");
+            return false;
+        }
     }
 
     /// <summary>Adds <paramref name="dy"/> to every row's world-space fade bounds.</summary>
@@ -658,6 +703,7 @@ internal sealed class ShopCrestSession : MonoBehaviour
 
     private int _frames;
     private float _deadline;
+    private bool _renderCaptured;
 
     private void Start()
     {
@@ -671,6 +717,12 @@ internal sealed class ShopCrestSession : MonoBehaviour
             if (_frames++ == 1)
             {
                 ShopCrestMenu.LogRows();
+            }
+
+            if (!_renderCaptured && _frames > 40)
+            {
+                _renderCaptured = true;
+                ShopRenderDiag.Capture("session settled", transform);
             }
 
             if (ShopCrestMenu.ClosedByFsm())
