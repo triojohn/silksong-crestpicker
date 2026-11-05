@@ -28,6 +28,7 @@ internal static class ShopCrestMenu
     private static List<ToolCrest> _crests = new List<ToolCrest>();
     private static ShopMenuStock? _stock;
     private static GameObject? _clone;
+    private static Transform? _liveRoot;
     private static bool _fromDialogue;
 
     /// <summary>True while a cloned shop window is on screen.</summary>
@@ -70,7 +71,9 @@ internal static class ShopCrestMenu
                 return Fallback("shop prefab copy has no ShopMenuStock");
             }
 
-            PlaceLikeLiveShop(clone.transform);
+            Transform? live = LiveShop()?.transform;
+            _liveRoot = live;
+            PlaceLikeLiveShop(clone.transform, live);
             stock.MasterList = null;
             _crests = new List<ToolCrest>(crests);
             _stock = stock;
@@ -78,12 +81,20 @@ internal static class ShopCrestMenu
             _fromDialogue = fromDialogue;
             stock.SetStock(BuildItems());
             stock.BuildItemList();
+            stock.SetWasItemPurchased(false);
             if (stock.GetItemCount() == 0)
             {
                 return Fallback("shop built an empty item list");
             }
 
             clone.SetActive(true);
+            if (live != null)
+            {
+                ShopCloneMirror.Mirror(live, clone.transform);
+            }
+
+            ShopCloneMirror.ForceFades(clone.transform);
+            ShopCloneMirror.ForceRows(stock);
             clone.AddComponent<ShopCrestSession>();
             UnityEngine.Object.Destroy(clone, ShopCrestSession.TimeoutSeconds);
 
@@ -92,6 +103,7 @@ internal static class ShopCrestMenu
             Plugin.Log.LogInfo(
                 $"[SHOP] real shop menu opened: {stock.GetItemCount()} crest entries, " +
                 $"owner='{owner.name}', prefab='{prefab.name}'.");
+            ShopCloneMirror.LogComparison(live, clone.transform);
             return true;
         }
         catch (Exception ex)
@@ -208,6 +220,7 @@ internal static class ShopCrestMenu
 
         _stock.SetStock(items);
         _stock.BuildItemList();
+        ShopCloneMirror.ForceRows(_stock);
     }
 
     /// <summary>Tears down the cloned window; its session resets the shared state.</summary>
@@ -226,23 +239,44 @@ internal static class ShopCrestMenu
         _crests = new List<ToolCrest>();
         _stock = null;
         _clone = null;
+        _liveRoot = null;
         _fromDialogue = false;
     }
 
-    /// <summary>Places the clone at the live shop instance so it appears where the shop is.</summary>
-    private static void PlaceLikeLiveShop(Transform clone)
+    /// <summary>Places the clone where the live shop instance sits and copies its layer.</summary>
+    private static void PlaceLikeLiveShop(Transform clone, Transform? live)
     {
-        if (SpawnedShopField?.GetValue(null) is not ShopMenuStock live || !live.gameObject.activeInHierarchy)
+        if (live == null)
         {
-            Plugin.Log.LogInfo("[SHOP] no active live shop instance, clone keeps prefab transform.");
+            Plugin.Log.LogInfo("[SHOP] no live shop instance, clone keeps prefab transform.");
             return;
         }
 
-        clone.SetParent(live.transform.parent, false);
-        clone.localPosition = live.transform.localPosition;
-        clone.localRotation = live.transform.localRotation;
-        clone.localScale = live.transform.localScale;
+        clone.SetParent(live.parent, false);
+        clone.localPosition = live.localPosition;
+        clone.localRotation = live.localRotation;
+        clone.localScale = live.localScale;
+        clone.gameObject.layer = live.gameObject.layer;
         Plugin.Log.LogInfo("[SHOP] clone placed at the live shop transform.");
+    }
+
+    /// <summary>The spawned shop window of the scene, even while it is hidden.</summary>
+    private static ShopMenuStock? LiveShop()
+    {
+        return SpawnedShopField?.GetValue(null) as ShopMenuStock;
+    }
+
+    /// <summary>Logs live vs clone state once the clone has been through a frame.</summary>
+    internal static void LogCloneState()
+    {
+        try
+        {
+            ShopCloneMirror.LogComparison(_liveRoot, _clone?.transform);
+        }
+        catch (Exception ex)
+        {
+            Plugin.Log.LogWarning($"[SHOP] clone state log failed: {ex.Message}");
+        }
     }
 
     /// <summary>First active scene shop owner; asset copies are ignored.</summary>
@@ -295,10 +329,17 @@ internal sealed class ShopCrestSession : MonoBehaviour
     /// <summary>Upper bound on how long a forgotten clone can stay in the scene.</summary>
     internal const float TimeoutSeconds = 900f;
 
+    private int _frames;
+
     private void Update()
     {
         try
         {
+            if (_frames++ == 1)
+            {
+                ShopCrestMenu.LogCloneState();
+            }
+
             HeroActions? actions = ManagerSingleton<InputHandler>.Instance?.inputActions;
             if (actions == null)
             {

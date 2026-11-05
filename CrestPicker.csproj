@@ -63,6 +63,10 @@
       <HintPath>$(GameManagedDir)/TeamCherry.Localization.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <Reference Include="TeamCherry.NestedFadeGroup">
+      <HintPath>$(GameManagedDir)/TeamCherry.NestedFadeGroup.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
     <Reference Include="PlayMaker">
       <HintPath>$(GameManagedDir)/PlayMaker.dll</HintPath>
       <Private>false</Private>
