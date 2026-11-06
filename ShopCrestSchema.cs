@@ -171,59 +171,10 @@ internal static class ShopCrestSchema
         try
         {
             Apply();
-            ApplyFade();
         }
         catch (Exception ex)
         {
             Plugin.Log.LogWarning($"[SCHEMA] tick failed: {ex.Message}");
-        }
-    }
-
-    /// <summary>
-    /// Fades the schemas with the window. The containers live under the neutral schema
-    /// root, outside every fade group, so the vanilla alpha never reaches their bare
-    /// <c>SpriteRenderer</c>s: each one gets its base colour times the root alpha, and a
-    /// cloned crest card gets the alpha on its own fade groups.
-    /// </summary>
-    private static void ApplyFade()
-    {
-        if (_detailsSchema == null && _confirmSchema == null)
-        {
-            return;
-        }
-
-        float alpha = Mathf.Clamp01(ShopCrestMenu.FadeAlpha);
-        ApplyFade(_detailsSchema, alpha);
-        ApplyFade(_confirmSchema, alpha);
-    }
-
-    /// <summary>Applies one window alpha to one schema, unless it already has that value.</summary>
-    private static void ApplyFade(Schema? schema, float alpha)
-    {
-        if (schema == null || Mathf.Approximately(schema.LastAlpha, alpha))
-        {
-            return;
-        }
-
-        schema.LastAlpha = alpha;
-        foreach (KeyValuePair<SpriteRenderer, Color> tint in schema.Tints)
-        {
-            if (tint.Key == null)
-            {
-                continue;
-            }
-
-            Color color = tint.Value;
-            color.a = tint.Value.a * alpha;
-            tint.Key.color = color;
-        }
-
-        foreach (NestedFadeGroupBase group in schema.Fades)
-        {
-            if (group != null)
-            {
-                group.AlphaSelf = alpha;
-            }
         }
     }
 
@@ -440,17 +391,6 @@ internal static class ShopCrestSchema
                     container.position += shift;
                 }
             }
-        }
-
-        // PlaceAt drops Z, so the container stays at the window root depth (-1.86) while
-        // the vanilla confirm picture sits at -4.86 and ends up behind the schema. Take
-        // the picture's own world Z; sorting stays untouched.
-        Transform? picture = _confirmGroup != null ? _confirmGroup.Find("Item Sprite") : null;
-        if (picture != null)
-        {
-            Vector3 position = container.position;
-            position.z = picture.position.z;
-            container.position = position;
         }
 
         if (!schema.PlacedLogged)
@@ -871,7 +811,6 @@ internal static class ShopCrestSchema
             TargetWidth = targetW,
             PanelSize = panel,
         };
-        schema.Tints.Add(new KeyValuePair<SpriteRenderer, Color>(body, body.color));
         AddDots(schema, crest, reference);
         Fit(schema);
         LogSprites(vanilla ? "vanilla" : "generated");
@@ -927,6 +866,9 @@ internal static class ShopCrestSchema
             SpriteRenderer dot = schema.Dots[i];
             Transform scale = dot.transform;
             float target = wanted * (schema.Locked[i] ? LockedDotFactor : 1f);
+            Color color = dot.color;
+            color.a = schema.Locked[i] ? LockedAlpha : 1f;
+            dot.color = color;
 
             for (int attempt = 0; attempt < MaxDotAttempts; attempt++)
             {
@@ -1269,14 +1211,6 @@ internal static class ShopCrestSchema
                 TargetWidth = targetW,
                 PanelSize = panel,
             };
-            foreach (NestedFadeGroupBase group in clone.GetComponentsInChildren<NestedFadeGroupBase>(true))
-            {
-                if (group != null)
-                {
-                    schema.Fades.Add(group);
-                }
-            }
-
             Fit(schema);
             float whole = ContainerHeight(clone.transform);
             Plugin.Log.LogInfo($"[SCHEMA] {label} cloned from '{source.name}'" +
@@ -1613,14 +1547,10 @@ internal static class ShopCrestSchema
             Vector3 local = new Vector3(position.x, position.y, 0f);
             renderer.transform.localPosition = local;
             renderer.transform.localScale = new Vector3(approx, approx, 1f);
-            bool locked = IsLocked(crest, i, slot);
-            Color baseColor = TypeColor(slot.Type);
-            baseColor.a = locked ? LockedAlpha : 1f;
-            renderer.color = baseColor;
-            schema.Tints.Add(new KeyValuePair<SpriteRenderer, Color>(renderer, baseColor));
+            renderer.color = TypeColor(slot.Type);
             schema.Dots.Add(renderer);
             schema.BasePositions.Add(local);
-            schema.Locked.Add(locked);
+            schema.Locked.Add(IsLocked(crest, i, slot));
             schema.DotDone.Add(false);
         }
     }
@@ -1797,16 +1727,6 @@ internal static class ShopCrestSchema
 
         /// <summary>Locked flag per dot, in creation order.</summary>
         internal List<bool> Locked { get; } = new List<bool>();
-
-        /// <summary>Renderers whose colour we own, with their base colour.</summary>
-        internal List<KeyValuePair<SpriteRenderer, Color>> Tints { get; } =
-            new List<KeyValuePair<SpriteRenderer, Color>>();
-
-        /// <summary>Fade groups of a cloned crest card, driven by the window alpha.</summary>
-        internal List<NestedFadeGroupBase> Fades { get; } = new List<NestedFadeGroupBase>();
-
-        /// <summary>Window alpha applied on the last tick; -1 before the first.</summary>
-        internal float LastAlpha { get; set; } = -1f;
 
         /// <summary>Fit-done flag per dot, in creation order.</summary>
         internal List<bool> DotDone { get; } = new List<bool>();
