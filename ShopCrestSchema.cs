@@ -2,11 +2,25 @@ using System;
 using System.Collections.Generic;
 using System.Reflection;
 using GlobalSettings;
+using HutongGames.PlayMaker;
 using TeamCherry.NestedFadeGroup;
 using TMProOld;
 using UnityEngine;
 
 namespace CrestPicker;
+
+/// <summary>How <see cref="ShopCrestSchema"/> draws the crest body.</summary>
+internal enum SchemaRenderMode
+{
+    /// <summary>Instantiate the live vanilla crest card of the selected crest.</summary>
+    Clone,
+
+    /// <summary>Draw the silhouette and the vanilla <c>templateSlots</c> icons.</summary>
+    VanillaSprites,
+
+    /// <summary>Draw the silhouette and generated circle dots.</summary>
+    Generated,
+}
 
 /// <summary>
 /// Cosmetic pass over the shop details panel while our crests are shown: the crest
@@ -64,6 +78,7 @@ internal static class ShopCrestSchema
     private static ToolCrest? _builtFor;
     private static Sprite? _dotSprite;
     private static bool _missingLogged;
+    private static bool _confirmLogged;
 
     /// <summary>Flags for the private fields read off the vanilla crest widgets.</summary>
     private const BindingFlags PrivateInstance = BindingFlags.Instance | BindingFlags.NonPublic;
@@ -84,6 +99,9 @@ internal static class ShopCrestSchema
 
     /// <summary>True to draw the crest schema at all.</summary>
     internal static bool Enabled = true;
+
+    /// <summary>How the schema body is drawn; clone keeps the vanilla crest card.</summary>
+    internal static SchemaRenderMode Render = SchemaRenderMode.Clone;
 
     /// <summary>Multiplier applied to the schema size.</summary>
     internal static float Scale = 1f;
@@ -259,7 +277,9 @@ internal static class ShopCrestSchema
     /// <summary>
     /// Empty when the confirm schema belongs on screen, otherwise why it does not:
     /// our schema replaces the vanilla item picture, so it follows the confirmation
-    /// text the game actually shows, not the bare group activity.
+    /// text the game actually shows, not the bare group activity. The game hides that
+    /// text with alpha and <c>MeshRenderer.enabled</c>, so <c>activeInHierarchy</c> alone
+    /// lies; when neither can be read the item list FSM state decides instead.
     /// </summary>
     private static string ConfirmHiddenReason()
     {
@@ -268,7 +288,8 @@ internal static class ShopCrestSchema
             return "no group";
         }
 
-        if (!_confirmGroup.gameObject.activeInHierarchy)
+        GameObject group = _confirmGroup.gameObject;
+        if (!group.activeInHierarchy)
         {
             return "group inactive";
         }
@@ -278,12 +299,111 @@ internal static class ShopCrestSchema
             return "no confirm msg";
         }
 
-        if (!_confirmMessage.gameObject.activeInHierarchy)
+        GameObject message = _confirmMessage.gameObject;
+        float groupAlpha = AlphaOf(_confirmGroup);
+        float messageAlpha = AlphaOf(message.transform);
+        MeshRenderer? mesh = MessageRenderer(message);
+        bool meshEnabled = mesh != null && mesh.enabled;
+        bool messageActive = message.activeInHierarchy;
+        string state = ItemListState() ?? "?";
+
+        if (!_confirmLogged)
+        {
+            _confirmLogged = true;
+            Plugin.Log.LogInfo($"[SCHEMA] confirm group activeSelf={group.activeSelf}" +
+                $" inHierarchy={group.activeInHierarchy} alpha={groupAlpha:F2}" +
+                $" msgActive={messageActive} msgAlpha={messageAlpha:F2}" +
+                $" meshEnabled={meshEnabled} state={state}");
+        }
+
+        if (mesh == null || messageAlpha < 0f)
+        {
+            return ConfirmStates.Contains(state) ? string.Empty : $"state {state}";
+        }
+
+        if (!messageActive)
         {
             return "confirm msg inactive";
         }
 
+        if (!meshEnabled)
+        {
+            return "confirm mesh disabled";
+        }
+
+        if (messageAlpha <= 0.01f)
+        {
+            return "confirm msg faded";
+        }
+
         return string.IsNullOrEmpty(SafeText(_confirmMessage)) ? "confirm msg empty" : string.Empty;
+    }
+
+    /// <summary>Item list FSM states in which the vanilla confirm group is on screen.</summary>
+    private static readonly HashSet<string> ConfirmStates = new HashSet<string>
+    {
+        "Activate Confirm Group",
+        "Money Cost",
+        "Item Cost",
+        "Activate Confirm",
+        "Check Sub Items",
+        "To Confirm",
+        "Activate Yes No",
+    };
+
+    /// <summary>Fade alpha of an object or its nearest parent up to the confirm group; -1 when unreadable.</summary>
+    private static float AlphaOf(Transform target)
+    {
+        Transform? current = target;
+        while (current != null)
+        {
+            NestedFadeGroupBase? group = current.GetComponent<NestedFadeGroupBase>();
+            if (group != null)
+            {
+                return group.AlphaSelf;
+            }
+
+            if (current == _confirmGroup)
+            {
+                break;
+            }
+
+            current = current.parent;
+        }
+
+        return -1f;
+    }
+
+    /// <summary>Mesh renderer that actually draws the confirm message text.</summary>
+    private static MeshRenderer? MessageRenderer(GameObject message)
+    {
+        MeshRenderer? own = message.GetComponent<MeshRenderer>();
+        return own != null ? own : message.GetComponentInChildren<MeshRenderer>(true);
+    }
+
+    /// <summary>Active state name of the item list FSM, or null when it is out of reach.</summary>
+    private static string? ItemListState()
+    {
+        if (_root == null)
+        {
+            return null;
+        }
+
+        Transform? list = _root.Find("Item List Group/Item List");
+        if (list == null)
+        {
+            foreach (Transform child in _root.GetComponentsInChildren<Transform>(true))
+            {
+                if (child != null && child.name == "Item List")
+                {
+                    list = child;
+                    break;
+                }
+            }
+        }
+
+        PlayMakerFSM? fsm = list != null ? list.GetComponent<PlayMakerFSM>() : null;
+        return fsm != null ? fsm.ActiveStateName : null;
     }
 
     /// <summary>World bounds of a UI panel: rect corners, then child renderers, then its position.</summary>
@@ -461,6 +581,7 @@ internal static class ShopCrestSchema
         _detailsSchema = BuildSchema(crest, silhouette, darkened, DetailsParent(), 1f, "Crest Schema");
         _confirmSchema = BuildSchema(crest, silhouette, darkened, ConfirmGroup(), ConfirmScale,
             "Confirm Crest Schema");
+        Plugin.Log.LogInfo($"[SCHEMA] built '{crest.name}' mode={Render} live={LiveContainers()}");
     }
 
     /// <summary>
@@ -486,8 +607,7 @@ internal static class ShopCrestSchema
         SpriteRenderer? reference = ReferenceRenderer() ?? BackboardRenderer();
         float targetH = BaseHeight * Scale * sizeFactor;
 
-        bool vanilla = TemplateSprites() != null;
-        if (!vanilla)
+        if (Render == SchemaRenderMode.Clone)
         {
             Schema? clone = CloneSchema(crest, parent, targetH, label);
             if (clone != null)
@@ -497,6 +617,7 @@ internal static class ShopCrestSchema
             }
         }
 
+        bool vanilla = Render != SchemaRenderMode.Generated && TemplateSprites() != null;
         GameObject container = new GameObject(label);
         // A plain Transform child: layout groups only lay out RectTransform children,
         // so this container keeps its hand-placed position.
@@ -647,7 +768,9 @@ internal static class ShopCrestSchema
             return true;
         }
 
-        float measuredH = WorldHeight(schema.Body);
+        float measuredH = schema.FitWhole
+            ? ContainerHeight(schema.Container.transform)
+            : WorldHeight(schema.Body);
         if (measuredH <= 0.0001f)
         {
             return false;
@@ -658,6 +781,32 @@ internal static class ShopCrestSchema
         transform.localScale *= scaleApplied;
         schema.ContainerFitted = true;
         return true;
+    }
+
+    /// <summary>World height of everything drawn under a root, used to fit a whole clone.</summary>
+    private static float ContainerHeight(Transform target)
+    {
+        bool any = false;
+        Bounds bounds = default;
+        foreach (Renderer renderer in target.GetComponentsInChildren<Renderer>(true))
+        {
+            if (renderer == null || (renderer is SpriteRenderer sprite && sprite.sprite == null))
+            {
+                continue;
+            }
+
+            if (any)
+            {
+                bounds.Encapsulate(renderer.bounds);
+            }
+            else
+            {
+                bounds = renderer.bounds;
+                any = true;
+            }
+        }
+
+        return any ? bounds.size.y : 0f;
     }
 
     /// <summary>True when the measured height is within the dot tolerance of the wanted one.</summary>
@@ -772,6 +921,11 @@ internal static class ShopCrestSchema
     /// <summary>Sprite of one slot type: the vanilla template sprite, else the generated circle.</summary>
     private static Sprite? DotSprite(ToolItemType type)
     {
+        if (Render == SchemaRenderMode.Generated)
+        {
+            return DotSprite();
+        }
+
         Sprite?[]? sprites = TemplateSprites();
         int index = (int)type;
         if (sprites != null && index >= 0 && index < sprites.Length && sprites[index] != null)
@@ -834,10 +988,15 @@ internal static class ShopCrestSchema
                 return null;
             }
 
-            Schema schema = new Schema(label, clone, body, targetH);
+            Schema schema = new Schema(label, clone, body, targetH)
+            {
+                FitWhole = true,
+            };
             Fit(schema);
+            float whole = ContainerHeight(clone.transform);
             Plugin.Log.LogInfo($"[SCHEMA] {label} cloned from '{source.name}'" +
-                $" (active={source.gameObject.activeInHierarchy}) slots={slots.Length}");
+                $" (active={source.gameObject.activeInHierarchy}) slots={slots.Length}" +
+                $" wholeH={whole:F3} targetH={targetH:F3}");
             return schema;
         }
         catch (Exception ex)
@@ -1219,6 +1378,9 @@ internal static class ShopCrestSchema
         /// <summary>True once the container reached its wanted height.</summary>
         internal bool ContainerFitted { get; set; }
 
+        /// <summary>True when the fit measures every renderer of the container, not just the body.</summary>
+        internal bool FitWhole { get; set; }
+
         /// <summary>True once the fit numbers were logged for this schema.</summary>
         internal bool Logged { get; set; }
 
@@ -1243,20 +1405,59 @@ internal static class ShopCrestSchema
         }
     }
 
-    /// <summary>Destroys the schema objects of the current crest, details and confirm alike.</summary>
+    /// <summary>
+    /// Destroys the schema objects of the current crest, details and confirm alike.
+    /// Containers are switched off at once because <c>Destroy</c> only takes effect at the
+    /// end of the frame: a rebuilt schema would otherwise overlap the old one and show a
+    /// doubled picture on the first frame.
+    /// </summary>
     private static void DestroySchema()
     {
         if (_detailsSchema != null)
         {
-            UnityEngine.Object.Destroy(_detailsSchema.Container);
+            Retire(_detailsSchema.Container);
             _detailsSchema = null;
         }
 
         if (_confirmSchema != null)
         {
-            UnityEngine.Object.Destroy(_confirmSchema.Container);
+            Retire(_confirmSchema.Container);
             _confirmSchema = null;
         }
+    }
+
+    /// <summary>Hides one schema container right away, then destroys it and logs how many stay.</summary>
+    private static void Retire(GameObject container)
+    {
+        if (container == null)
+        {
+            return;
+        }
+
+        container.SetActive(false);
+        UnityEngine.Object.Destroy(container);
+        Plugin.Log.LogInfo($"[SCHEMA] container retired live={LiveContainers()}");
+    }
+
+    /// <summary>Schema containers currently drawn, retired ones excluded.</summary>
+    private static int LiveContainers()
+    {
+        int count = 0;
+        foreach (GameObject go in Resources.FindObjectsOfTypeAll<GameObject>())
+        {
+            if (go == null || !go.scene.isLoaded || go.hideFlags != HideFlags.None ||
+                !go.activeInHierarchy)
+            {
+                continue;
+            }
+
+            if (go.name == "Crest Schema" || go.name == "Confirm Crest Schema")
+            {
+                count++;
+            }
+        }
+
+        return count;
     }
 
     /// <summary>Details panel transform by path, then by name.</summary>

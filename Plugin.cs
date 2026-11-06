@@ -49,6 +49,7 @@ public sealed class Plugin : BaseUnityPlugin
     private ConfigEntry<KeyboardShortcut> _testHotkey = null!;
     private ConfigEntry<KeyboardShortcut> _shopDumpHotkey = null!;
     private ConfigEntry<bool> _showCrestSchema = null!;
+    private ConfigEntry<SchemaRenderMode> _schemaRender = null!;
     private ConfigEntry<float> _crestSchemaScale = null!;
     private ConfigEntry<float> _crestDotSize = null!;
     private ConfigEntry<float> _crestDotOffsetY = null!;
@@ -83,6 +84,10 @@ public sealed class Plugin : BaseUnityPlugin
             "Показывать выбор знака в настоящем окне магазина (сток и позиция восстанавливаются)");
         _showCrestSchema = Config.Bind("General", "ShowCrestSchema", true,
             "Рисовать схему знака (силуэт и цветные точки слотов) в панели деталей магазина");
+        _schemaRender = Config.Bind("General", "SchemaRender", SchemaRenderMode.Clone,
+            "Способ отрисовки схемы знака: clone — клон живого InventoryToolCrest из игры (основной путь), " +
+            "vanillaSprites — силуэт плюс спрайты slotTypeSprite из templateSlots, " +
+            "generated — силуэт плюс сгенерированные кружки. При clone слоты и их точки берутся из клона.");
         _crestSchemaScale = Config.Bind("General", "CrestSchemaScale", 4.5f,
             "Множитель размера схемы знака в панели деталей (схема подтверждения вдвое больше)");
         _crestDotSize = Config.Bind("General", "CrestDotSize", 0.11f,
@@ -109,6 +114,7 @@ public sealed class Plugin : BaseUnityPlugin
         EnableSnailChoice = _enableSnailChoice.Value;
         UseLiveShop = _useLiveShop.Value;
         ShopCrestSchema.Enabled = _showCrestSchema.Value;
+        ShopCrestSchema.Render = _schemaRender.Value;
         ShopCrestSchema.Scale = _crestSchemaScale.Value;
         float dotSizeRaw = _crestDotSize.Value;
         ShopCrestSchema.DotSizeRaw = dotSizeRaw;

@@ -18,6 +18,12 @@ internal static class ShopInputLock
     /// <summary>True while our token is in the hero's blocker set.</summary>
     private static bool _blocked;
 
+    /// <summary>True when <see cref="Block"/> changed the pause flag and it must be restored.</summary>
+    private static bool _pauseSaved;
+
+    /// <summary>Vanilla <c>PauseAllowed</c> value captured on block.</summary>
+    private static bool _pauseWasAllowed = true;
+
     /// <summary>
     /// Takes control away from the hero: removes any leftover lock of ours first, then
     /// adds the blocker and relinquishes control.
@@ -38,6 +44,7 @@ internal static class ShopInputLock
             hero.RegainControl();
             hero.AddInputBlocker(Token);
             hero.RelinquishControl();
+            BlockPause();
             if (!_blocked)
             {
                 Plugin.Log.LogInfo($"[INPUT] blocked ({reason})");
@@ -76,10 +83,70 @@ internal static class ShopInputLock
             hero.RemoveInputBlocker(Token);
             hero.RegainControl();
             Plugin.Log.LogInfo($"[INPUT] unblocked ({reason})");
+            RestorePause();
         }
         catch (Exception ex)
         {
             Plugin.Log.LogWarning($"[INPUT] unblock failed ({reason}): {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Remembers the vanilla pause flag and blocks pausing while our shop is up, the same
+    /// way the vanilla NPC dialogue keeps it blocked. One log line per transition.
+    /// </summary>
+    private static void BlockPause()
+    {
+        if (_pauseSaved)
+        {
+            return;
+        }
+
+        InputHandler? input = Input();
+        if (input == null)
+        {
+            Plugin.Log.LogWarning("[INPUT] pause prevent skipped: no InputHandler");
+            return;
+        }
+
+        _pauseSaved = true;
+        _pauseWasAllowed = input.PauseAllowed;
+        input.PreventPause();
+        Plugin.Log.LogInfo($"[INPUT] pause prevented (was={_pauseWasAllowed})");
+    }
+
+    /// <summary>
+    /// Restores exactly the capture taken in <see cref="BlockPause"/>: a pause that was
+    /// already blocked stays blocked, so the game's own lock is never handed back.
+    /// </summary>
+    private static void RestorePause()
+    {
+        if (!_pauseSaved)
+        {
+            return;
+        }
+
+        _pauseSaved = false;
+        InputHandler? input = Input();
+        if (input != null && _pauseWasAllowed)
+        {
+            input.AllowPause();
+        }
+
+        Plugin.Log.LogInfo($"[INPUT] pause restored (to={_pauseWasAllowed})");
+    }
+
+    /// <summary>Live game input handler, or null while none exists.</summary>
+    private static InputHandler? Input()
+    {
+        try
+        {
+            GameManager? manager = GameManager.instance;
+            return manager != null ? manager.inputHandler : null;
+        }
+        catch (Exception)
+        {
+            return null;
         }
     }
 
