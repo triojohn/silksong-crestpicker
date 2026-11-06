@@ -48,6 +48,10 @@ internal static class ShopCosmetics
     private static readonly Dictionary<TMP_Text, TextState> TextStates =
         new Dictionary<TMP_Text, TextState>();
 
+    /// <summary>Name to write into each row label in the late pass.</summary>
+    private static readonly Dictionary<TMP_Text, string> RowNames =
+        new Dictionary<TMP_Text, string>();
+
     /// <summary>Mesh bounds centre X of every row label, measured before our first shift.</summary>
     private static readonly Dictionary<Transform, float> BaselineCentres =
         new Dictionary<Transform, float>();
@@ -206,12 +210,32 @@ internal static class ShopCosmetics
 
         try
         {
+            ApplyRowNames();
             ApplyConfirmButton();
             ApplyPurchaseText();
         }
         catch (Exception ex)
         {
             Plugin.Log.LogWarning($"[SHOPFX] confirm button late pass failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Writes the crest names in the late pass only: <c>ShopItemStats.SetItem</c> puts the
+    /// price into the same label during its own Update, so a name written earlier in the
+    /// frame is regularly overwritten and the row ends up empty or priced.
+    /// </summary>
+    private static void ApplyRowNames()
+    {
+        foreach (KeyValuePair<TMP_Text, string> pair in RowNames)
+        {
+            TMP_Text? label = pair.Key;
+            if (label == null || label.text == pair.Value)
+            {
+                continue;
+            }
+
+            label.text = pair.Value;
         }
     }
 
@@ -283,6 +307,7 @@ internal static class ShopCosmetics
             LoggedRows.Clear();
             ObjectStates.Clear();
             TextStates.Clear();
+            RowNames.Clear();
             BaselineCentres.Clear();
             BaselinePositions.Clear();
             _confirm = null;
@@ -1026,7 +1051,10 @@ internal static class ShopCosmetics
         return row != null ? ItemSpriteField?.GetValue(row) as SpriteRenderer : null;
     }
 
-    /// <summary>Writes the crest name where the price was and hides the cost icons.</summary>
+    /// <summary>
+    /// Records the crest name for the late pass and hides the cost icons; the text itself
+    /// is written by <see cref="ApplyRowNames"/> after the vanilla price write.
+    /// </summary>
     private static void ReplacePrice(ShopItemStats row, string? name)
     {
         if (string.IsNullOrEmpty(name))
@@ -1040,10 +1068,7 @@ internal static class ShopCosmetics
         if (CostTextField?.GetValue(row) is TMP_Text label && label != null)
         {
             FitLabel(label);
-            if (label.text != name)
-            {
-                label.text = name!;
-            }
+            RowNames[label] = name!;
         }
     }
 

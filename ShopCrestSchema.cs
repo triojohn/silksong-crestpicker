@@ -55,6 +55,9 @@ internal static class ShopCrestSchema
     /// <summary>Confirm group whose vanilla item picture the confirm schema replaces.</summary>
     private const string ConfirmGroupPath = "Item Confirm Group";
 
+    /// <summary>Sorting orders the confirm schema is lifted above the backboard by.</summary>
+    private const int ConfirmOrderOffset = 2;
+
     /// <summary>Silhouette renderer inside the vanilla crest card the clone is fitted by.</summary>
     private const string SilhouetteName = "crestSilhouette";
 
@@ -91,6 +94,7 @@ internal static class ShopCrestSchema
     private static Sprite? _dotSprite;
     private static bool _missingLogged;
     private static bool _confirmLogged;
+    private static bool _confirmOrderLogged;
 
     /// <summary>Bounds the details schema drew on the last frame it was visible.</summary>
     private static Bounds _detailsBounds;
@@ -176,6 +180,41 @@ internal static class ShopCrestSchema
         {
             Plugin.Log.LogWarning($"[SCHEMA] tick failed: {ex.Message}");
         }
+    }
+
+    /// <summary>
+    /// Hides both schema containers as soon as the window starts closing. They live
+    /// outside the fade hierarchy, so the vanilla fade cannot reach them: without this
+    /// they stay opaque while the window already goes dark.
+    /// </summary>
+    internal static void Hide()
+    {
+        try
+        {
+            bool changed = false;
+            changed |= HideContainer(_detailsSchema);
+            changed |= HideContainer(_confirmSchema);
+            if (changed)
+            {
+                Plugin.Log.LogInfo("[SCHEMA] hidden on close");
+            }
+        }
+        catch (Exception ex)
+        {
+            Plugin.Log.LogWarning($"[SCHEMA] hide on close failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>Switches one schema container off; false when it was already off or absent.</summary>
+    private static bool HideContainer(Schema? schema)
+    {
+        if (schema == null || schema.Container == null || !schema.Container.activeSelf)
+        {
+            return false;
+        }
+
+        schema.Container.SetActive(false);
+        return true;
     }
 
     /// <summary>Destroys the schema objects and puts the hidden name back.</summary>
@@ -797,6 +836,7 @@ internal static class ShopCrestSchema
             Schema? clone = CloneSchema(crest, container, content, targetH, targetW, panel, label);
             if (clone != null)
             {
+                LiftConfirm(clone, fitPanel);
                 LogSprites("clone");
                 return clone;
             }
@@ -813,6 +853,7 @@ internal static class ShopCrestSchema
         };
         AddDots(schema, crest, reference);
         Fit(schema);
+        LiftConfirm(schema, fitPanel);
         LogSprites(vanilla ? "vanilla" : "generated");
         return schema;
     }
@@ -1636,6 +1677,46 @@ internal static class ShopCrestSchema
     {
         Transform? backboard = _root != null ? _root.Find("Window/Shop_Backboard") : null;
         return backboard != null ? backboard.GetComponent<SpriteRenderer>() : null;
+    }
+
+    /// <summary>
+    /// Gives the confirm schema its own sorting order instead of one relative to the
+    /// row icon: the vanilla item picture and the backboard both sit below the
+    /// confirmation text, and the schema must not be drawn over by either. The layer
+    /// stays the window's HUD layer. Z is left alone.
+    /// </summary>
+    /// <param name="schema">Schema that was just built.</param>
+    /// <param name="fitPanel">True for the details schema, which keeps its own order.</param>
+    private static void LiftConfirm(Schema schema, bool fitPanel)
+    {
+        if (fitPanel)
+        {
+            return;
+        }
+
+        SpriteRenderer? board = BackboardRenderer();
+        if (board == null || schema.Container == null)
+        {
+            return;
+        }
+
+        int order = board.sortingOrder + ConfirmOrderOffset;
+        foreach (Renderer renderer in schema.Container.GetComponentsInChildren<Renderer>(true))
+        {
+            if (renderer == null)
+            {
+                continue;
+            }
+
+            renderer.sortingLayerID = board.sortingLayerID;
+            renderer.sortingOrder = order;
+        }
+
+        if (!_confirmOrderLogged)
+        {
+            _confirmOrderLogged = true;
+            Plugin.Log.LogInfo($"[SCHEMA] confirm order={order} (backboard={board.sortingOrder})");
+        }
     }
 
     /// <summary>Generated circle used as a slot dot.</summary>

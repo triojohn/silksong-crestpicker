@@ -563,6 +563,24 @@ internal static class ShopCrestMenu
         Plugin.Log.LogInfo($"[SHOP] teardown done emergency prompts={prompts} bordes={bordes} alpha={alpha:F2}");
     }
 
+    /// <summary>
+    /// Puts the root alpha back to the value captured on open, whatever the guard did to
+    /// it: the guard raises the alpha to keep a reused window visible, and leaving it
+    /// raised keeps the window half opaque over the vendor after the close.
+    /// </summary>
+    private static void RestoreAlpha()
+    {
+        if (_fade == null || !_teardownCaptured)
+        {
+            return;
+        }
+
+        bool raised = _guardRaised;
+        _fade.AlphaSelf = _savedAlpha;
+        _guardRaised = false;
+        Plugin.Log.LogInfo($"[SHOP] alpha restored to saved {_savedAlpha:F2} guardRaised={raised}");
+    }
+
     /// <summary>Switches both action prompts off; returns how many were touched.</summary>
     private static int HidePrompts()
     {
@@ -583,9 +601,18 @@ internal static class ShopCrestMenu
         return prompts;
     }
 
-    /// <summary>Puts the prompts back to their captured vanilla state; a no-op when they match.</summary>
+    /// <summary>
+    /// Puts the prompts back to their captured vanilla state only when our own teardown
+    /// switched them off, i.e. on the emergency path. In a normal close the vanilla chain
+    /// owns them and is left alone.
+    /// </summary>
     private static void RestorePrompts()
     {
+        if (!_promptsHidden)
+        {
+            return;
+        }
+
         try
         {
             if (_cancelPrompt != null && _cancelPrompt.activeSelf != _cancelWasActive)
@@ -598,11 +625,8 @@ internal static class ShopCrestMenu
                 _confirmPrompt.SetActive(_confirmWasActive);
             }
 
-            if (_promptsHidden)
-            {
-                _promptsHidden = false;
-                Plugin.Log.LogInfo($"[SHOP] prompts restored cancel={_cancelWasActive} confirm={_confirmWasActive}");
-            }
+            _promptsHidden = false;
+            Plugin.Log.LogInfo($"[SHOP] prompts restored cancel={_cancelWasActive} confirm={_confirmWasActive}");
         }
         catch (Exception ex)
         {
@@ -687,7 +711,8 @@ internal static class ShopCrestMenu
     /// <summary>
     /// Session safety net: the vanilla chain sometimes leaves a reused window faded out
     /// while the FSM says it is open. After 60 such frames the root alpha is raised once,
-    /// and only once per session.
+    /// and only once per session, and only while the window is open and not closing;
+    /// <see cref="RestoreAlpha"/> puts the captured value back on close.
     /// </summary>
     internal static void GuardTeardown()
     {
@@ -877,6 +902,8 @@ internal static class ShopCrestMenu
     /// </param>
     internal static void Restore(string reason = "closed", bool emergency = false)
     {
+        _closing = true;
+        ShopCrestSchema.Hide();
         ShopInputLock.Unblock(reason);
         if (_stock == null && !IsOpen)
         {
@@ -905,6 +932,7 @@ internal static class ShopCrestMenu
                 BuildLists();
             });
             Step("teardown", () => TeardownShop(emergency));
+            Step("alpha", RestoreAlpha);
             Step("prompts", RestorePrompts);
             Step("position", () =>
             {
@@ -967,6 +995,7 @@ internal static class ShopCrestMenu
         _cancelWasActive = true;
         _confirmWasActive = true;
         _guardRaised = false;
+        _promptsHidden = false;
         _lowAlphaFrames = 0;
         _timingLogged = false;
         _purchaseAt = 0f;
