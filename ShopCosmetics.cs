@@ -88,6 +88,9 @@ internal static class ShopCosmetics
     /// <summary>Outstanding row labels, logged when the count changes.</summary>
     private static int _readyLogged;
 
+    /// <summary>True once the first own label and its reference have been logged.</summary>
+    private static bool _labelDiagLogged;
+
     /// <summary>Max label build attempts per row, one per frame, about a second at 60 fps.</summary>
     private const int MaxLabelAttempts = 60;
 
@@ -473,6 +476,7 @@ internal static class ShopCosmetics
         LabelAttempts.Clear();
         LabelGivenUp.Clear();
         _readyLogged = 0;
+        _labelDiagLogged = false;
         _centreTargetX = null;
         _centreSource = "none";
         _centreRows = 0;
@@ -1471,13 +1475,22 @@ internal static class ShopCosmetics
         }
 
         SpriteRenderer? icon = RowIcon(row);
-        GameObject go = new GameObject(OwnLabelName, typeof(RectTransform));
-        go.layer = icon != null ? icon.gameObject.layer : vanilla.gameObject.layer;
-        go.transform.SetParent(vanilla.transform.parent, false);
+        GameObject go;
+        TextMeshPro? text;
+        if (!CloneVanillaLabel(vanilla, out go, out text))
+        {
+            // Last resort: a TMP built from scratch. Its font usually cannot be set, so this
+            // path is only here to keep the row from losing its name entirely.
+            go = new GameObject(OwnLabelName, typeof(RectTransform));
+            go.layer = icon != null ? icon.gameObject.layer : vanilla.gameObject.layer;
+            go.transform.SetParent(vanilla.transform.parent, false);
+            if (!Step("add component", go, attempt, () => text = go.AddComponent<TextMeshPro>()))
+            {
+                return null;
+            }
+        }
 
-        TextMeshPro? text = null;
-        if (!Step("add component", go, attempt, () => text = go.AddComponent<TextMeshPro>())
-            || !Step("alive", go, attempt, () => RequireLive(text))
+        if (!Step("alive", go, attempt, () => RequireLive(text))
             || !Step("assign font", go, attempt, () => text!.font = font)
             || !Step("set material", go, attempt, () => text!.fontSharedMaterial = font.material)
             || !Step("style", go, attempt, () => StyleOwnLabel(text!, vanilla))
@@ -1497,7 +1510,182 @@ internal static class ShopCosmetics
         Plugin.Log.LogInfo($"[SHOPFX] own row label row={RowIndex(row, vanilla)}"
             + $" attempts={attempt} font={font.name}");
 
+        LogLabelDiagnostics(text!);
         return text;
+    }
+
+    /// <summary>
+    /// Copies an already initialised vanilla label instead of building one. A TMP created at
+    /// runtime cannot take a font, while the clone already has a working material, shader and
+    /// mesh setup.
+    /// </summary>
+    /// <param name="vanilla">Vanilla <c>Item cost</c> label of the row.</param>
+    /// <param name="go">Clone object, null when the clone was not made.</param>
+    /// <param name="text">Clone label, null when the clone was not made.</param>
+    /// <returns>True when the clone is usable.</returns>
+    private static bool CloneVanillaLabel(TMP_Text vanilla, out GameObject go, out TextMeshPro? text)
+    {
+        go = null!;
+        text = null;
+        if (!(vanilla is TextMeshPro source))
+        {
+            return false;
+        }
+
+        GameObject clone = UnityEngine.Object.Instantiate(source.gameObject, vanilla.transform.parent);
+        clone.name = OwnLabelName;
+        TextMeshPro? copy = clone.GetComponent<TextMeshPro>();
+        if (copy == null)
+        {
+            UnityEngine.Object.Destroy(clone);
+            return false;
+        }
+
+        copy.transform.SetSiblingIndex(vanilla.transform.GetSiblingIndex() + 1);
+        go = clone;
+        text = copy;
+        return true;
+    }
+
+    /// <summary>Logs render state of the first own label and of <c>Item Details/Item name</c>.</summary>
+    /// <param name="label">Own label that was just built.</param>
+    private static void LogLabelDiagnostics(TMP_Text label)
+    {
+        if (_labelDiagLogged)
+        {
+            return;
+        }
+
+        try
+        {
+            _labelDiagLogged = true;
+            List<KeyValuePair<string, string>> own = LabelFields(label);
+            Plugin.Log.LogInfo("[SHOPFX] row label diag " + JoinFields(own));
+
+            TMP_Text? reference = ItemNameLabel();
+            if (reference == null)
+            {
+                Plugin.Log.LogWarning("[SHOPFX] item name diag: 'Item Details/Item name' not found");
+                return;
+            }
+
+            List<KeyValuePair<string, string>> item = LabelFields(reference);
+            Plugin.Log.LogInfo("[SHOPFX] item name diag " + JoinFields(item));
+
+            List<string> diffs = new List<string>();
+            for (int i = 0; i < own.Count && i < item.Count; i++)
+            {
+                if (own[i].Value != item[i].Value)
+                {
+                    diffs.Add($"{own[i].Key}(own={own[i].Value}, item={item[i].Value})");
+                }
+            }
+
+            Plugin.Log.LogInfo("[SHOPFX] label vs item name: "
+                + (diffs.Count == 0 ? "no differences" : string.Join(", ", diffs)));
+        }
+        catch (Exception ex)
+        {
+            Plugin.Log.LogWarning($"[SHOPFX] label diag failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>Renders state values of a label as ordered name/value pairs.</summary>
+    /// <param name="text">Label to inspect.</param>
+    private static List<KeyValuePair<string, string>> LabelFields(TMP_Text text)
+    {
+        Renderer? renderer = text.GetComponent<Renderer>();
+        Material? mat = renderer != null ? renderer.sharedMaterial : null;
+        Shader? shader = mat != null ? mat.shader : null;
+        Color face = mat != null && mat.HasProperty("_FaceColor") ? mat.GetColor("_FaceColor") : Color.clear;
+        float ztest = mat != null && mat.HasProperty("_ZTest") ? mat.GetFloat("_ZTest") : -1f;
+        int queue = mat != null ? mat.renderQueue : -1;
+        Vector3 bounds = renderer != null ? renderer.bounds.size : Vector3.zero;
+        string sort = renderer != null && !string.IsNullOrEmpty(renderer.sortingLayerName)
+            ? renderer.sortingLayerName
+            : (renderer != null ? renderer.sortingLayerID.ToString() : "none");
+
+        return new List<KeyValuePair<string, string>>
+        {
+            Field("layer", text.gameObject.layer.ToString()),
+            Field("sort", sort),
+            Field("order", renderer != null ? renderer.sortingOrder.ToString() : "none"),
+            Field("mat", mat != null ? "'" + mat.name + "'" : "'none'"),
+            Field("shader", shader != null ? "'" + shader.name + "'" : "'none'"),
+            Field("queue", queue.ToString()),
+            Field("ztest", ztest.ToString("0.##")),
+            Field("faceColor", $"({face.r:0.##},{face.g:0.##},{face.b:0.##},{face.a:0.##})"),
+            Field("textColor", $"({text.color.r:0.##},{text.color.g:0.##},{text.color.b:0.##},{text.color.a:0.##})"),
+            Field("alpha", text.alpha.ToString("0.##")),
+            Field("verts", VertexCount(text).ToString()),
+            Field("bounds", $"({bounds.x:0.##},{bounds.y:0.##},{bounds.z:0.##})"),
+        };
+    }
+
+    /// <summary>Vertices of the first sub mesh of a label, zero when the mesh is empty.</summary>
+    /// <param name="text">Label to inspect.</param>
+    private static int VertexCount(TMP_Text text)
+    {
+        TMP_TextInfo? info = text.textInfo;
+        if (info == null || info.meshInfo == null || info.meshInfo.Length == 0)
+        {
+            return 0;
+        }
+
+        return info.meshInfo[0].vertexCount;
+    }
+
+    /// <summary>One diagnostic field.</summary>
+    /// <param name="name">Field name.</param>
+    /// <param name="value">Field value.</param>
+    private static KeyValuePair<string, string> Field(string name, string value)
+    {
+        return new KeyValuePair<string, string>(name, value);
+    }
+
+    /// <summary>Joins diagnostic fields into one log line.</summary>
+    /// <param name="fields">Fields to join.</param>
+    private static string JoinFields(List<KeyValuePair<string, string>> fields)
+    {
+        List<string> parts = new List<string>(fields.Count);
+        foreach (KeyValuePair<string, string> pair in fields)
+        {
+            parts.Add($"{pair.Key}={pair.Value}");
+        }
+
+        return string.Join(" ", parts);
+    }
+
+    /// <summary>The game's own Cyrillic label under <c>Item Details</c>, used as the reference.</summary>
+    private static TMP_Text? ItemNameLabel()
+    {
+        try
+        {
+            ResolveTargets();
+            Transform? details = _details;
+            if (details == null && _root != null)
+            {
+                _details = _root.Find(DetailsPath) ?? FindByName(_root, "Item Details");
+                details = _details;
+            }
+
+            if (details != null)
+            {
+                foreach (TMP_Text text in details.GetComponentsInChildren<TMP_Text>(true))
+                {
+                    if (text != null && text.name == "Item name")
+                    {
+                        return text;
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Plugin.Log.LogWarning($"[SHOPFX] item name lookup failed: {ex.Message}");
+        }
+
+        return null;
     }
 
     /// <summary>Throws unless the component survived <c>AddComponent</c>.</summary>
@@ -1620,24 +1808,10 @@ internal static class ShopCosmetics
 
         try
         {
-            ResolveTargets();
-            Transform? details = _details;
-            if (details == null && _root != null)
+            TMP_Text? reference = ItemNameLabel();
+            if (reference != null && reference.font != null)
             {
-                _details = _root.Find(DetailsPath) ?? FindByName(_root, "Item Details");
-                details = _details;
-            }
-
-            if (details != null)
-            {
-                foreach (TMP_Text text in details.GetComponentsInChildren<TMP_Text>(true))
-                {
-                    if (text != null && text.name == "Item name" && text.font != null)
-                    {
-                        _rowFont = text.font;
-                        return _rowFont;
-                    }
-                }
+                _rowFont = reference.font;
             }
         }
         catch (Exception ex)
