@@ -21,6 +21,9 @@ internal static class ShopCosmetics
     /// <summary>Frames between two currency-counter sweeps.</summary>
     private const int CounterSweepInterval = 15;
 
+    /// <summary>Fraction of the vanilla font size the name may shrink to.</summary>
+    private const float MinFontSizeFactor = 0.35f;
+
     private static readonly FieldInfo? ItemSpriteField =
         typeof(ShopItemStats).GetField("itemSprite", PrivateInstance);
 
@@ -54,14 +57,11 @@ internal static class ShopCosmetics
     private static readonly Dictionary<TMP_Text, TMP_Text> FallbackLabels =
         new Dictionary<TMP_Text, TMP_Text>();
 
-    /// <summary>Row labels already checked for an empty mesh, so the test runs once.</summary>
-    private static readonly HashSet<TMP_Text> MeshChecked = new HashSet<TMP_Text>();
+    /// <summary>Frame each row label was first seen on, so the empty-mesh test waits two frames.</summary>
+    private static readonly Dictionary<TMP_Text, int> MeshChecked = new Dictionary<TMP_Text, int>();
 
     /// <summary>Vanilla labels hidden behind a fallback label.</summary>
     private static readonly HashSet<TMP_Text> HiddenLabels = new HashSet<TMP_Text>();
-
-    /// <summary>Font fallback links already logged, one per process: the asset outlives a session.</summary>
-    private static readonly HashSet<string> LoggedFontFallbacks = new HashSet<string>();
 
     /// <summary>True once the fallback-label count has been logged for this session.</summary>
     private static bool _fallbackLogged;
@@ -242,9 +242,9 @@ internal static class ShopCosmetics
     }
 
     /// <summary>
-    /// Writes the crest names in the late pass only: <c>ShopItemStats.SetItem</c> puts the
-    /// price into the same label during its own Update, so a name written earlier in the
-    /// frame is regularly overwritten and the row ends up empty or priced.
+    /// Late pass over the rows: repeats the name <c>ShopItemStats.SetItem</c> may have
+    /// overwritten with the price during its own Update, and checks once, two frames after
+    /// the label was first seen, whether the vanilla mesh draws anything.
     /// </summary>
     private static void ApplyRowNames()
     {
@@ -278,12 +278,18 @@ internal static class ShopCosmetics
                 MeshChecked.Remove(label);
             }
 
-            if (!MeshChecked.Add(label))
+            if (!MeshChecked.TryGetValue(label, out int seen))
+            {
+                MeshChecked[label] = _frames;
+                continue;
+            }
+
+            if (seen == int.MaxValue || _frames - seen < 2)
             {
                 continue;
             }
 
-            label.enabled = true;
+            MeshChecked[label] = int.MaxValue;
             label.ForceMeshUpdate();
             Renderer? renderer = label.GetComponent<Renderer>();
             if (renderer != null && renderer.bounds.size.x > 0.0001f)
@@ -1242,10 +1248,7 @@ internal static class ShopCosmetics
         return row != null ? ItemSpriteField?.GetValue(row) as SpriteRenderer : null;
     }
 
-    /// <summary>
-    /// Records the crest name for the late pass and hides the cost icons; the text itself
-    /// is written by <see cref="ApplyRowNames"/> after the vanilla price write.
-    /// </summary>
+    /// <summary>Writes the crest name where the price was and hides the cost icons.</summary>
     private static void ReplacePrice(ShopItemStats row, string? name)
     {
         if (string.IsNullOrEmpty(name))
@@ -1259,6 +1262,11 @@ internal static class ShopCosmetics
         if (CostTextField?.GetValue(row) is TMP_Text label && label != null)
         {
             FitLabel(label);
+            if (label.text != name)
+            {
+                label.text = name!;
+            }
+
             RowNames[label] = name!;
         }
     }
@@ -1283,10 +1291,7 @@ internal static class ShopCosmetics
         }
     }
 
-    /// <summary>
-    /// Pins the price label to the vanilla font size with no auto-sizing and no wrapping,
-    /// so a long crest name overflows the row instead of collapsing to nothing.
-    /// </summary>
+    /// <summary>Makes the price label wrap and shrink instead of overflowing its row.</summary>
     private static void FitLabel(TMP_Text label)
     {
         if (TextStates.ContainsKey(label))
@@ -1296,72 +1301,23 @@ internal static class ShopCosmetics
 
         TextState state = TextState.Capture(label);
         TextStates[label] = state;
-        AddFontFallback(label);
+        if (!ShrinkNameToFit)
+        {
+            return;
+        }
 
         try
         {
-            label.enabled = true;
             label.enableAutoSizing = false;
-            label.enableWordWrapping = false;
-            label.OverflowMode = TextOverflowModes.Overflow;
-            label.fontSize = state.FontSize;
+            label.fontSizeMax = Mathf.Max(1f, state.FontSize);
+            label.fontSizeMin = Mathf.Max(1f, state.FontSize * MinFontSizeFactor);
+            label.enableWordWrapping = true;
+            label.enableAutoSizing = true;
         }
         catch (Exception ex)
         {
             Plugin.Log.LogWarning($"[SHOPFX] label fit failed on '{label.name}': {ex.Message}");
         }
-    }
-
-    /// <summary>
-    /// Adds the localized Cyrillic font to the vanilla label font's fallback table, once per
-    /// process. The vanilla font keeps drawing digits; the donor only fills the glyphs it
-    /// lacks. The donor is not swapped in directly: its own atlas draws nothing on a row.
-    /// </summary>
-    /// <param name="label">Row price label about to draw a crest name.</param>
-    private static void AddFontFallback(TMP_Text label)
-    {
-        try
-        {
-            TMP_FontAsset? own = label.font;
-            TMP_FontAsset? donor = LocalizedFont();
-            if (own == null || donor == null || own == donor)
-            {
-                return;
-            }
-
-            List<TMP_FontAsset>? table = own.fallbackFontAssets;
-            if (table == null || table.Contains(donor))
-            {
-                return;
-            }
-
-            table.Add(donor);
-            label.ForceMeshUpdate();
-
-            string key = $"{own.name}|{donor.name}";
-            if (LoggedFontFallbacks.Add(key))
-            {
-                Plugin.Log.LogInfo($"[SHOPFX] row font fallback added '{donor.name}' to '{own.name}'");
-            }
-        }
-        catch (Exception ex)
-        {
-            Plugin.Log.LogWarning($"[SHOPFX] font fallback failed on '{label.name}': {ex.Message}");
-        }
-    }
-
-    /// <summary>Localized font of the details panel name label, the Cyrillic donor.</summary>
-    private static TMP_FontAsset? LocalizedFont()
-    {
-        ResolveTargets();
-        if (_details == null)
-        {
-            return null;
-        }
-
-        Transform? target = FindByName(_details, "Item name");
-        TMP_Text? name = target != null ? target.GetComponent<TMP_Text>() : null;
-        return name != null ? name.font : null;
     }
 
     /// <summary>Puts one price label back to its vanilla text and settings.</summary>
