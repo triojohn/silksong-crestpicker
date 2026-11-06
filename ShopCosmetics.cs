@@ -20,9 +20,6 @@ internal static class ShopCosmetics
     /// <summary>Frames between two currency-counter sweeps.</summary>
     private const int CounterSweepInterval = 15;
 
-    /// <summary>Fraction of the vanilla font size the name may shrink to.</summary>
-    private const float MinFontSizeFactor = 0.35f;
-
     private static readonly FieldInfo? ItemSpriteField =
         typeof(ShopItemStats).GetField("itemSprite", PrivateInstance);
 
@@ -51,6 +48,16 @@ internal static class ShopCosmetics
     /// <summary>Name to write into each row label in the late pass.</summary>
     private static readonly Dictionary<TMP_Text, string> RowNames =
         new Dictionary<TMP_Text, string>();
+
+    /// <summary>Our own name label per row, used when the vanilla label draws nothing.</summary>
+    private static readonly Dictionary<TMP_Text, TMP_Text> FallbackLabels =
+        new Dictionary<TMP_Text, TMP_Text>();
+
+    /// <summary>Row labels already checked for an empty mesh, so the test runs once.</summary>
+    private static readonly HashSet<TMP_Text> MeshChecked = new HashSet<TMP_Text>();
+
+    /// <summary>Vanilla labels hidden behind a fallback label.</summary>
+    private static readonly HashSet<TMP_Text> HiddenLabels = new HashSet<TMP_Text>();
 
     /// <summary>Mesh bounds centre X of every row label, measured before our first shift.</summary>
     private static readonly Dictionary<Transform, float> BaselineCentres =
@@ -232,12 +239,82 @@ internal static class ShopCosmetics
         foreach (KeyValuePair<TMP_Text, string> pair in RowNames)
         {
             TMP_Text? label = pair.Key;
-            if (label == null || label.text == pair.Value)
+            if (label == null)
             {
                 continue;
             }
 
-            label.text = pair.Value;
+            if (label.text != pair.Value)
+            {
+                label.text = pair.Value;
+            }
+
+            if (FallbackLabels.ContainsKey(label) || !MeshChecked.Add(label))
+            {
+                continue;
+            }
+
+            label.ForceMeshUpdate();
+            Renderer? renderer = label.GetComponent<Renderer>();
+            if (renderer != null && renderer.bounds.size.x > 0.0001f)
+            {
+                continue;
+            }
+
+            AddFallbackLabel(label, pair.Value);
+        }
+    }
+
+    /// <summary>
+    /// Builds our own world-space name label on the row and hides the vanilla price label.
+    /// Used only when the vanilla label's mesh is empty after a forced rebuild, i.e. the
+    /// font swap left nothing that can draw the name.
+    /// </summary>
+    /// <param name="vanilla">Row price label that draws nothing.</param>
+    /// <param name="name">Crest name to draw.</param>
+    private static void AddFallbackLabel(TMP_Text vanilla, string name)
+    {
+        try
+        {
+            if (vanilla.font == null)
+            {
+                return;
+            }
+
+            ShopItemStats? row = vanilla.GetComponentInParent<ShopItemStats>();
+            Transform parent = row != null ? row.transform : vanilla.transform.parent;
+            GameObject go = new GameObject("CrestPicker Row Name");
+            go.transform.SetParent(parent, true);
+            go.transform.position = vanilla.transform.position;
+            go.transform.rotation = vanilla.transform.rotation;
+
+            TextMeshPro text = go.AddComponent<TextMeshPro>();
+            text.font = vanilla.font;
+            text.fontSize = vanilla.fontSize;
+            text.alignment = TextAlignmentOptions.Center;
+            text.enableAutoSizing = false;
+            text.enableWordWrapping = false;
+            text.OverflowMode = TextOverflowModes.Overflow;
+            text.color = new Color(1f, 1f, 1f, 1f);
+            text.text = name;
+            text.ForceMeshUpdate();
+
+            Renderer? icon = RowIcon(row);
+            MeshRenderer? renderer = go.GetComponent<MeshRenderer>();
+            if (icon != null && renderer != null)
+            {
+                renderer.sortingLayerID = icon.sortingLayerID;
+                renderer.sortingOrder = icon.sortingOrder;
+            }
+
+            vanilla.enabled = false;
+            HiddenLabels.Add(vanilla);
+            FallbackLabels[vanilla] = text;
+            Plugin.Log.LogInfo("[SHOPFX] row label fallback used");
+        }
+        catch (Exception ex)
+        {
+            Plugin.Log.LogWarning($"[SHOPFX] row label fallback failed: {ex.Message}");
         }
     }
 
@@ -280,6 +357,22 @@ internal static class ShopCosmetics
                 }
             }
 
+            foreach (KeyValuePair<TMP_Text, TMP_Text> pair in FallbackLabels)
+            {
+                if (pair.Value != null)
+                {
+                    UnityEngine.Object.Destroy(pair.Value.gameObject);
+                }
+            }
+
+            foreach (TMP_Text hidden in HiddenLabels)
+            {
+                if (hidden != null)
+                {
+                    hidden.enabled = true;
+                }
+            }
+
             foreach (KeyValuePair<TMP_Text, TextState> pair in TextStates)
             {
                 RestoreText(pair.Key, pair.Value);
@@ -311,6 +404,9 @@ internal static class ShopCosmetics
             ObjectStates.Clear();
             TextStates.Clear();
             RowNames.Clear();
+            FallbackLabels.Clear();
+            MeshChecked.Clear();
+            HiddenLabels.Clear();
             BaselineCentres.Clear();
             BaselinePositions.Clear();
             _confirm = null;
@@ -1095,7 +1191,10 @@ internal static class ShopCosmetics
         }
     }
 
-    /// <summary>Makes the price label wrap and shrink instead of overflowing its row.</summary>
+    /// <summary>
+    /// Pins the price label to the vanilla font size with no auto-sizing and no wrapping,
+    /// so a long crest name overflows the row instead of collapsing to nothing.
+    /// </summary>
     private static void FitLabel(TMP_Text label)
     {
         if (TextStates.ContainsKey(label))
@@ -1106,18 +1205,13 @@ internal static class ShopCosmetics
         TextState state = TextState.Capture(label);
         TextStates[label] = state;
         ApplyLocalizedFont(label, state);
-        if (!ShrinkNameToFit)
-        {
-            return;
-        }
 
         try
         {
             label.enableAutoSizing = false;
-            label.fontSizeMax = Mathf.Max(1f, state.FontSize);
-            label.fontSizeMin = Mathf.Max(1f, state.FontSize * MinFontSizeFactor);
-            label.enableWordWrapping = true;
-            label.enableAutoSizing = true;
+            label.enableWordWrapping = false;
+            label.OverflowMode = TextOverflowModes.Overflow;
+            label.fontSize = state.FontSize;
         }
         catch (Exception ex)
         {
@@ -1128,6 +1222,8 @@ internal static class ShopCosmetics
     /// <summary>
     /// Swaps the price label onto the localized font of the details panel's name label,
     /// so row names with Cyrillic do not fall back to a submesh the fade group keeps off.
+    /// The donor's material is deliberately not copied: its atlas and gradient scale
+    /// belong to another text object and draw the row text invisible or garbled.
     /// </summary>
     private static void ApplyLocalizedFont(TMP_Text label, TextState state)
     {
@@ -1142,13 +1238,9 @@ internal static class ShopCosmetics
             }
 
             string from = label.font != null ? label.font.name : "<none>";
-            Material? material = name!.fontSharedMaterial;
             label.enableAutoSizing = false;
             label.font = font;
-            if (material != null)
-            {
-                label.fontSharedMaterial = material;
-            }
+            label.ForceMeshUpdate();
 
             label.enableAutoSizing = state.AutoSize;
             if (!_fontLogged)

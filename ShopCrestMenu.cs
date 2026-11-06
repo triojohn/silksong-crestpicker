@@ -1187,15 +1187,26 @@ internal static class ShopCrestMenu
             {
                 ShopItemStats row = rows[i];
                 TMP_Text? label = ShopCosmetics.RowLabel(row);
+                if (label != null)
+                {
+                    label.ForceMeshUpdate();
+                }
+
                 Renderer? renderer = label != null ? label.GetComponent<Renderer>() : null;
                 string text = label != null ? (label.text ?? string.Empty) : "<none>";
                 string font = label != null && label.font != null ? label.font.name : "<none>";
                 string size = renderer != null ? Vec(renderer.bounds.size) : "<none>";
+                string labelOn = label != null ? label.enabled.ToString() : "<none>";
+                string rendererOn = renderer != null ? renderer.enabled.ToString() : "<none>";
+                string alpha = label != null ? label.color.a.ToString("F2") : "<none>";
+                string fontSize = label != null ? label.fontSize.ToString("F2") : "<none>";
                 Plugin.Log.LogInfo(
                     $"[SHOP]   row{i} y={row.transform.position.y:F2}" +
                     $" top={Float(TopYField, row):F2} bot={Float(BotYField, row):F2}" +
                     $" active={row.gameObject.activeSelf}" +
-                    $" label='{text}' font='{font}' size={size}" +
+                    $" label='{text}' len={text.Length} font='{font}' size={size}" +
+                    $" labelOn={labelOn} rendererOn={rendererOn}" +
+                    $" alpha={alpha} fontSize={fontSize}" +
                     $" item='{(row.Item != null ? row.Item.name : "<none>")}'" +
                     $" cost={(row.Item != null ? row.GetCost().ToString() : "<none>")}");
             }
