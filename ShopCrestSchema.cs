@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Reflection;
-using System.Text;
 using GlobalSettings;
 using TMProOld;
 using UnityEngine;
@@ -53,8 +52,8 @@ internal static class ShopCrestSchema
     private static TMP_Text? _confirmMessage;
 
     /// <summary>Schema objects created for the current crest; destroyed on rebuild.</summary>
-    private static GameObject? _container;
-    private static GameObject? _confirmContainer;
+    private static Schema? _detailsSchema;
+    private static Schema? _confirmSchema;
     private static ToolCrest? _builtFor;
     private static Sprite? _dotSprite;
     private static bool _missingLogged;
@@ -174,26 +173,29 @@ internal static class ShopCrestSchema
     /// </summary>
     private static void Place()
     {
-        if (_container != null && _details != null && TryBounds(_details, out Bounds bounds))
+        FitPending();
+
+        if (_detailsSchema != null && _details != null && TryBounds(_details, out Bounds bounds))
         {
             float lowerCentreY = Mathf.Lerp(bounds.min.y, bounds.center.y, 0.5f);
             Vector3 target = new Vector3(bounds.center.x, lowerCentreY, bounds.center.z);
-            if (_container.transform.position != target)
+            Transform transform = _detailsSchema.Container.transform;
+            if (transform.position != target)
             {
-                _container.transform.position = target;
+                transform.position = target;
             }
         }
 
-        if (_confirmContainer == null)
+        if (_confirmSchema == null)
         {
             return;
         }
 
         string reason = ConfirmHiddenReason();
         bool showing = reason.Length == 0;
-        if (_confirmContainer.activeSelf != showing)
+        if (_confirmSchema.Container.activeSelf != showing)
         {
-            _confirmContainer.SetActive(showing);
+            _confirmSchema.Container.SetActive(showing);
             Plugin.Log.LogInfo(showing
                 ? "[SCHEMA] confirm visible"
                 : $"[SCHEMA] confirm hidden ({reason})");
@@ -202,10 +204,25 @@ internal static class ShopCrestSchema
         if (showing && _confirmAnchor != null)
         {
             Vector3 target = _confirmAnchor.position;
-            if (_confirmContainer.transform.position != target)
+            Transform transform = _confirmSchema.Container.transform;
+            if (transform.position != target)
             {
-                _confirmContainer.transform.position = target;
+                transform.position = target;
             }
+        }
+    }
+
+    /// <summary>Retries the fit of a schema whose renderers had no bounds when built.</summary>
+    private static void FitPending()
+    {
+        if (_detailsSchema != null)
+        {
+            Fit(_detailsSchema);
+        }
+
+        if (_confirmSchema != null)
+        {
+            Fit(_confirmSchema);
         }
     }
 
@@ -411,17 +428,18 @@ internal static class ShopCrestSchema
             return;
         }
 
-        _container = BuildSchema(crest, silhouette, darkened, DetailsParent(), 1f, "Crest Schema");
-        _confirmContainer = BuildSchema(crest, silhouette, darkened, ConfirmGroup(), ConfirmScale,
+        _detailsSchema = BuildSchema(crest, silhouette, darkened, DetailsParent(), 1f, "Crest Schema");
+        _confirmSchema = BuildSchema(crest, silhouette, darkened, ConfirmGroup(), ConfirmScale,
             "Confirm Crest Schema");
     }
 
     /// <summary>
-    /// Creates one schema instance: silhouette plus one dot per slot, sized to
-    /// <see cref="BaseHeight"/> times <paramref name="sizeFactor"/> world units.
+    /// Creates one schema instance at container scale 1 and fits it to
+    /// <see cref="BaseHeight"/> times <paramref name="sizeFactor"/> world units from the
+    /// height actually drawn, so no assumption about the parent scale chain is made.
     /// The container is parented outside the layout group and placed by the caller.
     /// </summary>
-    private static GameObject? BuildSchema(ToolCrest crest, Sprite silhouette, bool darkened,
+    private static Schema? BuildSchema(ToolCrest crest, Sprite silhouette, bool darkened,
         Transform? parent, float sizeFactor, string label)
     {
         if (parent == null)
@@ -436,28 +454,90 @@ internal static class ShopCrestSchema
         }
 
         SpriteRenderer? reference = ReferenceRenderer() ?? BackboardRenderer();
-
-        // Slot positions are silhouette-local units, so the whole schema is one scaled
-        // container: silhouette at scale 1 (native), dots at slot positions unscaled.
-        float h0 = silhouette.rect.height / Mathf.Max(1f, silhouette.pixelsPerUnit);
-        float height = BaseHeight * Scale * sizeFactor;
-        float k = h0 > 0.01f ? height / h0 : 1f;
-        float dotWorld = height * DotSize;
+        float targetH = BaseHeight * Scale * sizeFactor;
 
         GameObject container = new GameObject(label);
         // A plain Transform child: layout groups only lay out RectTransform children,
         // so this container keeps its hand-placed position.
         container.transform.SetParent(parent, false);
-        float parentScale = Mathf.Abs(parent.lossyScale.x);
-        container.transform.localScale = Vector3.one * (k / (parentScale > 0.0001f ? parentScale : 1f));
+        container.transform.localScale = Vector3.one;
         container.transform.position = parent.position;
 
         SpriteRenderer body = AddRenderer(container, "Schema Silhouette", silhouette, reference, 0);
         body.color = darkened ? new Color(0.3f, 0.3f, 0.3f, 1f) : Color.white;
 
-        int dots = AddDots(container.transform, crest, reference, dotWorld / k);
-        LogNumbers(label, crest, silhouette, crest.Slots, h0, height, k, dotWorld, dots);
-        return container;
+        Schema schema = new Schema(label, container, body, targetH, targetH * DotSize);
+        AddDots(schema, crest, reference);
+        Fit(schema);
+        return schema;
+    }
+
+    /// <summary>
+    /// Scales the container to <see cref="Schema.TargetHeight"/> and the dots to
+    /// <see cref="Schema.DotWorld"/> from the heights actually drawn, then applies the
+    /// locked-slot look. Stays pending while the renderers still report empty bounds;
+    /// <see cref="Place"/> retries every frame until the fit succeeds once.
+    /// </summary>
+    private static void Fit(Schema schema)
+    {
+        if (schema.Fitted)
+        {
+            return;
+        }
+
+        float measuredH = WorldHeight(schema.Body);
+        if (measuredH <= 0.0001f)
+        {
+            return;
+        }
+
+        float scaleApplied = schema.TargetHeight / measuredH;
+        schema.Container.transform.localScale *= scaleApplied;
+
+        float measuredDot = schema.Dots.Count > 0 ? WorldHeight(schema.Dots[0]) : 0f;
+        float dotFactor = measuredDot > 0.0001f ? schema.DotWorld / measuredDot : 1f;
+        for (int i = 0; i < schema.Dots.Count; i++)
+        {
+            bool locked = schema.Locked[i];
+            Transform transform = schema.Dots[i].transform;
+            float size = transform.localScale.x * dotFactor * (locked ? LockedDotFactor : 1f);
+            transform.localScale = new Vector3(size, size, 1f);
+            Color color = schema.Dots[i].color;
+            color.a = locked ? LockedAlpha : 1f;
+            schema.Dots[i].color = color;
+        }
+
+        schema.Fitted = true;
+        Plugin.Log.LogInfo($"[SCHEMA] {schema.Label} targetH={schema.TargetHeight:F3}" +
+            $" measuredH={measuredH:F3} scaleApplied={scaleApplied:F3}" +
+            $" dotDesired={schema.DotWorld:F3} dotMeasured={measuredDot:F3}" +
+            $" localScale={schema.Container.transform.localScale.x:F3} dots={schema.Dots.Count}");
+    }
+
+    /// <summary>World height the renderer actually draws; sprite size when bounds are empty.</summary>
+    private static float WorldHeight(Renderer? renderer)
+    {
+        if (renderer == null)
+        {
+            return 0f;
+        }
+
+        float measured = renderer.bounds.size.y;
+        if (measured > 0.0001f)
+        {
+            return measured;
+        }
+
+        SpriteRenderer? sprite = renderer as SpriteRenderer;
+        return sprite != null && sprite.sprite != null
+            ? SpriteHeight(sprite.sprite) * Mathf.Abs(renderer.transform.lossyScale.y)
+            : 0f;
+    }
+
+    /// <summary>Native world height of one sprite at scale 1.</summary>
+    private static float SpriteHeight(Sprite sprite)
+    {
+        return sprite.rect.height / Mathf.Max(1f, sprite.pixelsPerUnit);
     }
 
     /// <summary>Parent for the details schema: the details panel's own parent, not the layout group itself.</summary>
@@ -531,41 +611,36 @@ internal static class ShopCrestSchema
 
     /// <summary>
     /// Adds one dot per slot as a child of the schema container. Slot positions are
-    /// silhouette-local units, so they need no factor; only the dot diameter does.
+    /// silhouette-local units and need no factor; the diameter is fitted afterwards.
     /// </summary>
-    private static int AddDots(Transform container, ToolCrest crest, SpriteRenderer? reference,
-        float dotLocalScale)
+    private static void AddDots(Schema schema, ToolCrest crest, SpriteRenderer? reference)
     {
         ToolCrest.SlotInfo[]? slots = crest.Slots;
         if (slots == null || slots.Length == 0)
         {
             Plugin.Log.LogInfo($"[SCHEMA] '{crest.name}' has no slots, schema drawn without dots.");
-            return 0;
+            return;
         }
 
         Sprite? dot = DotSprite();
         if (dot == null)
         {
-            return 0;
+            return;
         }
 
-        int created = 0;
+        float lossy = Mathf.Abs(schema.Container.transform.lossyScale.y);
+        float approx = lossy > 0.0001f ? schema.DotWorld / (SpriteHeight(dot) * lossy) : 1f;
         for (int i = 0; i < slots.Length; i++)
         {
             ToolCrest.SlotInfo slot = slots[i];
-            bool locked = IsLocked(crest, i, slot);
-            SpriteRenderer renderer = AddRenderer(container.gameObject, $"Schema Dot {i}", dot, reference, 1);
+            SpriteRenderer renderer = AddRenderer(schema.Container, $"Schema Dot {i}", dot, reference, 1);
             Vector2 position = slot.Position;
             renderer.transform.localPosition = new Vector3(position.x, position.y, 0f);
-            float size = locked ? dotLocalScale * LockedDotFactor : dotLocalScale;
-            renderer.transform.localScale = new Vector3(size, size, 1f);
-            Color color = TypeColor(slot.Type);
-            color.a = locked ? LockedAlpha : 1f;
-            renderer.color = color;
-            created++;
+            renderer.transform.localScale = new Vector3(approx, approx, 1f);
+            renderer.color = TypeColor(slot.Type);
+            schema.Dots.Add(renderer);
+            schema.Locked.Add(IsLocked(crest, i, slot));
         }
-
-        return created;
     }
 
     /// <summary>True when the slot is locked by the crest itself or by the save data.</summary>
@@ -693,41 +768,53 @@ internal static class ShopCrestSchema
         return _dotSprite;
     }
 
-    /// <summary>One line of real numbers, so the slot scaling can be tuned from the log.</summary>
-    private static void LogNumbers(string label, ToolCrest crest, Sprite silhouette,
-        ToolCrest.SlotInfo[]? slots, float h0, float height, float k, float dotWorld, int dots)
+    /// <summary>One built schema instance and its pending fit.</summary>
+    private sealed class Schema
     {
-        StringBuilder line = new StringBuilder();
-        line.Append($"[SCHEMA] {label} crest='{crest.name}' sprite='{silhouette.name}'");
-        line.Append($" rect={silhouette.rect.width:F0}x{silhouette.rect.height:F0} ppu={silhouette.pixelsPerUnit:F1}");
-        line.Append($" h0={h0:F3} H={height:F3} k={k:F3} dotWorld={dotWorld:F3}");
-        line.Append($" dots={dots} scale={Scale:F2}");
-        if (slots != null)
+        internal Schema(string label, GameObject container, SpriteRenderer body,
+            float targetHeight, float dotWorld)
         {
-            int shown = Mathf.Min(3, slots.Length);
-            for (int i = 0; i < shown; i++)
-            {
-                Vector2 raw = slots[i].Position;
-                line.Append($" slot{i}:pos=({raw.x:F2},{raw.y:F2}) local=({raw.x:F3},{raw.y:F3})");
-            }
+            Label = label;
+            Container = container;
+            Body = body;
+            TargetHeight = targetHeight;
+            DotWorld = dotWorld;
         }
 
-        Plugin.Log.LogInfo(line.ToString());
+        internal string Label { get; }
+
+        internal GameObject Container { get; }
+
+        internal SpriteRenderer Body { get; }
+
+        /// <summary>Wanted world height of the silhouette.</summary>
+        internal float TargetHeight { get; }
+
+        /// <summary>Wanted world diameter of an unlocked dot.</summary>
+        internal float DotWorld { get; }
+
+        internal List<SpriteRenderer> Dots { get; } = new List<SpriteRenderer>();
+
+        /// <summary>Locked flag per dot, in creation order.</summary>
+        internal List<bool> Locked { get; } = new List<bool>();
+
+        /// <summary>True once the sizes were fitted to the drawn heights.</summary>
+        internal bool Fitted { get; set; }
     }
 
     /// <summary>Destroys the schema objects of the current crest, details and confirm alike.</summary>
     private static void DestroySchema()
     {
-        if (_container != null)
+        if (_detailsSchema != null)
         {
-            UnityEngine.Object.Destroy(_container);
-            _container = null;
+            UnityEngine.Object.Destroy(_detailsSchema.Container);
+            _detailsSchema = null;
         }
 
-        if (_confirmContainer != null)
+        if (_confirmSchema != null)
         {
-            UnityEngine.Object.Destroy(_confirmContainer);
-            _confirmContainer = null;
+            UnityEngine.Object.Destroy(_confirmSchema.Container);
+            _confirmSchema = null;
         }
     }
 

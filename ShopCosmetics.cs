@@ -52,12 +52,16 @@ internal static class ShopCosmetics
 
     private static Transform? _root;
     private static Transform? _list;
+    private static Transform? _listGroup;
+    private static Transform? _backboard;
+    private static Transform? _window;
     private static TMP_Text? _confirm;
     private static string? _confirmOriginal;
     private static TMP_Text? _confirmButton;
     private static string? _confirmButtonOriginal;
     private static int _frames;
     private static bool _missingLogged;
+    private static bool _centresLogged;
 
     /// <summary>Confirmation text written over the vanilla purchase prompt.</summary>
     internal static string ConfirmText = "Вы уверены?";
@@ -76,8 +80,12 @@ internal static class ShopCosmetics
         {
             _root = root;
             _list = null;
+            _listGroup = null;
+            _backboard = null;
+            _window = null;
             _frames = 0;
             _missingLogged = false;
+            _centresLogged = false;
             HideCounters(root);
             Apply(root);
             ShopCrestSchema.Begin(root);
@@ -119,6 +127,9 @@ internal static class ShopCosmetics
     {
         _root = null;
         _list = null;
+        _listGroup = null;
+        _backboard = null;
+        _window = null;
         try
         {
             ShopCrestSchema.End();
@@ -196,7 +207,7 @@ internal static class ShopCosmetics
     }
 
     /// <summary>
-    /// Centres the name label on the item list from what is actually drawn: the mesh
+    /// Centres the name label on the list frame from what is actually drawn: the mesh
     /// bounds of the text, not the rect, whose size lags behind the fitter. The shift
     /// is recomputed every frame from the current centre, never accumulated.
     /// </summary>
@@ -219,14 +230,13 @@ internal static class ShopCosmetics
         }
 
         Renderer? renderer = label.GetComponent<Renderer>();
-        float? listX = ListCentreX();
-        if (renderer == null || listX == null)
+        if (renderer == null || !CentreTargetX(out float targetX, out string source))
         {
             return;
         }
 
         float textX = renderer.bounds.center.x;
-        float delta = listX.Value - textX;
+        float delta = targetX - textX;
         if (Mathf.Abs(delta) > 0.0005f)
         {
             Vector3 position = target.position;
@@ -236,47 +246,142 @@ internal static class ShopCosmetics
 
         if (LoggedRows.Add(target))
         {
-            Plugin.Log.LogInfo($"[SHOPFX] centre '{target.name}' listX={listX.Value:F3}" +
-                $" textX={textX:F3} delta={delta:F3}");
+            Plugin.Log.LogInfo($"[SHOPFX] centre '{target.name}' target={targetX:F3}" +
+                $" textX={textX:F3} delta={delta:F3} src={source}");
         }
     }
 
-    /// <summary>World X of the item list centre, from its rect or its child renderers.</summary>
-    private static float? ListCentreX()
+    /// <summary>
+    /// World X to centre the row labels on: the list backboard, then the window, then
+    /// the list group. Logs every candidate centre once per session for tuning.
+    /// </summary>
+    private static bool CentreTargetX(out float x, out string source)
     {
-        if (_list == null && _root != null)
+        if (_root == null)
         {
-            _list = _root.Find(ListPath);
-            if (_list == null)
+            x = 0f;
+            source = "none";
+            return false;
+        }
+
+        ResolveTargets();
+        LogCentres();
+
+        if (CentreX(_backboard, out x))
+        {
+            source = "backboard";
+            return true;
+        }
+
+        if (CentreX(_window, out x))
+        {
+            source = "window";
+            return true;
+        }
+
+        if (CentreX(_listGroup, out x))
+        {
+            source = "listGroup";
+            return true;
+        }
+
+        source = "none";
+        return false;
+    }
+
+    /// <summary>One line of every candidate centre, so the target can be judged from the log.</summary>
+    private static void LogCentres()
+    {
+        if (_centresLogged)
+        {
+            return;
+        }
+
+        _centresLogged = true;
+        Plugin.Log.LogInfo($"[SHOPFX] centres: list={CentreText(_list)}" +
+            $" listGroup={CentreText(_listGroup)}" +
+            $" backboard={CentreText(_backboard)}" +
+            $" window={CentreText(_window)}" +
+            $" rowsUnion={RowsText()}");
+    }
+
+    private static string CentreText(Transform? target)
+    {
+        return CentreX(target, out float x) ? x.ToString("F3") : "n/a";
+    }
+
+    /// <summary>Resolves the window, list group and backboard once per session.</summary>
+    private static void ResolveTargets()
+    {
+        if (_root == null || _window != null)
+        {
+            return;
+        }
+
+        _window = _root.Find("Window");
+        _listGroup = _root.Find("Item List Group") ?? FindByName(_root, "Item List Group");
+        _backboard = _root.Find("Window/Shop_Backboard") ?? FindByName(_root, "Shop_Backboard");
+        if (_list == null)
+        {
+            _list = _root.Find(ListPath) ?? FindByName(_root, "Item List");
+        }
+    }
+
+    /// <summary>First descendant with the given name.</summary>
+    private static Transform? FindByName(Transform root, string name)
+    {
+        foreach (Transform child in root.GetComponentsInChildren<Transform>(true))
+        {
+            if (child != null && child.name == name)
             {
-                foreach (Transform child in _root.GetComponentsInChildren<Transform>(true))
-                {
-                    if (child != null && child.name == "Item List")
-                    {
-                        _list = child;
-                        break;
-                    }
-                }
+                return child;
             }
         }
 
-        if (_list == null)
+        return null;
+    }
+
+    /// <summary>
+    /// World X of a panel: rect corners when it has a real rect, else the centre of what
+    /// it draws, else its position.
+    /// </summary>
+    private static bool CentreX(Transform? target, out float x)
+    {
+        x = 0f;
+        if (target == null)
         {
-            return null;
+            return false;
         }
 
-        if (_list is RectTransform rect)
+        if (target is RectTransform rect)
         {
             Vector3[] corners = new Vector3[4];
             rect.GetWorldCorners(corners);
-            return (corners[0].x + corners[2].x) * 0.5f;
+            float min = Mathf.Min(corners[0].x, corners[2].x);
+            float max = Mathf.Max(corners[0].x, corners[2].x);
+            if (max - min > 0.0001f)
+            {
+                x = (min + max) * 0.5f;
+                return true;
+            }
+        }
+
+        Renderer? own = target.GetComponent<Renderer>();
+        if (own != null && own.enabled)
+        {
+            Bounds ownBounds = own.bounds;
+            if (ownBounds.size.x > 0.0001f)
+            {
+                x = ownBounds.center.x;
+                return true;
+            }
         }
 
         bool any = false;
-        Bounds bounds = new Bounds(_list.position, Vector3.zero);
-        foreach (Renderer renderer in _list.GetComponentsInChildren<Renderer>(true))
+        Bounds bounds = new Bounds(target.position, Vector3.zero);
+        foreach (Renderer renderer in target.GetComponentsInChildren<Renderer>(true))
         {
-            if (renderer == null)
+            if (renderer == null || !renderer.enabled || !renderer.gameObject.activeInHierarchy)
             {
                 continue;
             }
@@ -292,7 +397,42 @@ internal static class ShopCosmetics
             }
         }
 
-        return any ? bounds.center.x : (float?)null;
+        x = any ? bounds.center.x : target.position.x;
+        return true;
+    }
+
+    /// <summary>Centre of the union of the row rects, which does not follow the labels we move.</summary>
+    private static string RowsText()
+    {
+        if (_root == null)
+        {
+            return "n/a";
+        }
+
+        float min = float.MaxValue;
+        float max = float.MinValue;
+        foreach (ShopItemStats row in _root.GetComponentsInChildren<ShopItemStats>(true))
+        {
+            if (row == null || !row.gameObject.activeInHierarchy)
+            {
+                continue;
+            }
+
+            if (row.transform is RectTransform rect)
+            {
+                Vector3[] corners = new Vector3[4];
+                rect.GetWorldCorners(corners);
+                min = Mathf.Min(min, corners[0].x, corners[2].x);
+                max = Mathf.Max(max, corners[0].x, corners[2].x);
+            }
+            else
+            {
+                min = Mathf.Min(min, row.transform.position.x);
+                max = Mathf.Max(max, row.transform.position.x);
+            }
+        }
+
+        return max > min ? ((min + max) * 0.5f).ToString("F3") : "n/a";
     }
 
     /// <summary>Row icon renderer, used by the details schema as a sorting reference.</summary>
