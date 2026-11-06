@@ -35,6 +35,9 @@ internal static class ShopCrestMenu
     /// <summary>State <c>shop_control</c> holds while the window is fully open.</summary>
     private const string OpenState = "Open";
 
+    /// <summary>Event the window FSM needs to fade its borders and prompts back in.</summary>
+    private const string BordesUpEvent = "FLUERS UP";
+
     /// <summary>Event the window FSM needs to fade its borders and prompts out.</summary>
     private const string BordesDownEvent = "FLUERS DOWN";
 
@@ -75,15 +78,12 @@ internal static class ShopCrestMenu
     private static bool _sawOpenState;
 
     /// <summary>Teardown targets and their vanilla state, captured when the window opens.</summary>
-    private static Transform? _teardownRoot;
     private static NestedFadeGroupBase? _fade;
     private static PlayMakerFSM? _windowFsm;
     private static GameObject? _cancelPrompt;
     private static GameObject? _confirmPrompt;
-    private static float _fadeAlpha = -1f;
-    private static bool _cancelWasActive;
-    private static bool _confirmWasActive;
     private static bool _teardownCaptured;
+    private static bool _reviveLogged;
 
     /// <summary>True while the live shop window is showing our crests.</summary>
     internal static bool IsOpen { get; set; }
@@ -176,6 +176,7 @@ internal static class ShopCrestMenu
             ShopInputLock.Block("shop open");
 
             MoveToHero();
+            ReviveTeardown();
             control.SendEvent(OpenEvent);
             SwapStock(_swapItems);
             BuildLists();
@@ -392,27 +393,19 @@ internal static class ShopCrestMenu
     }
 
     /// <summary>
-    /// Remembers the fade group, the window FSM and the two action prompts, and puts
-    /// back what a previous session had to switch off, before the window is reused.
+    /// Remembers the fade group, the window FSM and the two action prompts, then puts
+    /// the window back to its visible state, because a previous session left it faded.
     /// </summary>
     private static void BeginTeardown(Transform root)
     {
-        if (_teardownRoot == root && _teardownCaptured)
-        {
-            ReviveTeardown();
-            return;
-        }
-
-        _teardownRoot = root;
         _teardownCaptured = true;
         _fade = root.GetComponent<NestedFadeGroupBase>();
-        _fadeAlpha = _fade != null ? _fade.AlphaSelf : -1f;
         Transform? window = root.Find("Window");
         _windowFsm = window != null ? window.GetComponent<PlayMakerFSM>() : null;
         _cancelPrompt = FindChild(root, "Action Cancel")?.gameObject;
         _confirmPrompt = FindChild(root, "Action Confirm")?.gameObject;
-        _cancelWasActive = _cancelPrompt != null && _cancelPrompt.activeSelf;
-        _confirmWasActive = _confirmPrompt != null && _confirmPrompt.activeSelf;
+        _reviveLogged = false;
+        ReviveTeardown();
     }
 
     /// <summary>
@@ -434,7 +427,7 @@ internal static class ShopCrestMenu
         }
 
         bool bordes = false;
-        if (_windowFsm != null)
+        if (_windowFsm != null && HasEvent(_windowFsm, BordesDownEvent))
         {
             _windowFsm.SendEvent(BordesDownEvent);
             bordes = true;
@@ -456,23 +449,126 @@ internal static class ShopCrestMenu
         Plugin.Log.LogInfo($"[SHOP] teardown: alpha={alpha:F2} bordes={bordes} prompts={prompts}");
     }
 
-    /// <summary>Puts the fade alpha and the prompts back to the values captured on open.</summary>
+    /// <summary>
+    /// Puts the root fade alpha, the prompts and the window borders back on, so a
+    /// window reused after our teardown is visible and interactive again. Only the
+    /// root fade group is touched; the children keep their vanilla animation.
+    /// </summary>
     private static void ReviveTeardown()
     {
-        if (_fade != null && _fadeAlpha >= 0f)
+        if (!_teardownCaptured)
         {
-            _fade.AlphaSelf = _fadeAlpha;
+            return;
         }
 
-        if (_cancelPrompt != null && _cancelWasActive)
+        float alpha = -1f;
+        int prompts = 0;
+        bool bordes = false;
+        try
         {
-            _cancelPrompt.SetActive(true);
+            if (_fade != null)
+            {
+                _fade.AlphaSelf = 1f;
+                alpha = _fade.AlphaSelf;
+            }
+        }
+        catch (Exception ex)
+        {
+            Plugin.Log.LogWarning($"[SHOP] revive alpha failed: {ex.Message}");
         }
 
-        if (_confirmPrompt != null && _confirmWasActive)
+        try
         {
-            _confirmPrompt.SetActive(true);
+            if (_cancelPrompt != null)
+            {
+                _cancelPrompt.SetActive(true);
+                prompts++;
+            }
+
+            if (_confirmPrompt != null)
+            {
+                _confirmPrompt.SetActive(true);
+                prompts++;
+            }
         }
+        catch (Exception ex)
+        {
+            Plugin.Log.LogWarning($"[SHOP] revive prompts failed: {ex.Message}");
+        }
+
+        try
+        {
+            if (_windowFsm != null && HasEvent(_windowFsm, BordesUpEvent))
+            {
+                _windowFsm.SendEvent(BordesUpEvent);
+                bordes = true;
+            }
+        }
+        catch (Exception ex)
+        {
+            Plugin.Log.LogWarning($"[SHOP] revive borders failed: {ex.Message}");
+        }
+
+        Plugin.Log.LogInfo($"[SHOP] revive: alpha={alpha:F2} prompts={prompts} bordes={bordes}");
+    }
+
+    /// <summary>
+    /// Session safety net: the game may fade the reused window back to zero on its
+    /// own, so a low root alpha or hidden prompt is revived. One log line per session.
+    /// </summary>
+    internal static void GuardTeardown()
+    {
+        if (!IsOpen || !_teardownCaptured)
+        {
+            return;
+        }
+
+        float alpha = _fade != null ? _fade.AlphaSelf : 1f;
+        float cancel = PromptAlpha(_cancelPrompt);
+        float confirm = PromptAlpha(_confirmPrompt);
+        if (alpha > 0.01f && cancel > 0.01f && confirm > 0.01f)
+        {
+            return;
+        }
+
+        ReviveTeardown();
+        if (_reviveLogged)
+        {
+            return;
+        }
+
+        _reviveLogged = true;
+        Plugin.Log.LogInfo($"[SHOP] revive re-applied alpha={alpha:F2} prompts={PromptsAlive()}");
+    }
+
+    /// <summary>Fade alpha of a prompt or its nearest child group; 1 when it has none.</summary>
+    private static float PromptAlpha(GameObject? prompt)
+    {
+        if (prompt == null)
+        {
+            return 1f;
+        }
+
+        NestedFadeGroupBase? group = prompt.GetComponent<NestedFadeGroupBase>() ??
+            prompt.GetComponentInChildren<NestedFadeGroupBase>(true);
+        return group != null ? group.AlphaSelf : (prompt.activeSelf ? 1f : 0f);
+    }
+
+    /// <summary>How many of the two prompts are switched on right now.</summary>
+    private static int PromptsAlive()
+    {
+        int count = 0;
+        if (_cancelPrompt != null && _cancelPrompt.activeSelf)
+        {
+            count++;
+        }
+
+        if (_confirmPrompt != null && _confirmPrompt.activeSelf)
+        {
+            count++;
+        }
+
+        return count;
     }
 
     /// <summary>First child with this name anywhere under the root, inactive ones included.</summary>
@@ -612,25 +708,32 @@ internal static class ShopCrestMenu
 
         try
         {
-            ShopCosmetics.End();
-            foreach (KeyValuePair<ShopMenuStock, ShopItem[]> pair in Swapped)
+            Step("cosmetics", ShopCosmetics.End);
+            Step("stock", () =>
             {
-                if (pair.Key != null)
+                foreach (KeyValuePair<ShopMenuStock, ShopItem[]> pair in Swapped)
                 {
-                    pair.Key.SetStock(pair.Value);
-                    pair.Key.SetWasItemPurchased(false);
+                    if (pair.Key != null)
+                    {
+                        pair.Key.SetStock(pair.Value);
+                        pair.Key.SetWasItemPurchased(false);
+                    }
                 }
-            }
-
-            Swapped.Clear();
-            BuildLists();
-            TeardownShop();
-
-            if (_root != null)
+            });
+            Step("stock lists", () =>
             {
-                ShiftRowBounds(-_boundShift);
-                _root.position = _origPosition;
-            }
+                Swapped.Clear();
+                BuildLists();
+            });
+            Step("teardown", TeardownShop);
+            Step("position", () =>
+            {
+                if (_root != null)
+                {
+                    ShiftRowBounds(-_boundShift);
+                    _root.position = _origPosition;
+                }
+            });
 
             Plugin.Log.LogInfo("[SHOP] live shop restored to vanilla stock and position.");
         }
@@ -643,6 +746,22 @@ internal static class ShopCrestMenu
             IsOpen = false;
             CrestSelectMenu.IsOpen = false;
             ResetSession();
+        }
+    }
+
+    /// <summary>
+    /// Runs one restore step, so a failure stops nothing else. The step name in the
+    /// log is the point of this wrapper: a null reference used to abort the whole restore.
+    /// </summary>
+    private static void Step(string name, Action action)
+    {
+        try
+        {
+            action();
+        }
+        catch (Exception ex)
+        {
+            Plugin.Log.LogWarning($"[SHOP] restore step '{name}' failed: {ex}");
         }
     }
 
@@ -661,6 +780,8 @@ internal static class ShopCrestMenu
         _fromDialogue = false;
         _sawOpenState = false;
         SuppressDialogue = false;
+        _teardownCaptured = false;
+        _reviveLogged = false;
     }
 
     /// <summary>Destroys the temp scriptable objects so they do not accumulate.</summary>
@@ -1016,6 +1137,9 @@ internal sealed class ShopCrestSession : MonoBehaviour
     /// <summary>Upper bound on how long our stock may stay in the window.</summary>
     private const float TimeoutSeconds = 900f;
 
+    /// <summary>Frames between window visibility checks.</summary>
+    private const int GuardInterval = 30;
+
     private int _frames;
     private float _deadline;
     private float _openedAt;
@@ -1051,6 +1175,10 @@ internal sealed class ShopCrestSession : MonoBehaviour
 
             ShopCrestMenu.ReassertStock();
             ShopCosmetics.Tick();
+            if (_frames % GuardInterval == 0)
+            {
+                ShopCrestMenu.GuardTeardown();
+            }
 
             if (ShopCrestMenu.ClosedByFsm())
             {

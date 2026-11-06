@@ -52,8 +52,11 @@ internal static class ShopCrestSchema
     /// <summary>Path of the details panel inside the shop window.</summary>
     private const string DetailsPath = "Item List Group/Item Details";
 
-    /// <summary>Confirm group holding the item picture the confirm schema is centred on.</summary>
+    /// <summary>Confirm group whose vanilla item picture the confirm schema replaces.</summary>
     private const string ConfirmGroupPath = "Item Confirm Group";
+
+    /// <summary>Silhouette renderer inside the vanilla crest card the clone is fitted by.</summary>
+    private const string SilhouetteName = "crestSilhouette";
 
     /// <summary>Fallback colours when the game's tool type palette is unavailable.</summary>
     private static readonly Dictionary<ToolItemType, Color> FallbackColors =
@@ -72,7 +75,6 @@ internal static class ShopCrestSchema
     private static Transform? _details;
     private static TMP_Text? _nameLabel;
     private static Transform? _confirmGroup;
-    private static Transform? _confirmAnchor;
     private static TMP_Text? _confirmMessage;
 
     /// <summary>Schema objects created for the current crest; destroyed on rebuild.</summary>
@@ -131,7 +133,6 @@ internal static class ShopCrestSchema
             _details = null;
             _nameLabel = null;
             _confirmGroup = null;
-            _confirmAnchor = null;
             _confirmMessage = null;
             _builtFor = null;
             _missingLogged = false;
@@ -168,7 +169,6 @@ internal static class ShopCrestSchema
         _details = null;
         _nameLabel = null;
         _confirmGroup = null;
-        _confirmAnchor = null;
         _confirmMessage = null;
         _builtFor = null;
         try
@@ -226,15 +226,17 @@ internal static class ShopCrestSchema
     {
         FitPending();
 
-        if (_detailsSchema != null && _details != null && TryBounds(_details, out Bounds bounds))
+        if (_detailsSchema == null || _details == null || !TryBounds(_details, out Bounds bounds))
         {
-            float lowerCentreY = Mathf.Lerp(bounds.min.y, bounds.center.y, 0.5f);
-            Vector3 target = new Vector3(bounds.center.x, lowerCentreY, bounds.center.z);
-            Transform transform = _detailsSchema.Container.transform;
-            if (transform.position != target)
-            {
-                transform.position = target;
-            }
+            return;
+        }
+
+        float lowerCentreY = Mathf.Lerp(bounds.min.y, bounds.center.y, 0.5f);
+        Vector3 target = new Vector3(bounds.center.x, lowerCentreY, bounds.center.z);
+        Transform detailsContainer = _detailsSchema.Container.transform;
+        if (detailsContainer.position != target)
+        {
+            detailsContainer.position = target;
         }
 
         if (_confirmSchema == null)
@@ -252,57 +254,54 @@ internal static class ShopCrestSchema
                 : $"[SCHEMA] confirm hidden ({reason})");
         }
 
-        if (showing && _confirmAnchor != null)
+        if (showing)
         {
-            PlaceConfirm(_confirmSchema, _confirmAnchor);
+            PlaceConfirm(_confirmSchema, detailsContainer);
         }
     }
 
     /// <summary>
-    /// Puts the confirm schema on the centre of the confirmation text and keeps it
-    /// inside the window backboard, so the container never spills out of the shop.
+    /// Puts the confirm schema on the already working details schema position, scaled
+    /// by <see cref="ConfirmScale"/>, and keeps it inside the window backboard. The
+    /// confirm text lives in a different coordinate space, so it is not used as an
+    /// anchor: its container flew off the window.
     /// </summary>
-    private static void PlaceConfirm(Schema schema, Transform anchor)
+    private static void PlaceConfirm(Schema schema, Transform detailsContainer)
     {
         Transform container = schema.Container.transform;
-        Vector3 position = AnchorCentre(anchor);
-        if (container.position != position)
+        container.position = detailsContainer.position;
+
+        Vector3 wanted = detailsContainer.lossyScale * ConfirmScale;
+        Vector3 current = container.lossyScale;
+        if (Mathf.Abs(current.x) > 0.00001f && Mathf.Abs(current.y) > 0.00001f)
         {
-            container.position = position;
+            Vector3 local = container.localScale;
+            container.localScale = new Vector3(
+                local.x * (wanted.x / current.x),
+                local.y * (wanted.y / current.y),
+                local.z);
         }
 
-        if (_root == null)
+        if (_root != null)
         {
-            return;
-        }
-
-        Transform? board = _root.Find("Window/Shop_Backboard");
-        if (board == null || !TryBounds(container, out Bounds inner) || !TryBounds(board, out Bounds outer))
-        {
-            return;
-        }
-
-        Vector3 shift = ClampShift(inner, outer);
-        if (shift != Vector3.zero)
-        {
-            container.position += shift;
+            Transform? board = _root.Find("Window/Shop_Backboard");
+            if (board != null && TryBounds(container, out Bounds inner) && TryBounds(board, out Bounds outer))
+            {
+                Vector3 shift = ClampShift(inner, outer);
+                if (shift != Vector3.zero)
+                {
+                    container.position += shift;
+                }
+            }
         }
 
         if (!schema.PlacedLogged)
         {
             schema.PlacedLogged = true;
-            Plugin.Log.LogInfo($"[SCHEMA] confirm anchor={Vec(position)}" +
-                $" container=({inner.size.x:F3}x{inner.size.y:F3})" +
-                $" backboard=({outer.size.x:F3}x{outer.size.y:F3})");
+            Vector3 scale = container.lossyScale;
+            Plugin.Log.LogInfo($"[SCHEMA] confirm placed at details position={Vec(detailsContainer.position)}" +
+                $" scale={scale.y:F4} confirmScale={ConfirmScale:F3}");
         }
-    }
-
-    /// <summary>Centre of the anchor's world bounds, its position when it draws nothing.</summary>
-    private static Vector3 AnchorCentre(Transform anchor)
-    {
-        return TryBounds(anchor, out Bounds bounds) && bounds.size.sqrMagnitude > 0.000001f
-            ? bounds.center
-            : anchor.position;
     }
 
     /// <summary>Shift that moves <paramref name="inner"/> fully inside <paramref name="outer"/>.</summary>
@@ -851,10 +850,8 @@ internal static class ShopCrestSchema
             return true;
         }
 
-        Bounds bounds = schema.FitWhole
-            ? ContainerBounds(schema.Container.transform)
-            : schema.Body.bounds;
-        float measuredH = schema.FitWhole ? bounds.size.y : WorldHeight(schema.Body);
+        Bounds bounds = schema.Body.bounds;
+        float measuredH = WorldHeight(schema.Body);
         if (measuredH <= 0.0001f)
         {
             return false;
@@ -872,7 +869,7 @@ internal static class ShopCrestSchema
         if (schema.PanelSize.x > 0f && schema.PanelSize.y > 0f)
         {
             Plugin.Log.LogInfo($"[SCHEMA] fit panel=({schema.PanelSize.x:F3} x {schema.PanelSize.y:F3})" +
-                $" clone=({bounds.size.x:F3} x {bounds.size.y:F3}) scale={scaleApplied:F4}");
+                $" silhouette=({bounds.size.x:F3} x {bounds.size.y:F3}) scale={scaleApplied:F4}");
         }
 
         return true;
@@ -1100,17 +1097,16 @@ internal static class ShopCrestSchema
                 UnityEngine.Object.Destroy(slot);
             }
 
-            Renderer? body = LargestRenderer(clone.transform);
+            Renderer? body = SilhouetteRenderer(clone.transform);
             if (body == null)
             {
-                Plugin.Log.LogWarning($"[SCHEMA] '{label}' clone has nothing to draw, schema skipped.");
+                Plugin.Log.LogWarning($"[SCHEMA] '{label}' clone has no silhouette to draw, schema skipped.");
                 UnityEngine.Object.Destroy(clone);
                 return null;
             }
 
             Schema schema = new Schema(label, clone, body, targetH)
             {
-                FitWhole = true,
                 TargetWidth = targetW,
                 PanelSize = panel,
             };
@@ -1168,7 +1164,7 @@ internal static class ShopCrestSchema
         }
     }
 
-    /// <summary>Biggest renderer of a built object, the one whose height fits the schema.</summary>
+    /// <summary>Biggest renderer of a built object, fallback when no silhouette is named.</summary>
     private static Renderer? LargestRenderer(Transform target)
     {
         Renderer? best = null;
@@ -1189,6 +1185,40 @@ internal static class ShopCrestSchema
         }
 
         return best;
+    }
+
+    /// <summary>
+    /// Silhouette renderer of a cloned vanilla crest card: the fit must measure the
+    /// silhouette alone, because the slot icons sit tens of units away from it and
+    /// would shrink the whole card to a dot. Falls back to any renderer named like a
+    /// silhouette, then to the largest one.
+    /// </summary>
+    private static Renderer? SilhouetteRenderer(Transform clone)
+    {
+        Renderer? named = null;
+        Renderer? containing = null;
+        foreach (Renderer renderer in clone.GetComponentsInChildren<Renderer>(true))
+        {
+            if (renderer == null || (renderer is SpriteRenderer sprite && sprite.sprite == null))
+            {
+                continue;
+            }
+
+            string name = renderer.gameObject.name;
+            if (string.Equals(name, SilhouetteName, StringComparison.OrdinalIgnoreCase))
+            {
+                named = renderer;
+                break;
+            }
+
+            if (containing == null &&
+                name.IndexOf("silhouette", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                containing = renderer;
+            }
+        }
+
+        return named ?? containing ?? LargestRenderer(clone);
     }
 
     /// <summary>One <c>[SCHEMA] sprites:</c> line per session.</summary>
@@ -1270,21 +1300,6 @@ internal static class ShopCrestSchema
             Transform? picture = _confirmGroup.Find("Item Sprite");
             // The vanilla FSM draws the item icon here; our schema replaces it.
             HideObject(picture != null ? picture.gameObject : null);
-            Transform? message = _confirmGroup.Find("Confirm/Confirm msg");
-            if (message == null)
-            {
-                foreach (Transform child in _confirmGroup.GetComponentsInChildren<Transform>(true))
-                {
-                    if (child != null && child.name == "Confirm msg")
-                    {
-                        message = child;
-                        break;
-                    }
-                }
-            }
-
-            // The confirmation text sits inside the window, the item picture does not.
-            _confirmAnchor = message ?? _details ?? picture;
             _confirmMessage = FindText(_confirmGroup, "Confirm msg");
         }
 
@@ -1522,9 +1537,6 @@ internal static class ShopCrestSchema
 
         /// <summary>True once the container reached its wanted height.</summary>
         internal bool ContainerFitted { get; set; }
-
-        /// <summary>True when the fit measures every renderer of the container, not just the body.</summary>
-        internal bool FitWhole { get; set; }
 
         /// <summary>True once the fit numbers were logged for this schema.</summary>
         internal bool Logged { get; set; }
