@@ -59,9 +59,13 @@ internal static class ShopCosmetics
     /// <summary>Path of the item list inside the shop window.</summary>
     private const string ListPath = "Item List Group/Item List";
 
+    /// <summary>Path of the details panel inside the shop window.</summary>
+    private const string DetailsPath = "Item List Group/Item Details";
+
     private static Transform? _root;
     private static Transform? _list;
     private static Transform? _listGroup;
+    private static Transform? _details;
     private static Transform? _window;
     private static Transform? _backboard;
     private static TMP_Text? _confirm;
@@ -110,6 +114,7 @@ internal static class ShopCosmetics
             _root = root;
             _list = null;
             _listGroup = null;
+            _details = null;
             _window = null;
             _backboard = null;
             _frames = 0;
@@ -163,6 +168,7 @@ internal static class ShopCosmetics
         _root = null;
         _list = null;
         _listGroup = null;
+        _details = null;
         _window = null;
         _backboard = null;
         _candidatesLogged = false;
@@ -394,6 +400,12 @@ internal static class ShopCosmetics
                 return RowCentreX(out x, out _);
             case "list":
                 return CentreX(_list, exclude, out x);
+            case "column":
+                return ColumnX(exclude, out x) || CentreX(_list, exclude, out x) ||
+                    RowCentreX(out x, out _);
+            case "columnCentre":
+                return ColumnCentreX(exclude, out x) || CentreX(_list, exclude, out x) ||
+                    RowCentreX(out x, out _);
             case "listGroup":
                 return CentreX(_listGroup, exclude, out x);
             case "backboard":
@@ -415,6 +427,8 @@ internal static class ShopCosmetics
         {
             case "rows":
             case "list":
+            case "column":
+            case "columnCentre":
             case "listGroup":
             case "backboard":
             case "window":
@@ -424,10 +438,10 @@ internal static class ShopCosmetics
                 if (!_sourceWarned)
                 {
                     _sourceWarned = true;
-                    Plugin.Log.LogWarning($"[SHOPFX] unknown TextCentreSource '{name}', using 'list'.");
+                    Plugin.Log.LogWarning($"[SHOPFX] unknown TextCentreSource '{name}', using 'column'.");
                 }
 
-                return "list";
+                return "column";
         }
     }
 
@@ -457,6 +471,8 @@ internal static class ShopCosmetics
         RowCentreX(out float rowX, out int rowCount);
         string rowText = rowCount > 0 ? rowX.ToString("F3") : "n/a";
         Plugin.Log.LogInfo($"[SHOPFX] centre candidates: rows={rowText}" +
+            $" listMin={LeftText(_list)} detailsMin={LeftText(_details)}" +
+            $" column={ColumnText(exclude)} columnCentre={ColumnCentreText(exclude)}" +
             $" list={SpanText(_list, exclude)} listGroup={SpanText(_listGroup, exclude)}" +
             $" backboard={SpanText(_backboard, exclude)} window={SpanText(_window, exclude)}" +
             $" original={OriginalText(exclude)} chosen={ResolveSourceName()}");
@@ -532,6 +548,75 @@ internal static class ShopCosmetics
         return true;
     }
 
+    /// <summary>Left edge world X of a panel, or false when the panel has no geometry yet.</summary>
+    private static bool LeftEdgeX(Transform? target, Transform? exclude, out float min)
+    {
+        if (SpanX(target, exclude, out min, out _))
+        {
+            return true;
+        }
+
+        min = 0f;
+        return false;
+    }
+
+    /// <summary>
+    /// World X midway between the left edge of the item list and the left edge of the
+    /// details panel, i.e. the centre of the list column. The list edge falls back to the
+    /// list group, then the window; the details edge to the backboard.
+    /// </summary>
+    /// <param name="exclude">Label transform to leave out of any bounds union.</param>
+    private static bool ColumnX(Transform? exclude, out float x)
+    {
+        x = 0f;
+        bool haveList = LeftEdgeX(_list, exclude, out float listMin) ||
+            LeftEdgeX(_listGroup, exclude, out listMin) ||
+            LeftEdgeX(_window, exclude, out listMin);
+        bool haveDetails = LeftEdgeX(_details, exclude, out float detailsMin) ||
+            LeftEdgeX(_backboard, exclude, out detailsMin);
+        if (!haveList || !haveDetails)
+        {
+            return false;
+        }
+
+        x = (listMin + detailsMin) * 0.5f;
+        return true;
+    }
+
+    /// <summary>World X midway between the left edge of the details panel and the right edge of the window.</summary>
+    /// <param name="exclude">Label transform to leave out of any bounds union.</param>
+    private static bool ColumnCentreX(Transform? exclude, out float x)
+    {
+        x = 0f;
+        bool haveDetails = LeftEdgeX(_details, exclude, out float detailsMin) ||
+            LeftEdgeX(_backboard, exclude, out detailsMin);
+        if (!haveDetails || !SpanX(_window, exclude, out _, out float windowMax))
+        {
+            return false;
+        }
+
+        x = (detailsMin + windowMax) * 0.5f;
+        return true;
+    }
+
+    /// <summary>Left edge of a panel as text, for the candidate log.</summary>
+    private static string LeftText(Transform? target)
+    {
+        return LeftEdgeX(target, null, out float min) ? min.ToString("F3") : "n/a";
+    }
+
+    /// <summary>Column centre as text, for the candidate log.</summary>
+    private static string ColumnText(Transform? exclude)
+    {
+        return ColumnX(exclude, out float x) ? x.ToString("F3") : "n/a";
+    }
+
+    /// <summary>Details-to-window centre as text, for the candidate log.</summary>
+    private static string ColumnCentreText(Transform? exclude)
+    {
+        return ColumnCentreX(exclude, out float x) ? x.ToString("F3") : "n/a";
+    }
+
     /// <summary>Vanilla world X of a label, for the candidate log.</summary>
     private static string OriginalText(Transform label)
     {
@@ -579,6 +664,7 @@ internal static class ShopCosmetics
 
         _listGroup = _root.Find("Item List Group") ?? FindByName(_root, "Item List Group");
         _list = _root.Find(ListPath) ?? FindByName(_root, "Item List");
+        _details = _root.Find(DetailsPath) ?? FindByName(_root, "Item Details");
         _window = _root.Find("Window") ?? FindByName(_root, "Window");
         _backboard = _root.Find("Window/Shop_Backboard") ?? FindByName(_root, "Shop_Backboard");
     }
