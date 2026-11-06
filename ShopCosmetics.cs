@@ -1418,6 +1418,13 @@ internal static class ShopCosmetics
     }
 
     /// <summary>
+    /// True while the vanilla purchase confirmation ("Знак получен") is on screen.
+    /// The label object exists but is inactive until the purchase completes.
+    /// </summary>
+    internal static bool PurchaseMessageShown =>
+        _purchaseLabel != null && _purchaseLabel.gameObject.activeInHierarchy;
+
+    /// <summary>
     /// Remembers the purchase confirmation label, so its vanilla text can be written back
     /// on restore. The object exists but is inactive until the purchase completes.
     /// </summary>

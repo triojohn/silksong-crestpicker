@@ -115,6 +115,12 @@ internal static class ShopCrestMenu
     /// <summary>True once the fallback <c>CLOSE SHOP WINDOW</c> was sent after a purchase.</summary>
     private static bool _emergencyClose;
 
+    /// <summary>True once the vanilla purchase message was seen after a purchase.</summary>
+    private static bool _messageSeen;
+
+    /// <summary>Seconds from the purchase to the moment the message appeared.</summary>
+    private static float _messageShownAt;
+
     /// <summary>Frame and line counters of the post-purchase FSM trace.</summary>
     private static int _purchaseFrame;
     private static int _purchaseLines;
@@ -413,13 +419,15 @@ internal static class ShopCrestMenu
         _purchaseFrame = 0;
         _purchaseLines = 0;
         _emergencyClose = false;
+        _messageSeen = false;
+        _messageShownAt = 0f;
         string state = _control != null ? ActiveState(_control) : "<none>";
         Plugin.Log.LogInfo($"[SHOP] purchase done, leaving the close to the vanilla FSM (state='{state}')");
     }
 
     /// <summary>
-    /// Watches the window after a purchase: logs the FSM state, and when the vanilla
-    /// confirm chain does not bring it back to idle, closes it and forces the state.
+    /// Watches the window after a purchase: logs the FSM state, and closes the window
+    /// 0.5 s after the vanilla purchase message appears (3 s fallback if it never does).
     /// </summary>
     /// <param name="frames">Frames the session has been running, for the trace spacing.</param>
     internal static void TickPurchase(int frames)
@@ -439,22 +447,37 @@ internal static class ShopCrestMenu
                 Plugin.Log.LogInfo($"[SHOP] after purchase state='{state}'");
             }
 
-            if (state == IdleState)
+            float elapsed = Time.realtimeSinceStartup - _purchaseAt;
+
+            if (!_messageSeen && ShopCosmetics.PurchaseMessageShown)
             {
+                _messageSeen = true;
+                _messageShownAt = elapsed;
+                Plugin.Log.LogInfo($"[SHOP] purchase message shown at {elapsed:F2}s, closing in 0.5s");
+            }
+
+            if (state == IdleState && _emergencyClose)
+            {
+                Plugin.Log.LogInfo($"[SHOP] window closed {elapsed:F2}s after purchase");
                 _purchaseAt = 0f;
                 return;
             }
 
-            float elapsed = Time.realtimeSinceStartup - _purchaseAt;
-            if (!_emergencyClose && elapsed >= 3f)
+            if (!_emergencyClose)
             {
-                _emergencyClose = true;
-                _control.SendEvent(CloseEvent);
-                Plugin.Log.LogWarning($"[SHOP] window still '{state}' 3s after purchase, sent '{CloseEvent}'");
+                float dueAt = _messageSeen ? _messageShownAt + 0.5f : 3f;
+                if (elapsed >= dueAt && IsOpen && _control != null)
+                {
+                    _emergencyClose = true;
+                    _control.SendEvent(CloseEvent);
+                    string why = _messageSeen ? "message + 0.5s" : "3s fallback";
+                    Plugin.Log.LogInfo($"[SHOP] sent '{CloseEvent}' {elapsed:F2}s after purchase ({why})");
+                }
+
                 return;
             }
 
-            if (_emergencyClose && elapsed >= 5f)
+            if (elapsed >= 5f)
             {
                 _purchaseAt = 0f;
                 ForceIdle($"'{state}' 5s after purchase");
