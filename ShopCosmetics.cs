@@ -72,6 +72,10 @@ internal static class ShopCosmetics
     private static string? _confirmOriginal;
     private static TMP_Text? _confirmButton;
     private static string? _confirmButtonOriginal;
+
+    /// <summary>Purchase confirmation text the vanilla FSM writes.</summary>
+    private static TMP_Text? _purchaseLabel;
+    private static string? _purchaseOriginal;
     private static int _frames;
     private static bool _missingLogged;
     private static bool _candidatesLogged;
@@ -117,6 +121,9 @@ internal static class ShopCosmetics
     /// <summary>Label written over the vanilla confirmation button.</summary>
     internal static string ConfirmButtonText = "Выбрать";
 
+    /// <summary>Text written over the vanilla purchase confirmation line.</summary>
+    internal static string PurchaseText = "Знак получен";
+
     /// <summary>True to enable word wrapping and auto-sizing on the name label.</summary>
     internal static bool ShrinkNameToFit = true;
 
@@ -148,8 +155,11 @@ internal static class ShopCosmetics
             BaselinePositions.Clear();
             _confirmButton = null;
             _confirmButtonOriginal = null;
+            _purchaseLabel = null;
+            _purchaseOriginal = null;
             HideCounters(root);
             CaptureConfirmButton(root);
+            CapturePurchaseText(root);
             Apply(root);
             ShopCrestSchema.Begin(root);
         }
@@ -197,6 +207,7 @@ internal static class ShopCosmetics
         try
         {
             ApplyConfirmButton();
+            ApplyPurchaseText();
         }
         catch (Exception ex)
         {
@@ -256,6 +267,11 @@ internal static class ShopCosmetics
             {
                 _confirmButton.text = _confirmButtonOriginal;
             }
+
+            if (_purchaseLabel != null && _purchaseOriginal != null)
+            {
+                _purchaseLabel.text = _purchaseOriginal;
+            }
         }
         catch (Exception ex)
         {
@@ -273,6 +289,8 @@ internal static class ShopCosmetics
             _confirmOriginal = null;
             _confirmButton = null;
             _confirmButtonOriginal = null;
+            _purchaseLabel = null;
+            _purchaseOriginal = null;
         }
     }
 
@@ -1215,6 +1233,70 @@ internal static class ShopCosmetics
         {
             if (text != null && text.name == "Text" && text.transform.parent != null
                 && text.transform.parent.name == "Action Confirm")
+            {
+                return text;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Remembers the purchase confirmation label, so its vanilla text can be written back
+    /// on restore. The object exists but is inactive until the purchase completes.
+    /// </summary>
+    private static void CapturePurchaseText(Transform root)
+    {
+        _purchaseLabel = FindPurchaseLabel(root);
+        if (_purchaseLabel == null)
+        {
+            Plugin.Log.LogWarning("[SHOPFX] 'Item Confirm Group/Thankyou' not found.");
+        }
+    }
+
+    /// <summary>
+    /// Writes our purchase line while the confirmation is on screen. The FSM owns that
+    /// text, so this runs after it in <see cref="LateTick"/>; the vanilla string is
+    /// captured before the first overwrite and written back by <see cref="End"/>.
+    /// </summary>
+    private static void ApplyPurchaseText()
+    {
+        if (_purchaseLabel == null || string.IsNullOrEmpty(PurchaseText))
+        {
+            return;
+        }
+
+        if (!ShopCrestMenu.IsOpen || !_purchaseLabel.gameObject.activeInHierarchy)
+        {
+            return;
+        }
+
+        string current = _purchaseLabel.text ?? string.Empty;
+        if (_purchaseOriginal == null && current != PurchaseText)
+        {
+            _purchaseOriginal = current;
+            Plugin.Log.LogInfo($"[SHOPFX] purchase text capture='{_purchaseOriginal}' -> '{PurchaseText}'");
+        }
+
+        if (current != PurchaseText)
+        {
+            _purchaseLabel.text = PurchaseText;
+        }
+    }
+
+    /// <summary>Locates the purchase confirmation label by path, then by name.</summary>
+    private static TMP_Text? FindPurchaseLabel(Transform root)
+    {
+        Transform? direct = root.Find("Item Confirm Group/Thankyou");
+        TMP_Text? found = direct != null ? direct.GetComponent<TMP_Text>() : null;
+        if (found != null)
+        {
+            return found;
+        }
+
+        foreach (TMP_Text text in root.GetComponentsInChildren<TMP_Text>(true))
+        {
+            if (text != null && text.name == "Thankyou")
             {
                 return text;
             }

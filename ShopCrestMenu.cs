@@ -29,12 +29,6 @@ internal static class ShopCrestMenu
     /// <summary>Event that closes the window again.</summary>
     private const string CloseEvent = "CLOSE SHOP WINDOW";
 
-    /// <summary>Vanilla close event, valid in the <c>Open</c> state; runs the visual teardown.</summary>
-    private const string VanillaCloseEvent = "CLOSE";
-
-    /// <summary>State <c>shop_control</c> holds while the window is fully open.</summary>
-    private const string OpenState = "Open";
-
     /// <summary>Event the window FSM needs to fade its borders and prompts back in.</summary>
     private const string BordesUpEvent = "FLUERS UP";
 
@@ -83,7 +77,41 @@ internal static class ShopCrestMenu
     private static GameObject? _cancelPrompt;
     private static GameObject? _confirmPrompt;
     private static bool _teardownCaptured;
-    private static bool _reviveLogged;
+
+    /// <summary>Vanilla root fade alpha captured when the window opens; the FSM owns it.</summary>
+    private static float _savedAlpha;
+
+    /// <summary>Vanilla active state of the two action prompts, captured when the window opens.</summary>
+    private static bool _cancelWasActive;
+    private static bool _confirmWasActive;
+
+    /// <summary>True after the emergency path hid the prompts, so <see cref="Restore"/> puts them back.</summary>
+    private static bool _promptsHidden;
+
+    /// <summary>True after the emergency path asked the window FSM to fade its borders out.</summary>
+    private static bool _bordesDown;
+
+    /// <summary>Frames the open window spent with an alpha near zero.</summary>
+    private static int _lowAlphaFrames;
+
+    /// <summary>True once the guard raised the alpha in this session.</summary>
+    private static bool _guardRaised;
+
+    /// <summary>Monotonic times of the open steps, for the one timing line.</summary>
+    private static float _openStart;
+    private static float _stockReady;
+    private static float _shopUp;
+    private static bool _timingLogged;
+
+    /// <summary>Time of the crest purchase; zero while nothing was bought.</summary>
+    private static float _purchaseAt;
+
+    /// <summary>True once the fallback <c>CLOSE SHOP WINDOW</c> was sent after a purchase.</summary>
+    private static bool _emergencyClose;
+
+    /// <summary>Frame and line counters of the post-purchase FSM trace.</summary>
+    private static int _purchaseFrame;
+    private static int _purchaseLines;
 
     /// <summary>True from the moment the close is sent until the full restore finished.</summary>
     private static bool _closing;
@@ -112,6 +140,7 @@ internal static class ShopCrestMenu
         }
 
         ResetSession();
+        _openStart = Time.realtimeSinceStartup;
         try
         {
             ShopOwnerBase? owner = FindLiveOwner();
@@ -166,6 +195,7 @@ internal static class ShopCrestMenu
 
             SwapStock(BuildItems());
             BuildLists();
+            _stockReady = Time.realtimeSinceStartup;
             if (stock.GetItemCount() == 0)
             {
                 return Fallback("live shop built an empty item list");
@@ -173,7 +203,7 @@ internal static class ShopCrestMenu
 
             // The open event runs FSM actions that read ShopObject, and that getter
             // re-applies the owner's vanilla stock. Arm the session first so the
-            // owner guard holds, then put our stock back after the event anyway.
+            // owner guard holds; ReassertStock() catches a later overwrite anyway.
             IsOpen = true;
             CrestSelectMenu.IsOpen = true;
             ShopInputLock.Block("shop open");
@@ -181,13 +211,8 @@ internal static class ShopCrestMenu
             MoveToHero();
             ReviveTeardown();
             control.SendEvent(OpenEvent);
-            SwapStock(_swapItems);
-            BuildLists();
+            _shopUp = Time.realtimeSinceStartup;
             int count = stock.GetItemCount();
-
-            ShopTrace.Begin("SHOP UP");
-            LogStock("after SHOP UP");
-            ShopRenderDiag.Capture("after SHOP UP", root.transform);
 
             ShopCosmetics.Begin(root.transform);
             root.AddComponent<ShopCrestSession>();
@@ -362,43 +387,100 @@ internal static class ShopCrestMenu
             Plugin.Log.LogInfo($"[SHOP] crest purchased from live shop: {crest.name} (index={index})");
             CrestPickerService.ApplyCrest(crest);
             Plugin.OnMenuClosed(true, _fromDialogue);
-            CloseShop();
+            BeginPurchaseWait();
         }
         catch (Exception ex)
         {
             Plugin.Log.LogError($"[SHOP] temp purchase handler failed: {ex}");
-            Restore("purchase failed");
+            Restore("purchase failed", true);
         }
     }
 
     /// <summary>
-    /// Closes the window the way the game does: <c>CLOSE</c> from <c>Open</c> runs the
-    /// vanilla fade-out chain, so borders and prompts are torn down visually. Any other
-    /// state falls back to the blunt <see cref="CloseEvent"/>. The restore is left to
-    /// the session, which waits for the FSM to reach idle on a later update.
+    /// Starts the post-purchase wait. The vanilla confirm FSM closes the window on its
+    /// own; <see cref="TickPurchase"/> only watches, and steps in when it does not.
     /// </summary>
-    private static void CloseShop()
+    private static void BeginPurchaseWait()
     {
-        _closing = true;
-        if (_control == null)
+        _purchaseAt = Time.realtimeSinceStartup;
+        _purchaseFrame = 0;
+        _purchaseLines = 0;
+        _emergencyClose = false;
+        string state = _control != null ? ActiveState(_control) : "<none>";
+        Plugin.Log.LogInfo($"[SHOP] purchase done, leaving the close to the vanilla FSM (state='{state}')");
+    }
+
+    /// <summary>
+    /// Watches the window after a purchase: logs the FSM state, and when the vanilla
+    /// confirm chain does not bring it back to idle, closes it and forces the state.
+    /// </summary>
+    /// <param name="frames">Frames the session has been running, for the trace spacing.</param>
+    internal static void TickPurchase(int frames)
+    {
+        if (_purchaseAt <= 0f || _control == null)
         {
-            Restore("purchase");
             return;
         }
 
-        string state = ActiveState(_control);
-        string eventName = state == OpenState && HasEvent(_control, VanillaCloseEvent)
-            ? VanillaCloseEvent
-            : CloseEvent;
-        _sawOpenState = true;
-        _control.SendEvent(eventName);
-        Plugin.Log.LogInfo($"[SHOP] sent '{eventName}' to '{ControlFsmName}' (state '{state}');" +
-            " restore waits for idle.");
+        try
+        {
+            string state = ActiveState(_control);
+            _purchaseFrame++;
+            if (_purchaseFrame % 10 == 0 && _purchaseLines < 30)
+            {
+                _purchaseLines++;
+                Plugin.Log.LogInfo($"[SHOP] after purchase state='{state}'");
+            }
+
+            if (state == IdleState)
+            {
+                _purchaseAt = 0f;
+                return;
+            }
+
+            float elapsed = Time.realtimeSinceStartup - _purchaseAt;
+            if (!_emergencyClose && elapsed >= 3f)
+            {
+                _emergencyClose = true;
+                _control.SendEvent(CloseEvent);
+                Plugin.Log.LogWarning($"[SHOP] window still '{state}' 3s after purchase, sent '{CloseEvent}'");
+                return;
+            }
+
+            if (_emergencyClose && elapsed >= 5f)
+            {
+                _purchaseAt = 0f;
+                ForceIdle($"'{state}' 5s after purchase");
+            }
+        }
+        catch (Exception ex)
+        {
+            Plugin.Log.LogWarning($"[SHOP] purchase wait failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>Puts <c>shop_control</c> back to idle and restores the vanilla window.</summary>
+    /// <param name="reason">What forced the state, written to the log.</param>
+    private static void ForceIdle(string reason)
+    {
+        try
+        {
+            _control?.Fsm?.SetState(IdleState);
+            ShopTrace.Begin("forced idle");
+            Plugin.Log.LogWarning($"[SHOP] forced state '{IdleState}' ({reason})");
+        }
+        catch (Exception ex)
+        {
+            Plugin.Log.LogWarning($"[SHOP] forced idle failed: {ex.Message}");
+        }
+
+        Restore("stuck", true);
     }
 
     /// <summary>
-    /// Remembers the fade group, the window FSM and the two action prompts, then puts
-    /// the window back to its visible state, because a previous session left it faded.
+    /// Remembers the fade group, the window FSM and the two action prompts with their
+    /// vanilla state, so nothing of ours has to guess what the FSM wants. The root alpha
+    /// is only read here: the vanilla open chain raises it, and we must not fight it.
     /// </summary>
     private static void BeginTeardown(Transform root)
     {
@@ -408,20 +490,42 @@ internal static class ShopCrestMenu
         _windowFsm = window != null ? window.GetComponent<PlayMakerFSM>() : null;
         _cancelPrompt = FindChild(root, "Action Cancel")?.gameObject;
         _confirmPrompt = FindChild(root, "Action Confirm")?.gameObject;
-        _reviveLogged = false;
-        ReviveTeardown();
+        _savedAlpha = SafeAlpha(0f);
+        _cancelWasActive = _cancelPrompt != null && _cancelPrompt.activeSelf;
+        _confirmWasActive = _confirmPrompt != null && _confirmPrompt.activeSelf;
+        _guardRaised = false;
+        _lowAlphaFrames = 0;
+        RestorePrompts();
+    }
+
+    /// <summary>Reads the root fade alpha, falling back to <paramref name="fallback"/>.</summary>
+    private static float SafeAlpha(float fallback)
+    {
+        try
+        {
+            return _fade != null ? _fade.AlphaSelf : fallback;
+        }
+        catch (Exception ex)
+        {
+            Plugin.Log.LogWarning($"[SHOP] alpha read failed: {ex.Message}");
+            return fallback;
+        }
     }
 
     /// <summary>
-    /// Chokes the window on the way out in the order the game expects: the two action
-    /// prompts first, then the borders through the window FSM, then the root alpha last.
-    /// The alpha setter walks the fade lists and used to throw, which aborted the whole
-    /// restore before the prompts were touched, so every step is isolated here.
+    /// Emergency only: puts the fade alpha back to the vanilla resting value and hides
+    /// the two prompts, because the vanilla close chain never ran. The plane path
+    /// touches nothing here - the FSM fades the window and its prompts itself.
     /// </summary>
-    private static void TeardownShop()
+    private static void TeardownShop(bool emergency)
     {
-        if (!_teardownCaptured)
+        if (!_teardownCaptured || !emergency)
         {
+            if (_teardownCaptured)
+            {
+                Plugin.Log.LogInfo("[SHOP] teardown skipped: vanilla FSM owns the fade.");
+            }
+
             return;
         }
 
@@ -456,7 +560,7 @@ internal static class ShopCrestMenu
             _fade = null;
         }
 
-        Plugin.Log.LogInfo($"[SHOP] teardown done prompts={prompts} bordes={bordes} alpha={alpha:F2}");
+        Plugin.Log.LogInfo($"[SHOP] teardown done emergency prompts={prompts} bordes={bordes} alpha={alpha:F2}");
     }
 
     /// <summary>Switches both action prompts off; returns how many were touched.</summary>
@@ -475,7 +579,35 @@ internal static class ShopCrestMenu
             prompts++;
         }
 
+        _promptsHidden = prompts > 0;
         return prompts;
+    }
+
+    /// <summary>Puts the prompts back to their captured vanilla state; a no-op when they match.</summary>
+    private static void RestorePrompts()
+    {
+        try
+        {
+            if (_cancelPrompt != null && _cancelPrompt.activeSelf != _cancelWasActive)
+            {
+                _cancelPrompt.SetActive(_cancelWasActive);
+            }
+
+            if (_confirmPrompt != null && _confirmPrompt.activeSelf != _confirmWasActive)
+            {
+                _confirmPrompt.SetActive(_confirmWasActive);
+            }
+
+            if (_promptsHidden)
+            {
+                _promptsHidden = false;
+                Plugin.Log.LogInfo($"[SHOP] prompts restored cancel={_cancelWasActive} confirm={_confirmWasActive}");
+            }
+        }
+        catch (Exception ex)
+        {
+            Plugin.Log.LogWarning($"[SHOP] prompt restore failed: {ex.Message}");
+        }
     }
 
     /// <summary>Asks the window FSM to fade its borders out; false when it has no such event.</summary>
@@ -487,10 +619,11 @@ internal static class ShopCrestMenu
         }
 
         _windowFsm.SendEvent(BordesDownEvent);
+        _bordesDown = true;
         return true;
     }
 
-    /// <summary>Sets the root fade alpha to zero, last of the teardown steps; -1 when there is none.</summary>
+    /// <summary>Sets the root fade alpha to zero, emergency path only; -1 when there is none.</summary>
     private static float FadeOut()
     {
         if (_fade == null)
@@ -508,9 +641,9 @@ internal static class ShopCrestMenu
     }
 
     /// <summary>
-    /// Puts the root fade alpha, the prompts and the window borders back on, so a
-    /// window reused after our teardown is visible and interactive again. Only the
-    /// root fade group is touched; the children keep their vanilla animation.
+    /// Puts the captions the vanilla chain may have left off back on, and only the borders
+    /// if our emergency teardown sent them down. The root alpha is restored to the value
+    /// captured on open, never forced up: the vanilla open chain raises it on its own.
     /// </summary>
     private static void ReviveTeardown()
     {
@@ -520,13 +653,12 @@ internal static class ShopCrestMenu
         }
 
         float alpha = -1f;
-        int prompts = 0;
         bool bordes = false;
         try
         {
             if (_fade != null)
             {
-                _fade.AlphaSelf = 1f;
+                _fade.AlphaSelf = _savedAlpha;
                 alpha = _fade.AlphaSelf;
             }
         }
@@ -537,28 +669,10 @@ internal static class ShopCrestMenu
 
         try
         {
-            if (_cancelPrompt != null)
-            {
-                _cancelPrompt.SetActive(true);
-                prompts++;
-            }
-
-            if (_confirmPrompt != null)
-            {
-                _confirmPrompt.SetActive(true);
-                prompts++;
-            }
-        }
-        catch (Exception ex)
-        {
-            Plugin.Log.LogWarning($"[SHOP] revive prompts failed: {ex.Message}");
-        }
-
-        try
-        {
-            if (_windowFsm != null && HasEvent(_windowFsm, BordesUpEvent))
+            if (_bordesDown && _windowFsm != null && HasEvent(_windowFsm, BordesUpEvent))
             {
                 _windowFsm.SendEvent(BordesUpEvent);
+                _bordesDown = false;
                 bordes = true;
             }
         }
@@ -567,66 +681,68 @@ internal static class ShopCrestMenu
             Plugin.Log.LogWarning($"[SHOP] revive borders failed: {ex.Message}");
         }
 
-        Plugin.Log.LogInfo($"[SHOP] revive: alpha={alpha:F2} prompts={prompts} bordes={bordes}");
+        Plugin.Log.LogInfo($"[SHOP] revive: alpha={alpha:F2} (saved) bordes={bordes}");
     }
 
     /// <summary>
-    /// Session safety net: the game may fade the reused window back to zero on its
-    /// own, so a low root alpha or hidden prompt is revived. One log line per session.
+    /// Session safety net: the vanilla chain sometimes leaves a reused window faded out
+    /// while the FSM says it is open. After 60 such frames the root alpha is raised once,
+    /// and only once per session.
     /// </summary>
     internal static void GuardTeardown()
     {
-        if (_closing || !IsOpen || !_teardownCaptured)
+        if (_closing || !IsOpen || !_teardownCaptured || _fade == null)
         {
             return;
         }
 
-        float alpha = _fade != null ? _fade.AlphaSelf : 1f;
-        float cancel = PromptAlpha(_cancelPrompt);
-        float confirm = PromptAlpha(_confirmPrompt);
-        if (alpha > 0.01f && cancel > 0.01f && confirm > 0.01f)
+        float alpha = SafeAlpha(1f);
+        if (alpha >= 0.01f)
+        {
+            _lowAlphaFrames = 0;
+            return;
+        }
+
+        if (++_lowAlphaFrames < 60 || _guardRaised)
         {
             return;
         }
 
-        ReviveTeardown();
-        if (_reviveLogged)
+        _guardRaised = true;
+        try
         {
-            return;
+            _fade.AlphaSelf = 1f;
+            Plugin.Log.LogInfo($"[SHOP] guard raised alpha (was {alpha:F2})");
         }
-
-        _reviveLogged = true;
-        Plugin.Log.LogInfo($"[SHOP] revive re-applied alpha={alpha:F2} prompts={PromptsAlive()}");
+        catch (Exception ex)
+        {
+            Plugin.Log.LogWarning($"[SHOP] guard alpha raise failed: {ex.Message}");
+        }
     }
 
-    /// <summary>Fade alpha of a prompt or its nearest child group; 1 when it has none.</summary>
-    private static float PromptAlpha(GameObject? prompt)
+    /// <summary>
+    /// Logs the one open timing line once the root alpha reached 1, i.e. when the vanilla
+    /// open chain finished fading the window in.
+    /// </summary>
+    /// <param name="frames">Frames the session has been running.</param>
+    internal static void CheckOpenTiming(int frames)
     {
-        if (prompt == null)
+        if (_timingLogged || !_teardownCaptured)
         {
-            return 1f;
+            return;
         }
 
-        NestedFadeGroupBase? group = prompt.GetComponent<NestedFadeGroupBase>() ??
-            prompt.GetComponentInChildren<NestedFadeGroupBase>(true);
-        return group != null ? group.AlphaSelf : (prompt.activeSelf ? 1f : 0f);
-    }
-
-    /// <summary>How many of the two prompts are switched on right now.</summary>
-    private static int PromptsAlive()
-    {
-        int count = 0;
-        if (_cancelPrompt != null && _cancelPrompt.activeSelf)
+        float alpha = SafeAlpha(0f);
+        if (alpha < 0.99f)
         {
-            count++;
+            return;
         }
 
-        if (_confirmPrompt != null && _confirmPrompt.activeSelf)
-        {
-            count++;
-        }
-
-        return count;
+        _timingLogged = true;
+        float now = Time.realtimeSinceStartup;
+        Plugin.Log.LogInfo($"[SHOP] timing: open->stock={( _stockReady - _openStart) * 1000f:F0}ms" +
+            $" open->SHOPUP={(_shopUp - _openStart) * 1000f:F0}ms" +
+            $" open->alpha1={(now - _openStart) * 1000f:F0}ms frames={frames}");
     }
 
     /// <summary>First child with this name anywhere under the root, inactive ones included.</summary>
@@ -755,11 +871,16 @@ internal static class ShopCrestMenu
 
     /// <summary>Puts the vanilla stock and the original window position back.</summary>
     /// <param name="reason">Where the session ended; logged with the input release.</param>
-    internal static void Restore(string reason = "closed")
+    /// <param name="emergency">
+    /// True when the vanilla close chain never ran, so the fade and the prompts must be
+    /// torn down here. The normal path leaves both to the FSM.
+    /// </param>
+    internal static void Restore(string reason = "closed", bool emergency = false)
     {
         ShopInputLock.Unblock(reason);
         if (_stock == null && !IsOpen)
         {
+            RestorePrompts();
             ResetSession();
             return;
         }
@@ -783,7 +904,8 @@ internal static class ShopCrestMenu
                 Swapped.Clear();
                 BuildLists();
             });
-            Step("teardown", TeardownShop);
+            Step("teardown", () => TeardownShop(emergency));
+            Step("prompts", RestorePrompts);
             Step("position", () =>
             {
                 if (_root != null)
@@ -793,7 +915,7 @@ internal static class ShopCrestMenu
                 }
             });
 
-            Plugin.Log.LogInfo("[SHOP] live shop restored to vanilla stock and position.");
+            Plugin.Log.LogInfo($"[SHOP] live shop restored to vanilla stock and position (reason={reason}).");
         }
         catch (Exception ex)
         {
@@ -840,8 +962,17 @@ internal static class ShopCrestMenu
         _sawOpenState = false;
         SuppressDialogue = false;
         _teardownCaptured = false;
-        _reviveLogged = false;
         _closing = false;
+        _savedAlpha = 0f;
+        _cancelWasActive = true;
+        _confirmWasActive = true;
+        _guardRaised = false;
+        _lowAlphaFrames = 0;
+        _timingLogged = false;
+        _purchaseAt = 0f;
+        _emergencyClose = false;
+        _purchaseFrame = 0;
+        _purchaseLines = 0;
         _fade = null;
         _windowFsm = null;
         _cancelPrompt = null;
@@ -1201,9 +1332,6 @@ internal sealed class ShopCrestSession : MonoBehaviour
     /// <summary>Upper bound on how long our stock may stay in the window.</summary>
     private const float TimeoutSeconds = 900f;
 
-    /// <summary>Frames between window visibility checks.</summary>
-    private const int GuardInterval = 30;
-
     private int _frames;
     private float _deadline;
     private float _openedAt;
@@ -1239,10 +1367,9 @@ internal sealed class ShopCrestSession : MonoBehaviour
 
             ShopCrestMenu.ReassertStock();
             ShopCosmetics.Tick();
-            if (_frames % GuardInterval == 0)
-            {
-                ShopCrestMenu.GuardTeardown();
-            }
+            ShopCrestMenu.GuardTeardown();
+            ShopCrestMenu.CheckOpenTiming(_frames);
+            ShopCrestMenu.TickPurchase(_frames);
 
             if (ShopCrestMenu.ClosedByFsm())
             {

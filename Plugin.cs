@@ -56,6 +56,7 @@ public sealed class Plugin : BaseUnityPlugin
     private ConfigEntry<float> _confirmSchemaScale = null!;
     private ConfigEntry<string> _confirmText = null!;
     private ConfigEntry<string> _confirmButtonText = null!;
+    private ConfigEntry<string> _purchaseText = null!;
     private ConfigEntry<bool> _shrinkCrestName = null!;
     private ConfigEntry<string> _textCentreSource = null!;
 
@@ -101,6 +102,8 @@ public sealed class Plugin : BaseUnityPlugin
             "Текст подтверждения покупки знака");
         _confirmButtonText = Config.Bind("General", "ConfirmButtonText", "Выбрать",
             "Текст кнопки подтверждения покупки знака");
+        _purchaseText = Config.Bind("General", "PurchaseText", "Знак получен",
+            "Текст сообщения о покупке знака в окне подтверждения");
         _shrinkCrestName = Config.Bind("General", "ShrinkCrestNameToFit", true,
             "Уменьшать шрифт названия знака, чтобы оно влезло в строку");
         _textCentreSource = Config.Bind("General", "TextCentreSource", "columns",
@@ -137,6 +140,7 @@ public sealed class Plugin : BaseUnityPlugin
         ShopCrestSchema.ConfirmScale = _confirmSchemaScale.Value;
         ShopCosmetics.ConfirmText = _confirmText.Value;
         ShopCosmetics.ConfirmButtonText = _confirmButtonText.Value;
+        ShopCosmetics.PurchaseText = _purchaseText.Value;
         ShopCosmetics.ShrinkNameToFit = _shrinkCrestName.Value;
         ShopCosmetics.CentreSource = _textCentreSource;
         Logger.LogInfo($"[CREST] crest pool mode: {CrestPickerService.PoolMode}" +

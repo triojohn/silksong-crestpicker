@@ -92,6 +92,12 @@ internal static class ShopCrestSchema
     private static bool _missingLogged;
     private static bool _confirmLogged;
 
+    /// <summary>Bounds the details schema drew on the last frame it was visible.</summary>
+    private static Bounds _detailsBounds;
+
+    /// <summary>True once the details schema was hidden behind the confirm screen.</summary>
+    private static bool _detailsHiddenLogged;
+
     /// <summary>Flags for the private fields read off the vanilla crest widgets.</summary>
     private const BindingFlags PrivateInstance = BindingFlags.Instance | BindingFlags.NonPublic;
 
@@ -143,6 +149,8 @@ internal static class ShopCrestSchema
             _confirmMessage = null;
             _builtFor = null;
             _missingLogged = false;
+            _detailsHiddenLogged = false;
+            _detailsBounds = default;
             DestroySchemaRoot();
             Apply();
         }
@@ -179,6 +187,8 @@ internal static class ShopCrestSchema
         _confirmGroup = null;
         _confirmMessage = null;
         _builtFor = null;
+        _detailsHiddenLogged = false;
+        _detailsBounds = default;
         try
         {
             DestroySchema();
@@ -242,10 +252,15 @@ internal static class ShopCrestSchema
 
         float lowerCentreY = Mathf.Lerp(bounds.min.y, bounds.center.y, 0.5f);
         Vector3 target = new Vector3(bounds.center.x, lowerCentreY, bounds.center.z);
-        PlaceAt(_detailsSchema, target);
+        if (_detailsSchema.Container.activeSelf)
+        {
+            PlaceAt(_detailsSchema, target);
+            _detailsBounds = ContainerBounds(_detailsSchema.Container.transform);
+        }
 
         if (_confirmSchema == null)
         {
+            ShowDetails();
             return;
         }
 
@@ -261,8 +276,69 @@ internal static class ShopCrestSchema
 
         if (showing)
         {
+            HideDetails();
             PlaceConfirm(_confirmSchema);
         }
+        else
+        {
+            ShowDetails();
+        }
+    }
+
+    /// <summary>
+    /// Hides our details schema while the confirm screen covers the panel: the confirm
+    /// schema is drawn on the same spot, so both would overlap.
+    /// </summary>
+    private static void HideDetails()
+    {
+        if (_detailsSchema == null)
+        {
+            return;
+        }
+
+        GameObject go = _detailsSchema.Container;
+        if (!ObjectStates.ContainsKey(go))
+        {
+            ObjectStates[go] = go.activeSelf;
+        }
+
+        if (!go.activeSelf)
+        {
+            return;
+        }
+
+        go.SetActive(false);
+        if (!_detailsHiddenLogged)
+        {
+            _detailsHiddenLogged = true;
+            Plugin.Log.LogInfo("[SCHEMA] details hidden while confirm visible");
+        }
+    }
+
+    /// <summary>Puts our details schema back to the state it had before the confirm screen.</summary>
+    private static void ShowDetails()
+    {
+        if (_detailsSchema == null)
+        {
+            return;
+        }
+
+        GameObject go = _detailsSchema.Container;
+        if (ObjectStates.TryGetValue(go, out bool wasActive) && go.activeSelf != wasActive)
+        {
+            go.SetActive(wasActive);
+        }
+    }
+
+    /// <summary>Bounds of the details schema; the last visible ones while it is hidden.</summary>
+    private static Bounds DetailsSchemaBounds()
+    {
+        if (_detailsSchema != null && _detailsSchema.Container.activeSelf)
+        {
+            _detailsBounds = ContainerBounds(_detailsSchema.Container.transform);
+        }
+
+        return _detailsBounds;
     }
 
     /// <summary>Moves a schema in world space so its own drawn centre lands on <paramref name="target"/>.</summary>
@@ -291,7 +367,7 @@ internal static class ShopCrestSchema
         }
 
         Transform container = schema.Container.transform;
-        Bounds detailsBounds = ContainerBounds(_detailsSchema.Container.transform);
+        Bounds detailsBounds = DetailsSchemaBounds();
         float wanted = detailsBounds.size.y * ConfirmScale;
         float current = ContainerBounds(container).size.y;
         Transform content = schema.Content.transform;
