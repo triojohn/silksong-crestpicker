@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Reflection;
+using BepInEx.Configuration;
 using TMProOld;
 using UnityEngine;
 
@@ -53,12 +54,22 @@ internal static class ShopCosmetics
     private static Transform? _root;
     private static Transform? _list;
     private static Transform? _listGroup;
+    private static Transform? _window;
+    private static Transform? _backboard;
     private static TMP_Text? _confirm;
     private static string? _confirmOriginal;
     private static TMP_Text? _confirmButton;
     private static string? _confirmButtonOriginal;
     private static int _frames;
     private static bool _missingLogged;
+    private static bool _candidatesLogged;
+    private static bool _sourceWarned;
+
+    /// <summary>
+    /// Config key naming the world X the row labels are centred on. Read on every call,
+    /// so an edited cfg file takes effect without a restart. Bound by <see cref="Plugin"/>.
+    /// </summary>
+    internal static ConfigEntry<string>? CentreSource;
 
     /// <summary>Confirmation text written over the vanilla purchase prompt.</summary>
     internal static string ConfirmText = "Вы уверены?";
@@ -78,8 +89,12 @@ internal static class ShopCosmetics
             _root = root;
             _list = null;
             _listGroup = null;
+            _window = null;
+            _backboard = null;
             _frames = 0;
             _missingLogged = false;
+            _candidatesLogged = false;
+            _sourceWarned = false;
             HideCounters(root);
             Apply(root);
             ShopCrestSchema.Begin(root);
@@ -122,6 +137,10 @@ internal static class ShopCosmetics
         _root = null;
         _list = null;
         _listGroup = null;
+        _window = null;
+        _backboard = null;
+        _candidatesLogged = false;
+        _sourceWarned = false;
         try
         {
             ShopCrestSchema.End();
@@ -227,6 +246,24 @@ internal static class ShopCosmetics
             return;
         }
 
+        if (source == "original")
+        {
+            if (PositionStates.TryGetValue(target, out Vector3 home) && target.localPosition.x != home.x)
+            {
+                Vector3 local = target.localPosition;
+                local.x = home.x;
+                target.localPosition = local;
+            }
+
+            if (LoggedRows.Add(target))
+            {
+                Plugin.Log.LogInfo($"[SHOPFX] centre '{target.name}' rows={rows}" +
+                    $" target={targetX:F3} textX={renderer.bounds.center.x:F3} delta=0.000 src={source}");
+            }
+
+            return;
+        }
+
         float textX = renderer.bounds.center.x;
         float delta = targetX - textX;
         if (Mathf.Abs(delta) > 0.0005f)
@@ -244,13 +281,22 @@ internal static class ShopCosmetics
     }
 
     /// <summary>
-    /// World X to centre the row labels on: the mean of the drawn row positions, which
-    /// stays put while the labels move. Falls back to the list rect, then the list group.
+    /// World X to centre the row labels on, taken from the source named by the
+    /// <c>General/TextCentreSource</c> config key. Falls back to the rows, then the list
+    /// rect, then the list group when the requested source is not available.
     /// </summary>
     /// <param name="exclude">Label transform to leave out of any bounds union.</param>
     private static bool CentreTargetX(Transform exclude, out float x, out int rows, out string source)
     {
         ResolveTargets();
+        source = ResolveSourceName();
+        LogCandidatesOnce(exclude);
+
+        if (TryCentre(source, exclude, out x))
+        {
+            RowCentreX(out _, out rows);
+            return true;
+        }
 
         if (RowCentreX(out x, out rows))
         {
@@ -272,6 +318,159 @@ internal static class ShopCosmetics
 
         source = "none";
         return false;
+    }
+
+    /// <summary>World X of the centre for one named source; false when it has none yet.</summary>
+    private static bool TryCentre(string source, Transform exclude, out float x)
+    {
+        switch (source)
+        {
+            case "rows":
+                return RowCentreX(out x, out _);
+            case "list":
+                return CentreX(_list, exclude, out x);
+            case "listGroup":
+                return CentreX(_listGroup, exclude, out x);
+            case "backboard":
+                return CentreX(_backboard, exclude, out x);
+            case "window":
+                return CentreX(_window, exclude, out x);
+            case "original":
+                return OriginalX(exclude, out x);
+            default:
+                return CentreX(_list, exclude, out x);
+        }
+    }
+
+    /// <summary>Configured source name, with an unknown value warned about once and replaced by <c>list</c>.</summary>
+    private static string ResolveSourceName()
+    {
+        string? name = CentreSource?.Value;
+        switch (name)
+        {
+            case "rows":
+            case "list":
+            case "listGroup":
+            case "backboard":
+            case "window":
+            case "original":
+                return name;
+            default:
+                if (!_sourceWarned)
+                {
+                    _sourceWarned = true;
+                    Plugin.Log.LogWarning($"[SHOPFX] unknown TextCentreSource '{name}', using 'list'.");
+                }
+
+                return "list";
+        }
+    }
+
+    /// <summary>World X of the label's vanilla position, remembered before our first shift.</summary>
+    private static bool OriginalX(Transform label, out float x)
+    {
+        x = 0f;
+        if (!PositionStates.TryGetValue(label, out Vector3 home))
+        {
+            return false;
+        }
+
+        Vector3 world = label.parent != null ? label.parent.TransformPoint(home) : home;
+        x = world.x;
+        return true;
+    }
+
+    /// <summary>Logs every centring candidate once per shop session, so a cfg choice can be made from data.</summary>
+    private static void LogCandidatesOnce(Transform exclude)
+    {
+        if (_candidatesLogged)
+        {
+            return;
+        }
+
+        _candidatesLogged = true;
+        RowCentreX(out float rowX, out int rowCount);
+        string rowText = rowCount > 0 ? rowX.ToString("F3") : "n/a";
+        Plugin.Log.LogInfo($"[SHOPFX] centre candidates: rows={rowText}" +
+            $" list={SpanText(_list, exclude)} listGroup={SpanText(_listGroup, exclude)}" +
+            $" backboard={SpanText(_backboard, exclude)} window={SpanText(_window, exclude)}" +
+            $" original={OriginalText(exclude)} chosen={ResolveSourceName()}");
+    }
+
+    /// <summary>Min/max world X of a panel, as <c>(min..max, centre..)</c>, or <c>n/a</c>.</summary>
+    private static string SpanText(Transform? target, Transform? exclude)
+    {
+        if (!SpanX(target, exclude, out float min, out float max))
+        {
+            return "n/a";
+        }
+
+        return $"({min:F3}..{max:F3}, centre={(min + max) * 0.5f:F3})";
+    }
+
+    /// <summary>Min/max world X of a panel: rect corners when it has a real rect, else its renderers.</summary>
+    private static bool SpanX(Transform? target, Transform? exclude, out float min, out float max)
+    {
+        min = 0f;
+        max = 0f;
+        if (target == null)
+        {
+            return false;
+        }
+
+        if (target is RectTransform rect)
+        {
+            Vector3[] corners = new Vector3[4];
+            rect.GetWorldCorners(corners);
+            float lo = Mathf.Min(corners[0].x, corners[2].x);
+            float hi = Mathf.Max(corners[0].x, corners[2].x);
+            if (hi - lo > 0.0001f)
+            {
+                min = lo;
+                max = hi;
+                return true;
+            }
+        }
+
+        bool any = false;
+        Bounds bounds = new Bounds(target.position, Vector3.zero);
+        foreach (Renderer renderer in target.GetComponentsInChildren<Renderer>(true))
+        {
+            if (renderer == null || !renderer.enabled || !renderer.gameObject.activeInHierarchy)
+            {
+                continue;
+            }
+
+            if (IsNameLabel(renderer.transform, exclude))
+            {
+                continue;
+            }
+
+            if (any)
+            {
+                bounds.Encapsulate(renderer.bounds);
+            }
+            else
+            {
+                bounds = renderer.bounds;
+                any = true;
+            }
+        }
+
+        if (!any)
+        {
+            return false;
+        }
+
+        min = bounds.min.x;
+        max = bounds.max.x;
+        return true;
+    }
+
+    /// <summary>Vanilla world X of a label, for the candidate log.</summary>
+    private static string OriginalText(Transform label)
+    {
+        return OriginalX(label, out float x) ? x.ToString("F3") : "n/a";
     }
 
     /// <summary>Mean world X of the rows that are actually drawn, with their count.</summary>
@@ -305,7 +504,7 @@ internal static class ShopCosmetics
         return true;
     }
 
-    /// <summary>Resolves the list and the list group once per session.</summary>
+    /// <summary>Resolves the list, the list group, the window and its backboard once per session.</summary>
     private static void ResolveTargets()
     {
         if (_root == null || _list != null)
@@ -315,6 +514,8 @@ internal static class ShopCosmetics
 
         _listGroup = _root.Find("Item List Group") ?? FindByName(_root, "Item List Group");
         _list = _root.Find(ListPath) ?? FindByName(_root, "Item List");
+        _window = _root.Find("Window") ?? FindByName(_root, "Window");
+        _backboard = _root.Find("Window/Shop_Backboard") ?? FindByName(_root, "Shop_Backboard");
     }
 
     /// <summary>First descendant with the given name.</summary>

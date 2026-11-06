@@ -55,6 +55,7 @@ public sealed class Plugin : BaseUnityPlugin
     private ConfigEntry<string> _confirmText = null!;
     private ConfigEntry<string> _confirmButtonText = null!;
     private ConfigEntry<bool> _shrinkCrestName = null!;
+    private ConfigEntry<string> _textCentreSource = null!;
 
     private bool _loggedAlive;
 
@@ -93,6 +94,10 @@ public sealed class Plugin : BaseUnityPlugin
             "Текст кнопки подтверждения покупки знака");
         _shrinkCrestName = Config.Bind("General", "ShrinkCrestNameToFit", true,
             "Уменьшать шрифт названия знака, чтобы оно влезло в строку");
+        _textCentreSource = Config.Bind("General", "TextCentreSource", "list",
+            "Источник цели для центрирования названия знака: rows (среднее X строк), " +
+            "list (Item List), listGroup (Item List Group), backboard (Window/Shop_Backboard), " +
+            "window (Window), original (не двигать текст). Читается каждый кадр.");
 
         CrestPickerService.PoolMode = _grantAllCrests.Value ? CrestPoolMode.All : _crestPool.Value;
         EnableSnailChoice = _enableSnailChoice.Value;
@@ -104,6 +109,7 @@ public sealed class Plugin : BaseUnityPlugin
         ShopCosmetics.ConfirmText = _confirmText.Value;
         ShopCosmetics.ConfirmButtonText = _confirmButtonText.Value;
         ShopCosmetics.ShrinkNameToFit = _shrinkCrestName.Value;
+        ShopCosmetics.CentreSource = _textCentreSource;
         Logger.LogInfo($"[CREST] crest pool mode: {CrestPickerService.PoolMode}" +
             $" (GrantAllCrests={_grantAllCrests.Value}, CrestPool={_crestPool.Value}).");
         CrestSelectMenu.Closed += OnMenuClosed;
