@@ -84,6 +84,7 @@ internal static class ShopCosmetics
     private static bool _missingLogged;
     private static bool _candidatesLogged;
     private static bool _sourceWarned;
+    private static bool _fontLogged;
 
     /// <summary>
     /// World X the row labels centre on, measured once per shop session and then reused.
@@ -147,6 +148,7 @@ internal static class ShopCosmetics
             _missingLogged = false;
             _candidatesLogged = false;
             _sourceWarned = false;
+            _fontLogged = false;
             _centreTargetX = null;
             _centreSource = "none";
             _centreRows = 0;
@@ -250,6 +252,7 @@ internal static class ShopCosmetics
         _backboard = null;
         _candidatesLogged = false;
         _sourceWarned = false;
+        _fontLogged = false;
         _centreTargetX = null;
         _centreSource = "none";
         _centreRows = 0;
@@ -1102,6 +1105,7 @@ internal static class ShopCosmetics
 
         TextState state = TextState.Capture(label);
         TextStates[label] = state;
+        ApplyLocalizedFont(label, state);
         if (!ShrinkNameToFit)
         {
             return;
@@ -1121,6 +1125,44 @@ internal static class ShopCosmetics
         }
     }
 
+    /// <summary>
+    /// Swaps the price label onto the localized font of the details panel's name label,
+    /// so row names with Cyrillic do not fall back to a submesh the fade group keeps off.
+    /// </summary>
+    private static void ApplyLocalizedFont(TMP_Text label, TextState state)
+    {
+        try
+        {
+            ResolveTargets();
+            TMP_Text? name = _details != null ? FindByName(_details, "Item name")?.GetComponent<TMP_Text>() : null;
+            TMP_FontAsset? font = name != null ? name.font : null;
+            if (font == null || label.font == font)
+            {
+                return;
+            }
+
+            string from = label.font != null ? label.font.name : "<none>";
+            Material? material = name!.fontSharedMaterial;
+            label.enableAutoSizing = false;
+            label.font = font;
+            if (material != null)
+            {
+                label.fontSharedMaterial = material;
+            }
+
+            label.enableAutoSizing = state.AutoSize;
+            if (!_fontLogged)
+            {
+                _fontLogged = true;
+                Plugin.Log.LogInfo($"[SHOPFX] row font '{from}' -> '{font.name}'");
+            }
+        }
+        catch (Exception ex)
+        {
+            Plugin.Log.LogWarning($"[SHOPFX] font swap failed on '{label.name}': {ex.Message}");
+        }
+    }
+
     /// <summary>Puts one price label back to its vanilla text and settings.</summary>
     private static void RestoreText(TMP_Text? label, TextState state)
     {
@@ -1132,18 +1174,35 @@ internal static class ShopCosmetics
         try
         {
             label.enableAutoSizing = false;
+            if (state.Font != null)
+            {
+                label.font = state.Font;
+            }
+
+            if (state.Material != null)
+            {
+                label.fontSharedMaterial = state.Material;
+            }
+
+            label.text = state.Text;
             label.enableWordWrapping = state.WordWrap;
             label.alignment = state.Alignment;
             label.fontSizeMin = state.FontSizeMin;
             label.fontSizeMax = state.FontSizeMax;
             label.fontSize = state.FontSize;
             label.enableAutoSizing = state.AutoSize;
-            label.text = state.Text;
         }
         catch (Exception ex)
         {
             Plugin.Log.LogWarning($"[SHOPFX] label restore failed on '{label.name}': {ex.Message}");
         }
+    }
+
+    /// <summary>Cost label of one shop row, used by the row diagnostics log.</summary>
+    /// <param name="row">Row view of one shop entry.</param>
+    internal static TMP_Text? RowLabel(ShopItemStats? row)
+    {
+        return row != null ? CostTextField?.GetValue(row) as TMP_Text : null;
     }
 
     /// <summary>Overwrites the purchase prompt while its group is showing.</summary>
@@ -1357,7 +1416,8 @@ internal static class ShopCosmetics
     private readonly struct TextState
     {
         internal TextState(string text, bool wordWrap, bool autoSize,
-            float fontSize, float fontSizeMin, float fontSizeMax, TextAlignmentOptions alignment)
+            float fontSize, float fontSizeMin, float fontSizeMax, TextAlignmentOptions alignment,
+            TMP_FontAsset? font, Material? material)
         {
             Text = text;
             WordWrap = wordWrap;
@@ -1366,6 +1426,8 @@ internal static class ShopCosmetics
             FontSizeMin = fontSizeMin;
             FontSizeMax = fontSizeMax;
             Alignment = alignment;
+            Font = font;
+            Material = material;
         }
 
         internal string Text { get; }
@@ -1382,10 +1444,15 @@ internal static class ShopCosmetics
 
         internal TextAlignmentOptions Alignment { get; }
 
+        internal TMP_FontAsset? Font { get; }
+
+        internal Material? Material { get; }
+
         internal static TextState Capture(TMP_Text label)
         {
             return new TextState(label.text, label.enableWordWrapping, label.enableAutoSizing,
-                label.fontSize, label.fontSizeMin, label.fontSizeMax, label.alignment);
+                label.fontSize, label.fontSizeMin, label.fontSizeMax, label.alignment,
+                label.font, label.fontSharedMaterial);
         }
     }
 }

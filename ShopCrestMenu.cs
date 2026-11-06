@@ -4,6 +4,7 @@ using System.Reflection;
 using HarmonyLib;
 using HutongGames.PlayMaker;
 using TeamCherry.NestedFadeGroup;
+using TMProOld;
 using UnityEngine;
 
 namespace CrestPicker;
@@ -1182,14 +1183,21 @@ internal static class ShopCrestMenu
             Plugin.Log.LogInfo(
                 $"[SHOP] live rows={rows.Length} stock={_stock.GetItemCount()}" +
                 $" counts={Counts()}");
-            for (int i = 0; i < rows.Length && i < 3; i++)
+            for (int i = 0; i < rows.Length; i++)
             {
                 ShopItemStats row = rows[i];
+                TMP_Text? label = ShopCosmetics.RowLabel(row);
+                Renderer? renderer = label != null ? label.GetComponent<Renderer>() : null;
+                string text = label != null ? (label.text ?? string.Empty) : "<none>";
+                string font = label != null && label.font != null ? label.font.name : "<none>";
+                string size = renderer != null ? Vec(renderer.bounds.size) : "<none>";
                 Plugin.Log.LogInfo(
                     $"[SHOP]   row{i} y={row.transform.position.y:F2}" +
                     $" top={Float(TopYField, row):F2} bot={Float(BotYField, row):F2}" +
                     $" active={row.gameObject.activeSelf}" +
-                    $" item='{(row.Item != null ? row.Item.name : "<none>")}' cost={row.GetCost()}");
+                    $" label='{text}' font='{font}' size={size}" +
+                    $" item='{(row.Item != null ? row.Item.name : "<none>")}'" +
+                    $" cost={(row.Item != null ? row.GetCost().ToString() : "<none>")}");
             }
         }
         catch (Exception ex)
