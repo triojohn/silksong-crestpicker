@@ -151,6 +151,7 @@ internal static class ShopCrestMenu
             // owner guard holds, then put our stock back after the event anyway.
             IsOpen = true;
             CrestSelectMenu.IsOpen = true;
+            ShopInputLock.Block("shop open");
 
             MoveToHero();
             control.SendEvent(OpenEvent);
@@ -169,13 +170,14 @@ internal static class ShopCrestMenu
         }
         catch (Exception ex)
         {
+            Restore("open exception");
             return Fallback($"{ex.GetType().Name}: {ex.Message}");
         }
         finally
         {
             if (!IsOpen)
             {
-                Restore();
+                Restore("open failed");
             }
         }
     }
@@ -339,6 +341,7 @@ internal static class ShopCrestMenu
         catch (Exception ex)
         {
             Plugin.Log.LogError($"[SHOP] temp purchase handler failed: {ex}");
+            Restore("purchase failed");
         }
     }
 
@@ -347,7 +350,7 @@ internal static class ShopCrestMenu
     {
         if (_control == null)
         {
-            Restore();
+            Restore("purchase");
             return;
         }
 
@@ -355,7 +358,7 @@ internal static class ShopCrestMenu
         Plugin.Log.LogInfo($"[SHOP] sent '{CloseEvent}' to '{ControlFsmName}'.");
         if (ActiveState(_control) == IdleState)
         {
-            Restore();
+            Restore("purchase");
         }
     }
 
@@ -470,8 +473,10 @@ internal static class ShopCrestMenu
     }
 
     /// <summary>Puts the vanilla stock and the original window position back.</summary>
-    internal static void Restore()
+    /// <param name="reason">Where the session ended; logged with the input release.</param>
+    internal static void Restore(string reason = "closed")
     {
+        ShopInputLock.Unblock(reason);
         if (_stock == null && !IsOpen)
         {
             ResetSession();
@@ -922,7 +927,7 @@ internal sealed class ShopCrestSession : MonoBehaviour
             if (ShopCrestMenu.ClosedByFsm())
             {
                 Plugin.Log.LogInfo("[SHOP] shop FSM returned to idle, restoring vanilla shop.");
-                ShopCrestMenu.Restore();
+                ShopCrestMenu.Restore("fsm idle");
                 Destroy(this);
                 return;
             }
@@ -930,21 +935,21 @@ internal sealed class ShopCrestSession : MonoBehaviour
             if (Time.unscaledTime > _deadline)
             {
                 Plugin.Log.LogWarning("[SHOP] live shop session timed out, restoring vanilla shop.");
-                ShopCrestMenu.Restore();
+                ShopCrestMenu.Restore("timeout");
                 Destroy(this);
             }
         }
         catch (Exception ex)
         {
             Plugin.Log.LogWarning($"[SHOP] live shop session failed: {ex.Message}");
-            ShopCrestMenu.Restore();
+            ShopCrestMenu.Restore("exception");
             Destroy(this);
         }
     }
 
     private void OnDestroy()
     {
-        ShopCrestMenu.Restore();
+        ShopCrestMenu.Restore("scene unload");
     }
 }
 

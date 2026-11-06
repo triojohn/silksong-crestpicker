@@ -48,12 +48,10 @@ public sealed class Plugin : BaseUnityPlugin
     private ConfigEntry<bool> _useLiveShop = null!;
     private ConfigEntry<KeyboardShortcut> _testHotkey = null!;
     private ConfigEntry<KeyboardShortcut> _shopDumpHotkey = null!;
-    private ConfigEntry<float> _crestIconScale = null!;
-    private ConfigEntry<float> _crestIconOffsetX = null!;
-    private ConfigEntry<float> _crestNameOffsetX = null!;
     private ConfigEntry<bool> _showCrestSchema = null!;
     private ConfigEntry<float> _crestSchemaScale = null!;
     private ConfigEntry<string> _confirmText = null!;
+    private ConfigEntry<string> _confirmButtonText = null!;
     private ConfigEntry<bool> _shrinkCrestName = null!;
 
     private bool _loggedAlive;
@@ -79,30 +77,24 @@ public sealed class Plugin : BaseUnityPlugin
             "Клавиша дампа живого магазина (объекты, FSM, строки)");
         _useLiveShop = Config.Bind("General", "UseLiveShop", true,
             "Показывать выбор знака в настоящем окне магазина (сток и позиция восстанавливаются)");
-        _crestIconScale = Config.Bind("General", "CrestIconScale", 0.2f,
-            "Множитель масштаба иконок знаков в окне магазина (1 — как у обычного предмета)");
-        _crestIconOffsetX = Config.Bind("General", "CrestIconOffsetX", 0.4f,
-            "Сдвиг иконки знака вправо по строке магазина, к центру (0 — как в ваниле)");
-        _crestNameOffsetX = Config.Bind("General", "CrestNameOffsetX", -0.4f,
-            "Сдвиг названия знака влево по строке магазина, к центру (0 — как в ваниле)");
         _showCrestSchema = Config.Bind("General", "ShowCrestSchema", true,
             "Рисовать схему знака (силуэт и цветные точки слотов) в панели деталей магазина");
-        _crestSchemaScale = Config.Bind("General", "CrestSchemaScale", 1f,
-            "Множитель размера схемы знака в панели деталей");
+        _crestSchemaScale = Config.Bind("General", "CrestSchemaScale", 3f,
+            "Множитель размера схемы знака в панели деталей (схема подтверждения вдвое больше)");
         _confirmText = Config.Bind("General", "ConfirmText", "Вы уверены?",
             "Текст подтверждения покупки знака");
+        _confirmButtonText = Config.Bind("General", "ConfirmButtonText", "Выбрать",
+            "Текст кнопки подтверждения покупки знака");
         _shrinkCrestName = Config.Bind("General", "ShrinkCrestNameToFit", true,
             "Уменьшать шрифт названия знака, чтобы оно влезло в строку");
 
         CrestPickerService.PoolMode = _grantAllCrests.Value ? CrestPoolMode.All : _crestPool.Value;
         EnableSnailChoice = _enableSnailChoice.Value;
         UseLiveShop = _useLiveShop.Value;
-        ShopCosmetics.IconScale = _crestIconScale.Value;
-        ShopCosmetics.CrestIconOffsetX = _crestIconOffsetX.Value;
-        ShopCosmetics.CrestNameOffsetX = _crestNameOffsetX.Value;
         ShopCrestSchema.Enabled = _showCrestSchema.Value;
         ShopCrestSchema.Scale = _crestSchemaScale.Value;
         ShopCosmetics.ConfirmText = _confirmText.Value;
+        ShopCosmetics.ConfirmButtonText = _confirmButtonText.Value;
         ShopCosmetics.ShrinkNameToFit = _shrinkCrestName.Value;
         Logger.LogInfo($"[CREST] crest pool mode: {CrestPickerService.PoolMode}" +
             $" (GrantAllCrests={_grantAllCrests.Value}, CrestPool={_crestPool.Value}).");

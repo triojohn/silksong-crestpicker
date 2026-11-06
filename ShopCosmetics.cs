@@ -34,11 +34,11 @@ internal static class ShopCosmetics
     private static readonly FieldInfo? MaterialIconField =
         typeof(ShopItemStats).GetField("materialCostIcon", PrivateInstance);
 
-    /// <summary>Vanilla local scale of every crest icon we rescaled.</summary>
-    private static readonly Dictionary<Transform, Vector3> IconScales = new Dictionary<Transform, Vector3>();
-
-    /// <summary>Vanilla local position of every row object we shifted.</summary>
+    /// <summary>Vanilla local position of every row name we centred.</summary>
     private static readonly Dictionary<Transform, Vector3> PositionStates = new Dictionary<Transform, Vector3>();
+
+    /// <summary>Centred local position of every row name, computed once.</summary>
+    private static readonly Dictionary<Transform, Vector3> NameTargets = new Dictionary<Transform, Vector3>();
 
     /// <summary>Vanilla active state of every object we hid.</summary>
     private static readonly Dictionary<GameObject, bool> ObjectStates = new Dictionary<GameObject, bool>();
@@ -50,20 +50,16 @@ internal static class ShopCosmetics
     private static Transform? _root;
     private static TMP_Text? _confirm;
     private static string? _confirmOriginal;
+    private static TMP_Text? _confirmButton;
+    private static string? _confirmButtonOriginal;
     private static int _frames;
     private static bool _missingLogged;
 
-    /// <summary>Multiplier applied to the vanilla crest icon scale; 0.2 = five times smaller.</summary>
-    internal static float IconScale = 0.2f;
-
-    /// <summary>Shift of the row icon along the row, toward the centre.</summary>
-    internal static float CrestIconOffsetX = 0.4f;
-
-    /// <summary>Shift of the row crest name along the row, toward the centre.</summary>
-    internal static float CrestNameOffsetX = -0.4f;
-
     /// <summary>Confirmation text written over the vanilla purchase prompt.</summary>
     internal static string ConfirmText = "Вы уверены?";
+
+    /// <summary>Label written over the vanilla confirmation button.</summary>
+    internal static string ConfirmButtonText = "Выбрать";
 
     /// <summary>True to enable word wrapping and auto-sizing on the name label.</summary>
     internal static bool ShrinkNameToFit = true;
@@ -120,14 +116,6 @@ internal static class ShopCosmetics
         try
         {
             ShopCrestSchema.End();
-            foreach (KeyValuePair<Transform, Vector3> pair in IconScales)
-            {
-                if (pair.Key != null)
-                {
-                    pair.Key.localScale = pair.Value;
-                }
-            }
-
             foreach (KeyValuePair<Transform, Vector3> pair in PositionStates)
             {
                 if (pair.Key != null)
@@ -153,6 +141,11 @@ internal static class ShopCosmetics
             {
                 _confirm.text = _confirmOriginal;
             }
+
+            if (_confirmButton != null && _confirmButtonOriginal != null)
+            {
+                _confirmButton.text = _confirmButtonOriginal;
+            }
         }
         catch (Exception ex)
         {
@@ -160,12 +153,14 @@ internal static class ShopCosmetics
         }
         finally
         {
-            IconScales.Clear();
             PositionStates.Clear();
+            NameTargets.Clear();
             ObjectStates.Clear();
             TextStates.Clear();
             _confirm = null;
             _confirmOriginal = null;
+            _confirmButton = null;
+            _confirmButtonOriginal = null;
         }
     }
 
@@ -185,46 +180,61 @@ internal static class ShopCosmetics
                 continue;
             }
 
-            ScaleIcon(row);
+            HideSprite(ItemSpriteField?.GetValue(row) as SpriteRenderer);
             ReplacePrice(row, crest.DisplayName);
-            OffsetRow(row);
+            CenterName(row);
         }
 
         ApplyConfirm(root);
+        ApplyConfirmButton(root);
     }
 
-    /// <summary>Pulls the row icon and the row name toward the centre of the row.</summary>
-    private static void OffsetRow(ShopItemStats row)
+    /// <summary>
+    /// Puts the name label in the middle of the row: the midpoint between the vanilla
+    /// icon position and the vanilla label position, with centred alignment.
+    /// </summary>
+    private static void CenterName(ShopItemStats row)
     {
-        if (ItemSpriteField?.GetValue(row) is SpriteRenderer icon && icon != null)
+        if (!(CostTextField?.GetValue(row) is TMP_Text label) || label == null)
         {
-            ShiftX(icon.transform, CrestIconOffsetX);
+            return;
         }
 
-        if (CostTextField?.GetValue(row) is TMP_Text label && label != null)
+        Transform target = label.transform;
+        if (!NameTargets.TryGetValue(target, out Vector3 wanted))
         {
-            ShiftX(label.transform, CrestNameOffsetX);
-        }
-    }
-
-    /// <summary>Applies <paramref name="dx"/> on top of the vanilla local position.</summary>
-    private static void ShiftX(Transform target, float dx)
-    {
-        if (!PositionStates.TryGetValue(target, out Vector3 original))
-        {
-            original = target.localPosition;
-            PositionStates[target] = original;
+            PositionStates[target] = target.localPosition;
+            wanted = CentredPosition(row, target);
+            NameTargets[target] = wanted;
             Plugin.Log.LogInfo(
-                $"[SHOPFX] row offset '{target.name}' orig={original.x:F3},{original.y:F3}" +
-                $" dx={dx:F3} now={original.x + dx:F3}" +
-                $" (CrestIconOffsetX={CrestIconOffsetX:F3} CrestNameOffsetX={CrestNameOffsetX:F3})");
+                $"[SHOPFX] row name '{target.name}' centred: x {target.localPosition.x:F3} -> {wanted.x:F3}");
         }
 
-        Vector3 wanted = original + new Vector3(dx, 0f, 0f);
         if (target.localPosition != wanted)
         {
             target.localPosition = wanted;
         }
+
+        if (label.alignment != TextAlignmentOptions.Center)
+        {
+            label.alignment = TextAlignmentOptions.Center;
+        }
+    }
+
+    /// <summary>Midpoint between the row icon and the row name, in the name's parent space.</summary>
+    private static Vector3 CentredPosition(ShopItemStats row, Transform label)
+    {
+        Vector3 position = label.localPosition;
+        SpriteRenderer? icon = ItemSpriteField?.GetValue(row) as SpriteRenderer;
+        if (icon == null)
+        {
+            return position;
+        }
+
+        Transform space = label.parent != null ? label.parent : label;
+        float iconX = space.InverseTransformPoint(icon.transform.position).x;
+        position.x = (iconX + position.x) * 0.5f;
+        return position;
     }
 
     /// <summary>Row icon renderer, used by the details schema as a sorting reference.</summary>
@@ -232,28 +242,6 @@ internal static class ShopCosmetics
     internal static SpriteRenderer? RowIcon(ShopItemStats? row)
     {
         return row != null ? ItemSpriteField?.GetValue(row) as SpriteRenderer : null;
-    }
-
-    /// <summary>Shrinks the row's item sprite by <see cref="IconScale"/>.</summary>
-    private static void ScaleIcon(ShopItemStats row)
-    {
-        if (!(ItemSpriteField?.GetValue(row) is SpriteRenderer icon) || icon == null)
-        {
-            return;
-        }
-
-        Transform target = icon.transform;
-        if (!IconScales.TryGetValue(target, out Vector3 original))
-        {
-            original = target.localScale;
-            IconScales[target] = original;
-        }
-
-        Vector3 wanted = original * IconScale;
-        if (target.localScale != wanted)
-        {
-            target.localScale = wanted;
-        }
     }
 
     /// <summary>Writes the crest name where the price was and hides the cost icons.</summary>
@@ -264,8 +252,8 @@ internal static class ShopCosmetics
             return;
         }
 
-        HideRowIcon(CostSpriteField?.GetValue(row) as SpriteRenderer);
-        HideRowIcon(MaterialIconField?.GetValue(row) as SpriteRenderer);
+        HideSprite(CostSpriteField?.GetValue(row) as SpriteRenderer);
+        HideSprite(MaterialIconField?.GetValue(row) as SpriteRenderer);
 
         if (CostTextField?.GetValue(row) is TMP_Text label && label != null)
         {
@@ -277,8 +265,8 @@ internal static class ShopCosmetics
         }
     }
 
-    /// <summary>Hides one cost icon, remembering its vanilla state once.</summary>
-    private static void HideRowIcon(SpriteRenderer? renderer)
+    /// <summary>Hides one sprite object, remembering its vanilla state once.</summary>
+    private static void HideSprite(SpriteRenderer? renderer)
     {
         if (renderer == null)
         {
@@ -338,6 +326,7 @@ internal static class ShopCosmetics
         {
             label.enableAutoSizing = false;
             label.enableWordWrapping = state.WordWrap;
+            label.alignment = state.Alignment;
             label.fontSizeMin = state.FontSizeMin;
             label.fontSizeMax = state.FontSizeMax;
             label.fontSize = state.FontSize;
@@ -405,6 +394,72 @@ internal static class ShopCosmetics
         return null;
     }
 
+    /// <summary>Overwrites the confirmation button label while its group is showing.</summary>
+    private static void ApplyConfirmButton(Transform root)
+    {
+        if (string.IsNullOrEmpty(ConfirmButtonText))
+        {
+            return;
+        }
+
+        if (_confirmButton == null)
+        {
+            _confirmButton = FindConfirmButton(root);
+            if (_confirmButton == null)
+            {
+                if (!_missingLogged)
+                {
+                    _missingLogged = true;
+                    Plugin.Log.LogWarning("[SHOPFX] 'Action Confirm/Text' not found.");
+                }
+
+                return;
+            }
+        }
+
+        if (!_confirmButton.gameObject.activeInHierarchy)
+        {
+            return;
+        }
+
+        string wanted = ConfirmButtonText;
+        if (_confirmButtonOriginal == null && _confirmButton.text != wanted)
+        {
+            _confirmButtonOriginal = _confirmButton.text;
+        }
+
+        if (_confirmButton.text != wanted)
+        {
+            _confirmButton.text = wanted;
+        }
+    }
+
+    /// <summary>Locates the confirmation button label by path, then by parent name.</summary>
+    private static TMP_Text? FindConfirmButton(Transform root)
+    {
+        string[] paths = { "Item Confirm Group/Action Confirm/Text", "Action Confirm/Text" };
+        foreach (string path in paths)
+        {
+            Transform? direct = root.Find(path);
+            TMP_Text? found = direct != null ? direct.GetComponent<TMP_Text>() : null;
+            if (found != null)
+            {
+                return found;
+            }
+        }
+
+        foreach (TMP_Text text in root.GetComponentsInChildren<TMP_Text>(true))
+        {
+            if (text != null && text.name == "Text" && text.transform.parent != null
+                && text.transform.parent.name == "Action Confirm")
+            {
+                return text;
+            }
+        }
+
+        return null;
+    }
+
     /// <summary>
     /// Keeps the currency counters hidden: <see cref="ShopMenuStock.HideCurrencyCounters"/>
     /// for the window's own counters, plus a stack hide for counters living under it.
@@ -432,7 +487,7 @@ internal static class ShopCosmetics
     private readonly struct TextState
     {
         internal TextState(string text, bool wordWrap, bool autoSize,
-            float fontSize, float fontSizeMin, float fontSizeMax)
+            float fontSize, float fontSizeMin, float fontSizeMax, TextAlignmentOptions alignment)
         {
             Text = text;
             WordWrap = wordWrap;
@@ -440,6 +495,7 @@ internal static class ShopCosmetics
             FontSize = fontSize;
             FontSizeMin = fontSizeMin;
             FontSizeMax = fontSizeMax;
+            Alignment = alignment;
         }
 
         internal string Text { get; }
@@ -454,10 +510,12 @@ internal static class ShopCosmetics
 
         internal float FontSizeMax { get; }
 
+        internal TextAlignmentOptions Alignment { get; }
+
         internal static TextState Capture(TMP_Text label)
         {
             return new TextState(label.text, label.enableWordWrapping, label.enableAutoSizing,
-                label.fontSize, label.fontSizeMin, label.fontSizeMax);
+                label.fontSize, label.fontSizeMin, label.fontSizeMax, label.alignment);
         }
     }
 }

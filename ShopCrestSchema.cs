@@ -31,6 +31,12 @@ internal static class ShopCrestSchema
     /// <summary>Path of the details panel inside the shop window.</summary>
     private const string DetailsPath = "Item List Group/Item Details";
 
+    /// <summary>Confirm-screen schema height relative to the details schema.</summary>
+    private const float ConfirmSizeFactor = 2f;
+
+    /// <summary>Confirm group holding the item picture the confirm schema is centred on.</summary>
+    private const string ConfirmGroupPath = "Item Confirm Group";
+
     /// <summary>Fallback colours when the game's tool type palette is unavailable.</summary>
     private static readonly Dictionary<ToolItemType, Color> FallbackColors =
         new Dictionary<ToolItemType, Color>
@@ -47,9 +53,12 @@ internal static class ShopCrestSchema
     private static Transform? _root;
     private static Transform? _details;
     private static TMP_Text? _nameLabel;
+    private static Transform? _confirmGroup;
+    private static Transform? _confirmAnchor;
 
     /// <summary>Schema objects created for the current crest; destroyed on rebuild.</summary>
     private static GameObject? _container;
+    private static GameObject? _confirmContainer;
     private static ToolCrest? _builtFor;
     private static Sprite? _dotSprite;
     private static bool _missingLogged;
@@ -70,6 +79,8 @@ internal static class ShopCrestSchema
             _root = root;
             _details = null;
             _nameLabel = null;
+            _confirmGroup = null;
+            _confirmAnchor = null;
             _builtFor = null;
             _missingLogged = false;
             _numbersLogged = false;
@@ -105,6 +116,8 @@ internal static class ShopCrestSchema
         _root = null;
         _details = null;
         _nameLabel = null;
+        _confirmGroup = null;
+        _confirmAnchor = null;
         _builtFor = null;
         _numbersLogged = false;
         try
@@ -143,12 +156,90 @@ internal static class ShopCrestSchema
         }
 
         ToolCrest? crest = SelectedCrest();
-        if (crest == null || crest == _builtFor)
+        if (crest != null && crest != _builtFor)
+        {
+            Build(crest);
+        }
+
+        Place();
+    }
+
+    /// <summary>
+    /// Puts the details schema in the middle of the lower half of the details panel and
+    /// the confirm schema on the confirm screen picture. Runs every frame because the
+    /// panel's layout group keeps moving its children.
+    /// </summary>
+    private static void Place()
+    {
+        if (_container != null && _details != null && TryBounds(_details, out Bounds bounds))
+        {
+            float lowerCentreY = Mathf.Lerp(bounds.min.y, bounds.center.y, 0.5f);
+            Vector3 target = new Vector3(bounds.center.x, lowerCentreY, bounds.center.z);
+            if (_container.transform.position != target)
+            {
+                _container.transform.position = target;
+            }
+        }
+
+        if (_confirmContainer == null)
         {
             return;
         }
 
-        Build(crest);
+        bool showing = _confirmGroup != null && _confirmGroup.gameObject.activeInHierarchy;
+        if (_confirmContainer.activeSelf != showing)
+        {
+            _confirmContainer.SetActive(showing);
+        }
+
+        if (showing && _confirmAnchor != null)
+        {
+            Vector3 target = _confirmAnchor.position;
+            if (_confirmContainer.transform.position != target)
+            {
+                _confirmContainer.transform.position = target;
+            }
+        }
+    }
+
+    /// <summary>World bounds of a UI panel: rect corners, then child renderers, then its position.</summary>
+    private static bool TryBounds(Transform target, out Bounds bounds)
+    {
+        bounds = new Bounds(target.position, Vector3.zero);
+        RectTransform? rect = target as RectTransform;
+        if (rect != null)
+        {
+            Vector3[] corners = new Vector3[4];
+            rect.GetWorldCorners(corners);
+            Vector3 size = corners[2] - corners[0];
+            if (Mathf.Abs(size.x) > 0.001f && Mathf.Abs(size.y) > 0.001f)
+            {
+                bounds = new Bounds((corners[0] + corners[2]) * 0.5f,
+                    new Vector3(Mathf.Abs(size.x), Mathf.Abs(size.y), Mathf.Abs(size.z)));
+                return true;
+            }
+        }
+
+        bool any = false;
+        foreach (Renderer renderer in target.GetComponentsInChildren<Renderer>(true))
+        {
+            if (renderer == null)
+            {
+                continue;
+            }
+
+            if (any)
+            {
+                bounds.Encapsulate(renderer.bounds);
+            }
+            else
+            {
+                bounds = renderer.bounds;
+                any = true;
+            }
+        }
+
+        return true;
     }
 
     /// <summary>Finds the details panel and its name label, once per session.</summary>
@@ -283,26 +374,99 @@ internal static class ShopCrestSchema
             return;
         }
 
-        SpriteRenderer? reference = ReferenceRenderer() ?? BackboardRenderer();
-        Transform anchor = _nameLabel.transform;
-        GameObject container = new GameObject("Crest Schema");
-        container.transform.SetParent(_details, false);
-        float parentScale = _details.lossyScale.x;
-        container.transform.localScale = Vector3.one * (Mathf.Approximately(parentScale, 0f) ? 1f : 1f / parentScale);
-        container.transform.position = anchor.position;
-        _container = container;
+        _container = BuildSchema(crest, silhouette, darkened, DetailsParent(), 1f, "Crest Schema");
+        _confirmContainer = BuildSchema(crest, silhouette, darkened, ConfirmGroup(), ConfirmSizeFactor,
+            "Confirm Crest Schema");
+    }
 
+    /// <summary>
+    /// Creates one schema instance: silhouette plus one dot per slot, sized to
+    /// <see cref="BaseHeight"/> times <paramref name="sizeFactor"/> world units.
+    /// The container is parented outside the layout group and placed by the caller.
+    /// </summary>
+    private static GameObject? BuildSchema(ToolCrest crest, Sprite silhouette, bool darkened,
+        Transform? parent, float sizeFactor, string label)
+    {
+        if (parent == null)
+        {
+            if (!_missingLogged)
+            {
+                _missingLogged = true;
+                Plugin.Log.LogWarning($"[SCHEMA] '{label}' parent not found, schema skipped.");
+            }
+
+            return null;
+        }
+
+        SpriteRenderer? reference = ReferenceRenderer() ?? BackboardRenderer();
+        GameObject container = new GameObject(label);
+        // A plain Transform child: layout groups only lay out RectTransform children,
+        // so this container keeps its hand-placed position.
+        container.transform.SetParent(parent, false);
+        float parentScale = parent.lossyScale.x;
+        container.transform.localScale = Vector3.one * (Mathf.Approximately(parentScale, 0f) ? 1f : 1f / parentScale);
+        container.transform.position = parent.position;
+
+        float height = BaseHeight * Scale * sizeFactor;
         float worldHeight = silhouette.rect.height / Mathf.Max(1f, silhouette.pixelsPerUnit);
-        float fit = worldHeight > 0.01f ? BaseHeight * Scale / worldHeight : 1f;
+        float fit = worldHeight > 0.01f ? height / worldHeight : 1f;
         float dotFactor = fit / Mathf.Max(1f, silhouette.pixelsPerUnit);
-        float dotSize = BaseHeight * Scale * DotFraction;
+        float dotSize = height * DotFraction;
 
         SpriteRenderer body = AddRenderer(container, "Schema Silhouette", silhouette, reference, 0);
         body.transform.localScale = Vector3.one * fit;
         body.color = darkened ? new Color(0.3f, 0.3f, 0.3f, 1f) : Color.white;
 
         int dots = AddDots(container, crest, reference, dotFactor, dotSize);
-        LogNumbers(crest, silhouette, reference, fit, dotFactor, dotSize, dots);
+        LogNumbers(label, crest, silhouette, reference, fit, dotFactor, dotSize, dots);
+        return container;
+    }
+
+    /// <summary>Parent for the details schema: the details panel's own parent, not the layout group itself.</summary>
+    private static Transform? DetailsParent()
+    {
+        if (_details == null)
+        {
+            return null;
+        }
+
+        return _details.parent != null ? _details.parent : _root;
+    }
+
+    /// <summary>Confirm group and the item picture the confirm schema is centred on.</summary>
+    private static Transform? ConfirmGroup()
+    {
+        if (_confirmGroup != null)
+        {
+            return _confirmGroup;
+        }
+
+        if (_root == null)
+        {
+            return null;
+        }
+
+        Transform? direct = _root.Find(ConfirmGroupPath);
+        if (direct == null)
+        {
+            foreach (Transform child in _root.GetComponentsInChildren<Transform>(true))
+            {
+                if (child != null && child.name == "Item Confirm Group")
+                {
+                    direct = child;
+                    break;
+                }
+            }
+        }
+
+        _confirmGroup = direct;
+        if (_confirmGroup != null)
+        {
+            Transform? picture = _confirmGroup.Find("Item Sprite");
+            _confirmAnchor = picture != null ? picture : _confirmGroup;
+        }
+
+        return _confirmGroup;
     }
 
     /// <summary>Adds one dot per slot; returns how many were created.</summary>
@@ -467,11 +631,14 @@ internal static class ShopCrestSchema
     }
 
     /// <summary>One line of real numbers, so the slot scaling can be tuned from the log.</summary>
-    private static void LogNumbers(ToolCrest crest, Sprite silhouette, SpriteRenderer? reference,
+    private static void LogNumbers(string label, ToolCrest crest, Sprite silhouette, SpriteRenderer? reference,
         float fit, float dotFactor, float dotSize, int dots)
     {
-        if (_numbersLogged)
+        if (label != "Crest Schema" || _numbersLogged)
         {
+            Plugin.Log.LogInfo(
+                $"[SCHEMA] {label} crest='{crest.name}' fit={fit:F3} dot={dotSize:F3} dots={dots}" +
+                $" scale={Scale:F2}");
             return;
         }
 
@@ -482,17 +649,22 @@ internal static class ShopCrestSchema
         Plugin.Log.LogInfo(
             $"[SCHEMA] crest='{crest.name}' sprite='{silhouette.name}'" +
             $" rect={silhouette.rect.width:F0}x{silhouette.rect.height:F0} ppu={silhouette.pixelsPerUnit:F1}" +
-            $" fit={fit:F3} dotFactor={dotFactor:F4} dot={dotSize:F3} dots={dots} {sorting}" +
-            $" anchor={_nameLabel?.transform.position}");
+            $" fit={fit:F3} dotFactor={dotFactor:F4} dot={dotSize:F3} dots={dots} {sorting} scale={Scale:F2}");
     }
 
-    /// <summary>Destroys the schema objects of the current crest.</summary>
+    /// <summary>Destroys the schema objects of the current crest, details and confirm alike.</summary>
     private static void DestroySchema()
     {
         if (_container != null)
         {
             UnityEngine.Object.Destroy(_container);
             _container = null;
+        }
+
+        if (_confirmContainer != null)
+        {
+            UnityEngine.Object.Destroy(_confirmContainer);
+            _confirmContainer = null;
         }
     }
 
