@@ -60,6 +60,12 @@ internal static class ShopCosmetics
     /// <summary>Vanilla labels hidden behind a fallback label.</summary>
     private static readonly HashSet<TMP_Text> HiddenLabels = new HashSet<TMP_Text>();
 
+    /// <summary>Font fallback links already logged, one per process: the asset outlives a session.</summary>
+    private static readonly HashSet<string> LoggedFontFallbacks = new HashSet<string>();
+
+    /// <summary>True once the fallback-label count has been logged for this session.</summary>
+    private static bool _fallbackLogged;
+
     /// <summary>Mesh bounds centre X of every row label, measured before our first shift.</summary>
     private static readonly Dictionary<Transform, float> BaselineCentres =
         new Dictionary<Transform, float>();
@@ -92,7 +98,6 @@ internal static class ShopCosmetics
     private static bool _missingLogged;
     private static bool _candidatesLogged;
     private static bool _sourceWarned;
-    private static bool _fontLogged;
 
     /// <summary>
     /// World X the row labels centre on, measured once per shop session and then reused.
@@ -162,7 +167,7 @@ internal static class ShopCosmetics
             _missingLogged = false;
             _candidatesLogged = false;
             _sourceWarned = false;
-            _fontLogged = false;
+            _fallbackLogged = false;
             _centreTargetX = null;
             _centreSource = "none";
             _centreRows = 0;
@@ -256,11 +261,29 @@ internal static class ShopCosmetics
                 label.text = pair.Value;
             }
 
-            if (FallbackLabels.ContainsKey(label) || !MeshChecked.Add(label))
+            if (FallbackLabels.TryGetValue(label, out TMP_Text existing))
+            {
+                if (existing != null)
+                {
+                    if (existing.text != pair.Value)
+                    {
+                        existing.text = pair.Value;
+                    }
+
+                    continue;
+                }
+
+                FallbackLabels.Remove(label);
+                HiddenLabels.Remove(label);
+                MeshChecked.Remove(label);
+            }
+
+            if (!MeshChecked.Add(label))
             {
                 continue;
             }
 
+            label.enabled = true;
             label.ForceMeshUpdate();
             Renderer? renderer = label.GetComponent<Renderer>();
             if (renderer != null && renderer.bounds.size.x > 0.0001f)
@@ -273,30 +296,34 @@ internal static class ShopCosmetics
     }
 
     /// <summary>
-    /// Builds our own world-space name label on the row and hides the vanilla price label.
-    /// Used only when the vanilla label's mesh is empty after a forced rebuild, i.e. the
-    /// font swap left nothing that can draw the name.
+    /// Builds our own name label on the row and hides the vanilla price label. Used only
+    /// when the vanilla label's mesh stays empty after a forced rebuild. The object is
+    /// registered and the vanilla label hidden before the mesh is built, so a failed build
+    /// can be rolled back without leaving orphans behind.
     /// </summary>
     /// <param name="vanilla">Row price label that draws nothing.</param>
     /// <param name="name">Crest name to draw.</param>
     private static void AddFallbackLabel(TMP_Text vanilla, string name)
     {
+        GameObject? go = null;
         try
         {
-            if (vanilla.font == null)
+            TMP_FontAsset? font = vanilla.font;
+            if (font == null)
             {
                 return;
             }
 
             ShopItemStats? row = vanilla.GetComponentInParent<ShopItemStats>();
             Transform parent = row != null ? row.transform : vanilla.transform.parent;
-            GameObject go = new GameObject("CrestPicker Row Name");
+            go = new GameObject("CrestPicker Row Name");
+            go.layer = vanilla.gameObject.layer;
             go.transform.SetParent(parent, true);
             go.transform.position = vanilla.transform.position;
             go.transform.rotation = vanilla.transform.rotation;
 
             TextMeshPro text = go.AddComponent<TextMeshPro>();
-            text.font = vanilla.font;
+            text.font = font;
             text.fontSize = vanilla.fontSize;
             text.alignment = TextAlignmentOptions.Center;
             text.enableAutoSizing = false;
@@ -304,24 +331,94 @@ internal static class ShopCosmetics
             text.OverflowMode = TextOverflowModes.Overflow;
             text.color = new Color(1f, 1f, 1f, 1f);
             text.text = name;
-            text.ForceMeshUpdate();
 
-            Renderer? icon = RowIcon(row);
-            MeshRenderer? renderer = go.GetComponent<MeshRenderer>();
-            if (icon != null && renderer != null)
+            RectTransform rect = text.rectTransform;
+            rect.sizeDelta = FallbackSize(vanilla, row);
+            rect.anchoredPosition = Vector2.zero;
+
+            CopySorting(vanilla, go.GetComponent<MeshRenderer>());
+
+            FallbackLabels[vanilla] = text;
+            HiddenLabels.Add(vanilla);
+            vanilla.enabled = false;
+
+            text.ForceMeshUpdate();
+            MeshRenderer? own = go.GetComponent<MeshRenderer>();
+            if (own == null || own.bounds.size.x <= 0.0001f)
             {
-                renderer.sortingLayerID = icon.sortingLayerID;
-                renderer.sortingOrder = icon.sortingOrder;
+                throw new InvalidOperationException("fallback label drew an empty mesh");
             }
 
-            vanilla.enabled = false;
-            HiddenLabels.Add(vanilla);
-            FallbackLabels[vanilla] = text;
-            Plugin.Log.LogInfo("[SHOPFX] row label fallback used");
+            if (!_fallbackLogged)
+            {
+                _fallbackLogged = true;
+                Plugin.Log.LogInfo($"[SHOPFX] row label fallback used rows={RowNames.Count}");
+            }
         }
         catch (Exception ex)
         {
+            RollbackFallback(vanilla, go);
             Plugin.Log.LogWarning($"[SHOPFX] row label fallback failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>Size of our own label: the vanilla label's rect, then the row's rect.</summary>
+    /// <param name="vanilla">Row price label that draws nothing.</param>
+    /// <param name="row">Row view of the entry, may be null.</param>
+    private static Vector2 FallbackSize(TMP_Text vanilla, ShopItemStats? row)
+    {
+        if (vanilla.transform is RectTransform own && own.rect.width > 1f && own.rect.height > 1f)
+        {
+            return new Vector2(own.rect.width, own.rect.height);
+        }
+
+        if (row != null && row.transform is RectTransform rowRect
+            && rowRect.rect.width > 1f && rowRect.rect.height > 1f)
+        {
+            return new Vector2(rowRect.rect.width, rowRect.rect.height);
+        }
+
+        return new Vector2(400f, 80f);
+    }
+
+    /// <summary>Copies the sorting layer of the vanilla label's own renderer onto ours.</summary>
+    /// <param name="vanilla">Row price label that draws nothing.</param>
+    /// <param name="renderer">Our own renderer, may be null.</param>
+    private static void CopySorting(TMP_Text vanilla, MeshRenderer? renderer)
+    {
+        if (renderer == null)
+        {
+            return;
+        }
+
+        Renderer? source = vanilla.GetComponent<Renderer>();
+        if (source == null || source == renderer)
+        {
+            source = RowIcon(vanilla.GetComponentInParent<ShopItemStats>());
+        }
+
+        if (source != null)
+        {
+            renderer.sortingLayerID = source.sortingLayerID;
+            renderer.sortingOrder = source.sortingOrder;
+        }
+    }
+
+    /// <summary>Drops a half-built fallback label and gives the vanilla label its mesh back.</summary>
+    /// <param name="vanilla">Row price label we hid.</param>
+    /// <param name="go">Object we created, may be null.</param>
+    private static void RollbackFallback(TMP_Text vanilla, GameObject? go)
+    {
+        FallbackLabels.Remove(vanilla);
+        HiddenLabels.Remove(vanilla);
+        if (vanilla != null)
+        {
+            vanilla.enabled = true;
+        }
+
+        if (go != null)
+        {
+            UnityEngine.Object.Destroy(go);
         }
     }
 
@@ -336,7 +433,7 @@ internal static class ShopCosmetics
         _backboard = null;
         _candidatesLogged = false;
         _sourceWarned = false;
-        _fontLogged = false;
+        _fallbackLogged = false;
         _centreTargetX = null;
         _centreSource = "none";
         _centreRows = 0;
@@ -1199,10 +1296,11 @@ internal static class ShopCosmetics
 
         TextState state = TextState.Capture(label);
         TextStates[label] = state;
-        ApplyLocalizedFont(label, state);
+        AddFontFallback(label);
 
         try
         {
+            label.enabled = true;
             label.enableAutoSizing = false;
             label.enableWordWrapping = false;
             label.OverflowMode = TextOverflowModes.Overflow;
@@ -1215,39 +1313,55 @@ internal static class ShopCosmetics
     }
 
     /// <summary>
-    /// Swaps the price label onto the localized font of the details panel's name label,
-    /// so row names with Cyrillic do not fall back to a submesh the fade group keeps off.
-    /// The donor's material is deliberately not copied: its atlas and gradient scale
-    /// belong to another text object and draw the row text invisible or garbled.
+    /// Adds the localized Cyrillic font to the vanilla label font's fallback table, once per
+    /// process. The vanilla font keeps drawing digits; the donor only fills the glyphs it
+    /// lacks. The donor is not swapped in directly: its own atlas draws nothing on a row.
     /// </summary>
-    private static void ApplyLocalizedFont(TMP_Text label, TextState state)
+    /// <param name="label">Row price label about to draw a crest name.</param>
+    private static void AddFontFallback(TMP_Text label)
     {
         try
         {
-            ResolveTargets();
-            TMP_Text? name = _details != null ? FindByName(_details, "Item name")?.GetComponent<TMP_Text>() : null;
-            TMP_FontAsset? font = name != null ? name.font : null;
-            if (font == null || label.font == font)
+            TMP_FontAsset? own = label.font;
+            TMP_FontAsset? donor = LocalizedFont();
+            if (own == null || donor == null || own == donor)
             {
                 return;
             }
 
-            string from = label.font != null ? label.font.name : "<none>";
-            label.enableAutoSizing = false;
-            label.font = font;
+            List<TMP_FontAsset>? table = own.fallbackFontAssets;
+            if (table == null || table.Contains(donor))
+            {
+                return;
+            }
+
+            table.Add(donor);
             label.ForceMeshUpdate();
 
-            label.enableAutoSizing = state.AutoSize;
-            if (!_fontLogged)
+            string key = $"{own.name}|{donor.name}";
+            if (LoggedFontFallbacks.Add(key))
             {
-                _fontLogged = true;
-                Plugin.Log.LogInfo($"[SHOPFX] row font '{from}' -> '{font.name}'");
+                Plugin.Log.LogInfo($"[SHOPFX] row font fallback added '{donor.name}' to '{own.name}'");
             }
         }
         catch (Exception ex)
         {
-            Plugin.Log.LogWarning($"[SHOPFX] font swap failed on '{label.name}': {ex.Message}");
+            Plugin.Log.LogWarning($"[SHOPFX] font fallback failed on '{label.name}': {ex.Message}");
         }
+    }
+
+    /// <summary>Localized font of the details panel name label, the Cyrillic donor.</summary>
+    private static TMP_FontAsset? LocalizedFont()
+    {
+        ResolveTargets();
+        if (_details == null)
+        {
+            return null;
+        }
+
+        Transform? target = FindByName(_details, "Item name");
+        TMP_Text? name = target != null ? target.GetComponent<TMP_Text>() : null;
+        return name != null ? name.font : null;
     }
 
     /// <summary>Puts one price label back to its vanilla text and settings.</summary>
