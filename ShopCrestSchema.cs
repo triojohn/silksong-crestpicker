@@ -93,8 +93,10 @@ internal static class ShopCrestSchema
     private static ToolCrest? _builtFor;
     private static Sprite? _dotSprite;
     private static bool _missingLogged;
-    private static bool _confirmLogged;
     private static bool _confirmOrderLogged;
+
+    /// <summary>Last <c>activeSelf</c> of the confirm group that was logged; null before the first log.</summary>
+    private static bool? _confirmGroupActiveLogged;
 
     /// <summary>Bounds the details schema drew on the last frame it was visible.</summary>
     private static Bounds _detailsBounds;
@@ -162,6 +164,7 @@ internal static class ShopCrestSchema
             _detailsHiddenLogged = false;
             _closed = false;
             _closeAlphaLogged = false;
+            _confirmGroupActiveLogged = null;
             _detailsBounds = default;
             DestroySchemaRoot();
             Apply();
@@ -232,10 +235,9 @@ internal static class ShopCrestSchema
         return true;
     }
 
-    /// <summary>Destroys the schema objects and puts the hidden name back.</summary>
+    /// <summary>Destroys the schema objects and clears the restore records.</summary>
     internal static void End()
     {
-        _closed = false;
         _closeAlphaLogged = false;
         _root = null;
         _details = null;
@@ -244,26 +246,21 @@ internal static class ShopCrestSchema
         _confirmMessage = null;
         _builtFor = null;
         _detailsHiddenLogged = false;
+        _confirmGroupActiveLogged = null;
         _detailsBounds = default;
         try
         {
             DestroySchema();
             DestroySchemaRoot();
-            foreach (KeyValuePair<GameObject, bool> pair in ObjectStates)
-            {
-                if (pair.Key != null)
-                {
-                    pair.Key.SetActive(pair.Value);
-                }
-            }
         }
         catch (Exception ex)
         {
-            Plugin.Log.LogWarning($"[SCHEMA] restore failed: {ex.Message}");
+            Plugin.Log.LogWarning($"[SCHEMA] destroy failed: {ex.Message}");
         }
         finally
         {
             ObjectStates.Clear();
+            _closed = false;
         }
     }
 
@@ -304,6 +301,7 @@ internal static class ShopCrestSchema
     /// </summary>
     private static void Place()
     {
+        LogConfirmGroupState();
         FitPending();
 
         if (_detailsSchema == null || _details == null || !TryBounds(_details, out Bounds bounds))
@@ -344,6 +342,25 @@ internal static class ShopCrestSchema
         {
             ShowDetails();
         }
+    }
+
+    /// <summary>Logs the confirm group <c>activeSelf</c> once per change, with the current message text.</summary>
+    private static void LogConfirmGroupState()
+    {
+        if (_confirmGroup == null)
+        {
+            return;
+        }
+
+        bool active = _confirmGroup.gameObject.activeSelf;
+        if (_confirmGroupActiveLogged == active)
+        {
+            return;
+        }
+
+        _confirmGroupActiveLogged = active;
+        string text = _confirmMessage != null ? SafeText(_confirmMessage) : string.Empty;
+        Plugin.Log.LogInfo($"[SCHEMA] confirm group activeSelf={active} text='{text}'");
     }
 
     /// <summary>
@@ -505,9 +522,8 @@ internal static class ShopCrestSchema
     /// <summary>
     /// Empty when the confirm schema belongs on screen, otherwise why it does not:
     /// our schema replaces the vanilla item picture, so it follows the confirmation
-    /// text the game actually shows, not the bare group activity. The game hides that
-    /// text with alpha and <c>MeshRenderer.enabled</c>, so <c>activeInHierarchy</c> alone
-    /// lies; when neither can be read the item list FSM state decides instead.
+    /// group and its message object. The renderer flag and the fade alpha are not
+    /// consulted: the game leaves the mesh disabled while the text is on screen.
     /// </summary>
     private static string ConfirmHiddenReason()
     {
@@ -528,85 +544,12 @@ internal static class ShopCrestSchema
         }
 
         GameObject message = _confirmMessage.gameObject;
-        float groupAlpha = AlphaOf(_confirmGroup);
-        float messageAlpha = AlphaOf(message.transform);
-        MeshRenderer? mesh = MessageRenderer(message);
-        bool meshEnabled = mesh != null && mesh.enabled;
-        bool messageActive = message.activeInHierarchy;
-        string state = ItemListState() ?? "?";
-
-        if (!_confirmLogged)
-        {
-            _confirmLogged = true;
-            Plugin.Log.LogInfo($"[SCHEMA] confirm group activeSelf={group.activeSelf}" +
-                $" inHierarchy={group.activeInHierarchy} alpha={groupAlpha:F2}" +
-                $" msgActive={messageActive} msgAlpha={messageAlpha:F2}" +
-                $" meshEnabled={meshEnabled} state={state}");
-        }
-
-        if (mesh == null || messageAlpha < 0f)
-        {
-            return ConfirmStates.Contains(state) ? string.Empty : $"state {state}";
-        }
-
-        if (!messageActive)
+        if (!message.activeInHierarchy)
         {
             return "confirm msg inactive";
         }
 
-        if (!meshEnabled)
-        {
-            return "confirm mesh disabled";
-        }
-
-        if (messageAlpha <= 0.01f)
-        {
-            return "confirm msg faded";
-        }
-
         return string.IsNullOrEmpty(SafeText(_confirmMessage)) ? "confirm msg empty" : string.Empty;
-    }
-
-    /// <summary>Item list FSM states in which the vanilla confirm group is on screen.</summary>
-    private static readonly HashSet<string> ConfirmStates = new HashSet<string>
-    {
-        "Activate Confirm Group",
-        "Money Cost",
-        "Item Cost",
-        "Activate Confirm",
-        "Check Sub Items",
-        "To Confirm",
-        "Activate Yes No",
-    };
-
-    /// <summary>Fade alpha of an object or its nearest parent up to the confirm group; -1 when unreadable.</summary>
-    private static float AlphaOf(Transform target)
-    {
-        Transform? current = target;
-        while (current != null)
-        {
-            NestedFadeGroupBase? group = current.GetComponent<NestedFadeGroupBase>();
-            if (group != null)
-            {
-                return group.AlphaSelf;
-            }
-
-            if (current == _confirmGroup)
-            {
-                break;
-            }
-
-            current = current.parent;
-        }
-
-        return -1f;
-    }
-
-    /// <summary>Mesh renderer that actually draws the confirm message text.</summary>
-    private static MeshRenderer? MessageRenderer(GameObject message)
-    {
-        MeshRenderer? own = message.GetComponent<MeshRenderer>();
-        return own != null ? own : message.GetComponentInChildren<MeshRenderer>(true);
     }
 
     /// <summary>Active state name of the item list FSM, or null when it is out of reach.</summary>

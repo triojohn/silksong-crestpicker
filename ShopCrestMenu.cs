@@ -1415,8 +1415,9 @@ internal sealed class ShopCrestSession : MonoBehaviour
             ShopCrestMenu.CheckOpenTiming(_frames);
             ShopCrestMenu.TickPurchase(_frames);
 
-            if (ShopCrestMenu.IsOpen && !ShopCrestMenu._closing &&
-                ShopCrestMenu.TimingLogged && ShopCrestMenu.SafeAlpha(1f) < 0.99f)
+            if (ShopCrestMenu.IsOpen &&
+                (ShopCrestMenu._closing || ShopCrestMenu.ClosedByFsm() ||
+                 (ShopCrestMenu.TimingLogged && ShopCrestMenu.SafeAlpha(1f) < 0.5f)))
             {
                 ShopCrestSchema.Hide(ShopCrestMenu.SafeAlpha(1f));
             }
