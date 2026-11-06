@@ -345,6 +345,12 @@ internal static class ShopCosmetics
             return false;
         }
 
+        if (!IsSane(x))
+        {
+            Plugin.Log.LogWarning($"[SHOPFX] centre source '{source}' gave a bad value ({x}), not caching it.");
+            return false;
+        }
+
         _centreTargetX = x;
         _centreSource = source;
         _centreRows = rows;
@@ -363,25 +369,32 @@ internal static class ShopCosmetics
         source = ResolveSourceName();
         LogCandidatesOnce(exclude);
 
-        if (TryCentre(source, exclude, out x))
+        if (source == "rowBars")
+        {
+            // No fallback: the other candidates live in other spaces and would poison the cache.
+            rows = 0;
+            return RowBarsX(exclude, out x, out rows);
+        }
+
+        if (TryCentre(source, exclude, out x) && IsSane(x))
         {
             RowCentreX(out _, out rows);
             return true;
         }
 
-        if (RowCentreX(out x, out rows))
+        if (RowCentreX(out x, out rows) && IsSane(x))
         {
             source = "rows";
             return true;
         }
 
-        if (CentreX(_list, exclude, out x))
+        if (CentreX(_list, exclude, out x) && IsSane(x))
         {
             source = "list";
             return true;
         }
 
-        if (CentreX(_listGroup, exclude, out x))
+        if (CentreX(_listGroup, exclude, out x) && IsSane(x))
         {
             source = "listGroup";
             return true;
@@ -396,6 +409,8 @@ internal static class ShopCosmetics
     {
         switch (source)
         {
+            case "rowBars":
+                return RowBarsX(exclude, out x, out _);
             case "rows":
                 return RowCentreX(out x, out _);
             case "list":
@@ -415,16 +430,17 @@ internal static class ShopCosmetics
             case "original":
                 return OriginalX(exclude, out x);
             default:
-                return CentreX(_list, exclude, out x);
+                return RowBarsX(exclude, out x, out _);
         }
     }
 
-    /// <summary>Configured source name, with an unknown value warned about once and replaced by <c>list</c>.</summary>
+    /// <summary>Configured source name, with an unknown value warned about once and replaced by <c>rowBars</c>.</summary>
     private static string ResolveSourceName()
     {
         string? name = CentreSource?.Value;
         switch (name)
         {
+            case "rowBars":
             case "rows":
             case "list":
             case "column":
@@ -438,10 +454,10 @@ internal static class ShopCosmetics
                 if (!_sourceWarned)
                 {
                     _sourceWarned = true;
-                    Plugin.Log.LogWarning($"[SHOPFX] unknown TextCentreSource '{name}', using 'column'.");
+                    Plugin.Log.LogWarning($"[SHOPFX] unknown TextCentreSource '{name}', using 'rowBars'.");
                 }
 
-                return "column";
+                return "rowBars";
         }
     }
 
@@ -470,7 +486,10 @@ internal static class ShopCosmetics
         _candidatesLogged = true;
         RowCentreX(out float rowX, out int rowCount);
         string rowText = rowCount > 0 ? rowX.ToString("F3") : "n/a";
-        Plugin.Log.LogInfo($"[SHOPFX] centre candidates: rows={rowText}" +
+        bool haveBars = RowBarsX(exclude, out float barX, out int barsUsed);
+        string barText = haveBars ? barX.ToString("F3") : "n/a";
+        Plugin.Log.LogInfo($"[SHOPFX] centre candidates: rowBars={barText} rowsUsed={barsUsed}" +
+            $" rows={rowText}" +
             $" listMin={LeftText(_list)} detailsMin={LeftText(_details)}" +
             $" column={ColumnText(exclude)} columnCentre={ColumnCentreText(exclude)}" +
             $" list={SpanText(_list, exclude)} listGroup={SpanText(_listGroup, exclude)}" +
@@ -759,6 +778,95 @@ internal static class ShopCosmetics
         }
 
         return target.name == "Item cost";
+    }
+
+    /// <summary>
+    /// Mean world X of the centre of the drawn row bars. For every active row the union of
+    /// its child renderer bounds is taken, leaving out our name label and the hidden icon,
+    /// so the value lives in the same space as the label's own <c>Renderer.bounds</c>.
+    /// Needs at least two usable rows, otherwise the reading is a half-built frame.
+    /// </summary>
+    /// <param name="exclude">Label transform to leave out of the union.</param>
+    /// <param name="x">Mean bar centre world X.</param>
+    /// <param name="rowsUsed">Rows that produced a usable union.</param>
+    private static bool RowBarsX(Transform? exclude, out float x, out int rowsUsed)
+    {
+        x = 0f;
+        rowsUsed = 0;
+        if (_root == null)
+        {
+            return false;
+        }
+
+        float sum = 0f;
+        foreach (ShopItemStats row in _root.GetComponentsInChildren<ShopItemStats>(true))
+        {
+            if (row == null || !row.gameObject.activeInHierarchy)
+            {
+                continue;
+            }
+
+            if (!RowBarBounds(row.transform, exclude, out Bounds bounds))
+            {
+                continue;
+            }
+
+            sum += bounds.center.x;
+            rowsUsed++;
+        }
+
+        if (rowsUsed < 2)
+        {
+            return false;
+        }
+
+        x = sum / rowsUsed;
+        return IsSane(x);
+    }
+
+    /// <summary>Union of a row's child renderer bounds, minus the label and the hidden icon.</summary>
+    /// <param name="row">Row transform to scan.</param>
+    /// <param name="exclude">Label transform to leave out of the union.</param>
+    /// <param name="bounds">Union bounds on success.</param>
+    private static bool RowBarBounds(Transform row, Transform? exclude, out Bounds bounds)
+    {
+        bounds = new Bounds(row.position, Vector3.zero);
+        bool any = false;
+        foreach (Renderer renderer in row.GetComponentsInChildren<Renderer>(true))
+        {
+            if (renderer == null || !renderer.enabled || !renderer.gameObject.activeInHierarchy)
+            {
+                continue;
+            }
+
+            if (IsNameLabel(renderer.transform, exclude) || renderer.transform.name == "Item Sprite")
+            {
+                continue;
+            }
+
+            if (renderer.bounds.size.x <= 0.0001f)
+            {
+                continue;
+            }
+
+            if (any)
+            {
+                bounds.Encapsulate(renderer.bounds);
+            }
+            else
+            {
+                bounds = renderer.bounds;
+                any = true;
+            }
+        }
+
+        return any && bounds.size.x > 0.0001f;
+    }
+
+    /// <summary>Rejects NaN, infinity and absurd world X values from a half-built UI.</summary>
+    private static bool IsSane(float x)
+    {
+        return !float.IsNaN(x) && !float.IsInfinity(x) && Mathf.Abs(x) < 1000f;
     }
 
     /// <summary>Row icon renderer, used by the details schema as a sorting reference.</summary>

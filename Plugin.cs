@@ -94,8 +94,9 @@ public sealed class Plugin : BaseUnityPlugin
             "Текст кнопки подтверждения покупки знака");
         _shrinkCrestName = Config.Bind("General", "ShrinkCrestNameToFit", true,
             "Уменьшать шрифт названия знака, чтобы оно влезло в строку");
-        _textCentreSource = Config.Bind("General", "TextCentreSource", "column",
-            "Источник цели для центрирования названия знака: column (середина между левым краем " +
+        _textCentreSource = Config.Bind("General", "TextCentreSource", "rowBars",
+            "Источник цели для центрирования названия знака: rowBars (среднее X центров строк товаров, " +
+            "та же система координат, что у текста), column (середина между левым краем " +
             "Item List и левым краем Item Details), columnCentre (между левым краем Item Details " +
             "и правым краем окна), rows (среднее X строк), " +
             "list (Item List), listGroup (Item List Group), backboard (Window/Shop_Backboard), " +
@@ -106,7 +107,14 @@ public sealed class Plugin : BaseUnityPlugin
         UseLiveShop = _useLiveShop.Value;
         ShopCrestSchema.Enabled = _showCrestSchema.Value;
         ShopCrestSchema.Scale = _crestSchemaScale.Value;
-        ShopCrestSchema.DotSize = _crestDotSize.Value;
+        float dotSizeRaw = _crestDotSize.Value;
+        ShopCrestSchema.DotSizeRaw = dotSizeRaw;
+        ShopCrestSchema.DotSize = dotSizeRaw > 0.5f ? dotSizeRaw * 0.11f : dotSizeRaw;
+        if (dotSizeRaw > 0.5f)
+        {
+            Logger.LogWarning($"[SCHEMA] CrestDotSize={dotSizeRaw:F3}" +
+                $" looks like legacy multiplier, using {ShopCrestSchema.DotSize:F3}");
+        }
         ShopCrestSchema.ConfirmScale = _confirmSchemaScale.Value;
         ShopCosmetics.ConfirmText = _confirmText.Value;
         ShopCosmetics.ConfirmButtonText = _confirmButtonText.Value;

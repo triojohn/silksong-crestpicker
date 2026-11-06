@@ -73,6 +73,9 @@ internal static class ShopCrestSchema
     /// <summary>Multiplier for the slot dot diameter, as a fraction of the schema height.</summary>
     internal static float DotSize = 0.11f;
 
+    /// <summary>Raw <c>CrestDotSize</c> value from the cfg, before the legacy migration.</summary>
+    internal static float DotSizeRaw = 0.11f;
+
     /// <summary>Confirm-screen schema size relative to the details schema.</summary>
     internal static float ConfirmScale = 1f;
 
@@ -570,6 +573,7 @@ internal static class ShopCrestSchema
                 $" localScaleBefore={firstScaleBefore.x:F3} localScaleAfter={schema.Dots[0].transform.localScale.x:F3}"
             : "dot0 n/a";
         Plugin.Log.LogInfo($"[SCHEMA] {schema.Label} H2={h2:F3} CrestDotSize={DotSize:F3}" +
+            $" dotSizeRaw={DotSizeRaw:F3} dotSizeUsed={DotSize:F3}" +
             $" desiredDotWorld={wanted:F3} {first} dots={schema.Dots.Count} attempts={attempts}");
     }
 
