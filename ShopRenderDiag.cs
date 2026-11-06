@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Text;
+using TMProOld;
 using UnityEngine;
 
 namespace CrestPicker;
@@ -43,6 +44,129 @@ internal static class ShopRenderDiag
         {
             Plugin.Log.LogWarning($"[RENDER] capture failed: {ex.Message}");
         }
+    }
+
+    /// <summary>
+    /// Dumps our row label and <c>Item desc</c> once the window finished fading in, i.e. after
+    /// the viewport recentre moved it: placement, sorting, mesh, alpha and camera coverage of
+    /// both labels, then one line with the fields that differ. Never throws.
+    /// </summary>
+    internal static void CapturePostOpen()
+    {
+        try
+        {
+            TMP_Text? own = ShopCosmetics.OwnRowLabelProbe();
+            TMP_Text? reference = ShopCosmetics.ItemDescLabel();
+            if (own == null || reference == null)
+            {
+                Plugin.Log.LogWarning("[SHOPFX] postopen dump skipped:" +
+                    $" own={(own != null ? "found" : "missing")}" +
+                    $" itemDesc={(reference != null ? "found" : "missing")}");
+                return;
+            }
+
+            List<KeyValuePair<string, string>> ownFields = PostOpenFields(own, true);
+            List<KeyValuePair<string, string>> refFields = PostOpenFields(reference, false);
+            Plugin.Log.LogInfo("[SHOPFX] postopen own: " + Join(ownFields));
+            Plugin.Log.LogInfo("[SHOPFX] postopen cur: " + Join(refFields));
+            Plugin.Log.LogInfo("[SHOPFX] postopen diff: " + Diff(ownFields, refFields));
+        }
+        catch (Exception ex)
+        {
+            Plugin.Log.LogWarning($"[SHOPFX] postopen dump failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>Placement and render state of one label, as ordered name/value fields.</summary>
+    /// <param name="text">Label to describe.</param>
+    /// <param name="withCameras">Append the camera viewport coverage of the bounds centre.</param>
+    private static List<KeyValuePair<string, string>> PostOpenFields(TMP_Text text, bool withCameras)
+    {
+        Renderer? renderer = text.GetComponent<Renderer>();
+        Bounds bounds = renderer != null ? renderer.bounds : new Bounds(text.transform.position, Vector3.zero);
+        string sort = renderer != null && !string.IsNullOrEmpty(renderer.sortingLayerName)
+            ? renderer.sortingLayerName
+            : "-";
+
+        List<KeyValuePair<string, string>> fields = new List<KeyValuePair<string, string>>
+        {
+            new KeyValuePair<string, string>("path", "'" + Path(text.transform) + "'"),
+            new KeyValuePair<string, string>("world", Vec(text.transform.position)),
+            new KeyValuePair<string, string>("bounds", Vec(bounds.center)),
+            new KeyValuePair<string, string>("layer", text.gameObject.layer.ToString()),
+            new KeyValuePair<string, string>("sort", sort),
+            new KeyValuePair<string, string>("order", renderer != null ? renderer.sortingOrder.ToString() : "-"),
+            new KeyValuePair<string, string>("verts", VertexCount(text).ToString()),
+            new KeyValuePair<string, string>("alpha", text.alpha.ToString("0.##")),
+        };
+
+        if (withCameras)
+        {
+            GameCameras? cams = GameCameras.SilentInstance;
+            Camera? hud = cams != null ? cams.hudCamera : null;
+            Camera? main = cams != null ? cams.mainCamera : null;
+            fields.Add(new KeyValuePair<string, string>("camHud", Coverage(hud, bounds.center)));
+            fields.Add(new KeyValuePair<string, string>("camMain", Coverage(main, bounds.center)));
+        }
+
+        return fields;
+    }
+
+    /// <summary>Whether a world point lands inside that camera's viewport.</summary>
+    private static string Coverage(Camera? cam, Vector3 world)
+    {
+        if (cam == null)
+        {
+            return "<no cam>";
+        }
+
+        return Inside(cam.WorldToViewportPoint(world));
+    }
+
+    /// <summary>Vertices of the first sub mesh, zero when the text mesh is empty.</summary>
+    private static int VertexCount(TMP_Text text)
+    {
+        TMP_TextInfo? info = text.textInfo;
+        if (info == null || info.meshInfo == null || info.meshInfo.Length == 0)
+        {
+            return 0;
+        }
+
+        return info.meshInfo[0].vertexCount;
+    }
+
+    private static string Join(List<KeyValuePair<string, string>> fields)
+    {
+        List<string> parts = new List<string>(fields.Count);
+        foreach (KeyValuePair<string, string> pair in fields)
+        {
+            parts.Add($"{pair.Key}={pair.Value}");
+        }
+
+        return string.Join(" ", parts);
+    }
+
+    /// <summary>Fields of the own label that differ from the reference label.</summary>
+    private static string Diff(List<KeyValuePair<string, string>> own, List<KeyValuePair<string, string>> reference)
+    {
+        List<string> diffs = new List<string>();
+        foreach (KeyValuePair<string, string> pair in own)
+        {
+            foreach (KeyValuePair<string, string> other in reference)
+            {
+                if (other.Key != pair.Key)
+                {
+                    continue;
+                }
+
+                if (other.Value != pair.Value)
+                {
+                    diffs.Add($"{pair.Key}(own={pair.Value}, cur={other.Value})");
+                }
+            }
+        }
+
+        return diffs.Count == 0 ? "none" : string.Join(", ", diffs);
     }
 
     /// <summary>Logs screen size and the two layers the shop could sit on.</summary>

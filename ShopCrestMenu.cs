@@ -790,6 +790,7 @@ internal static class ShopCrestMenu
         Plugin.Log.LogInfo($"[SHOP] timing: open->stock={( _stockReady - _openStart) * 1000f:F0}ms" +
             $" open->SHOPUP={(_shopUp - _openStart) * 1000f:F0}ms" +
             $" open->alpha1={(now - _openStart) * 1000f:F0}ms frames={frames}");
+        ShopRenderDiag.CapturePostOpen();
     }
 
     /// <summary>

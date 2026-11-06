@@ -77,6 +77,13 @@ internal static class ShopCosmetics
     /// </summary>
     internal static string RowLabelMode = "Own";
 
+    /// <summary>
+    /// Diagnostic switch: when true the row label draws an ASCII probe
+    /// (<c>AAAA &lt;index&gt;</c>) instead of the crest name, which separates a font or glyph
+    /// problem from a placement or render problem.
+    /// </summary>
+    internal static bool DebugAsciiRowLabel;
+
     /// <summary>Visible TMP text of the details panel, cloned for the row labels.</summary>
     private static TMP_Text? _labelSource;
 
@@ -1489,17 +1496,28 @@ internal static class ShopCosmetics
 
         if (!UsesOwnLabel)
         {
+            string vanillaText = DrawnLabel(row, label, name!);
             FitLabel(label);
-            if (label.text != name)
+            if (label.text != vanillaText)
             {
-                label.text = name!;
+                label.text = vanillaText;
             }
 
-            RowNames[label] = name!;
+            RowNames[label] = vanillaText;
             return;
         }
 
-        EnsureOwnLabel(row, label, name!);
+        EnsureOwnLabel(row, label, DrawnLabel(row, label, name!));
+    }
+
+    /// <summary>Text the row label should draw: the crest name, or the ASCII probe.</summary>
+    /// <param name="row">Row the label belongs to.</param>
+    /// <param name="vanilla">Vanilla <c>Item cost</c> label of that row.</param>
+    /// <param name="name">Crest name.</param>
+    /// <returns>Text to write into the label.</returns>
+    private static string DrawnLabel(ShopItemStats row, TMP_Text vanilla, string name)
+    {
+        return DebugAsciiRowLabel ? "AAAA " + RowIndex(row, vanilla) : name;
     }
 
     /// <summary>Our own label of that row, else the vanilla label itself.</summary>
@@ -1909,6 +1927,14 @@ internal static class ShopCosmetics
     /// <summary>The game's own Cyrillic label under <c>Item Details</c>, used as the reference.</summary>
     private static TMP_Text? ItemNameLabel()
     {
+        return DetailsText("Item name");
+    }
+
+    /// <summary>Details panel text with this object name, inactive ones included.</summary>
+    /// <param name="name">Object name of the TMP text.</param>
+    /// <returns>The text, or null when the panel or the object is missing.</returns>
+    private static TMP_Text? DetailsText(string name)
+    {
         try
         {
             ResolveTargets();
@@ -1923,7 +1949,7 @@ internal static class ShopCosmetics
             {
                 foreach (TMP_Text text in details.GetComponentsInChildren<TMP_Text>(true))
                 {
-                    if (text != null && text.name == "Item name")
+                    if (text != null && text.name == name)
                     {
                         return text;
                     }
@@ -1932,7 +1958,29 @@ internal static class ShopCosmetics
         }
         catch (Exception ex)
         {
-            Plugin.Log.LogWarning($"[SHOPFX] item name lookup failed: {ex.Message}");
+            Plugin.Log.LogWarning($"[SHOPFX] details text '{name}' lookup failed: {ex.Message}");
+        }
+
+        return null;
+    }
+
+    /// <summary><c>Item desc</c> of the details panel, the reference label of the post-open dump.</summary>
+    /// <returns>The description text, or null when it is missing.</returns>
+    internal static TMP_Text? ItemDescLabel()
+    {
+        return DetailsText("Item desc");
+    }
+
+    /// <summary>First own row label still alive, the subject of the post-open dump.</summary>
+    /// <returns>Our label, or null when no row label was built.</returns>
+    internal static TMP_Text? OwnRowLabelProbe()
+    {
+        foreach (KeyValuePair<TMP_Text, TMP_Text> pair in FallbackLabels)
+        {
+            if (pair.Value != null)
+            {
+                return pair.Value;
+            }
         }
 
         return null;
