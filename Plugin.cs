@@ -88,8 +88,9 @@ public sealed class Plugin : BaseUnityPlugin
             "Способ отрисовки схемы знака: clone — клон живого InventoryToolCrest из игры (основной путь), " +
             "vanillaSprites — силуэт плюс спрайты slotTypeSprite из templateSlots, " +
             "generated — силуэт плюс сгенерированные кружки. При clone слоты и их точки берутся из клона.");
-        _crestSchemaScale = Config.Bind("General", "CrestSchemaScale", 4.5f,
-            "Множитель размера схемы знака в панели деталей (схема подтверждения вдвое больше)");
+        _crestSchemaScale = Config.Bind("General", "CrestSchemaScale", 1f,
+            "Множитель размера схемы знака в панели деталей: схема вписывается в 80% панели, " +
+            "значение подкручивает эту подгонку (1 — ровно вписано)");
         _crestDotSize = Config.Bind("General", "CrestDotSize", 0.11f,
             "Диаметр точки слота как доля высоты силуэта знака");
         _crestDotOffsetY = Config.Bind("General", "CrestDotOffsetY", -0.02f,
@@ -115,7 +116,15 @@ public sealed class Plugin : BaseUnityPlugin
         UseLiveShop = _useLiveShop.Value;
         ShopCrestSchema.Enabled = _showCrestSchema.Value;
         ShopCrestSchema.Render = _schemaRender.Value;
-        ShopCrestSchema.Scale = _crestSchemaScale.Value;
+        float schemaScale = _crestSchemaScale.Value;
+        if (schemaScale > 2f)
+        {
+            Logger.LogWarning($"[SCHEMA] CrestSchemaScale={schemaScale:F2} looks like the old absolute" +
+                " multiplier, using 1.00 (schema now fits the details panel).");
+            schemaScale = 1f;
+        }
+
+        ShopCrestSchema.Scale = schemaScale;
         float dotSizeRaw = _crestDotSize.Value;
         ShopCrestSchema.DotSizeRaw = dotSizeRaw;
         ShopCrestSchema.DotSize = dotSizeRaw > 0.5f ? dotSizeRaw * 0.11f : dotSizeRaw;

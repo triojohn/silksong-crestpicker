@@ -180,11 +180,59 @@ internal static class ShopDiag
                 }
 
                 LogTransitions(state.Name, state.Transitions, events);
+                if (ActionDumpStates.Contains(state.Name))
+                {
+                    LogActionDump(state);
+                }
             }
         }
 
         Plugin.Log.LogInfo($"[SHOPFSM] FSM '{SafeName(fsm)}' events ({events.Count}): " +
             string.Join(", ", events.OrderBy(name => name)));
+    }
+
+    /// <summary>States of the shop FSMs whose actions are dumped, to see what vanilla tears down.</summary>
+    private static readonly HashSet<string> ActionDumpStates = new HashSet<string>
+    {
+        "Open Window",
+        "Open",
+        "Down",
+        "Special Close",
+        "Send Event",
+        "Hide Geo",
+    };
+
+    /// <summary>Actions per state that are kept in the dump.</summary>
+    private const int ActionDumpLimit = 10;
+
+    /// <summary>Logs up to <see cref="ActionDumpLimit"/> actions of one state with their fields.</summary>
+    private static void LogActionDump(FsmState state)
+    {
+        FsmStateAction[]? actions = state.Actions;
+        int count = actions?.Length ?? 0;
+        Plugin.Log.LogInfo($"[SHOPFSM]   state '{state.Name}' actions={count}");
+        if (actions == null)
+        {
+            return;
+        }
+
+        for (int i = 0; i < actions.Length && i < ActionDumpLimit; i++)
+        {
+            FsmStateAction action = actions[i];
+            if (action == null)
+            {
+                continue;
+            }
+
+            string typeName = action.GetType().Name;
+            string marker = IsInteresting(typeName) ? "*" : " ";
+            Plugin.Log.LogInfo($"[SHOPFSM]    {marker} {typeName} {DescribeFields(action, 3)}");
+        }
+
+        if (actions.Length > ActionDumpLimit)
+        {
+            Plugin.Log.LogInfo($"[SHOPFSM]    ... {actions.Length - ActionDumpLimit} more actions not dumped");
+        }
     }
 
     /// <summary>Logs transitions as <c>from -> event -> to</c> and collects event names.</summary>

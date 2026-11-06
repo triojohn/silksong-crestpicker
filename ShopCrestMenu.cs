@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Reflection;
 using HarmonyLib;
 using HutongGames.PlayMaker;
+using TeamCherry.NestedFadeGroup;
 using UnityEngine;
 
 namespace CrestPicker;
@@ -27,6 +28,15 @@ internal static class ShopCrestMenu
 
     /// <summary>Event that closes the window again.</summary>
     private const string CloseEvent = "CLOSE SHOP WINDOW";
+
+    /// <summary>Vanilla close event, valid in the <c>Open</c> state; runs the visual teardown.</summary>
+    private const string VanillaCloseEvent = "CLOSE";
+
+    /// <summary>State <c>shop_control</c> holds while the window is fully open.</summary>
+    private const string OpenState = "Open";
+
+    /// <summary>Event the window FSM needs to fade its borders and prompts out.</summary>
+    private const string BordesDownEvent = "FLUERS DOWN";
 
     /// <summary>Idle state of <c>shop_control</c>; the window is closed there.</summary>
     private const string IdleState = "Idle";
@@ -63,6 +73,17 @@ internal static class ShopCrestMenu
     private static float _boundShift;
     private static bool _fromDialogue;
     private static bool _sawOpenState;
+
+    /// <summary>Teardown targets and their vanilla state, captured when the window opens.</summary>
+    private static Transform? _teardownRoot;
+    private static NestedFadeGroupBase? _fade;
+    private static PlayMakerFSM? _windowFsm;
+    private static GameObject? _cancelPrompt;
+    private static GameObject? _confirmPrompt;
+    private static float _fadeAlpha = -1f;
+    private static bool _cancelWasActive;
+    private static bool _confirmWasActive;
+    private static bool _teardownCaptured;
 
     /// <summary>True while the live shop window is showing our crests.</summary>
     internal static bool IsOpen { get; set; }
@@ -134,6 +155,7 @@ internal static class ShopCrestMenu
             _stock = stock;
             _root = root.transform;
             _control = control;
+            BeginTeardown(root.transform);
             _origPosition = root.transform.position;
             _crests = new List<ToolCrest>(crests);
             _fromDialogue = fromDialogue;
@@ -345,7 +367,12 @@ internal static class ShopCrestMenu
         }
     }
 
-    /// <summary>Sends the close event; restores right away if the FSM was already idle.</summary>
+    /// <summary>
+    /// Closes the window the way the game does: <c>CLOSE</c> from <c>Open</c> runs the
+    /// vanilla fade-out chain, so borders and prompts are torn down visually. Any other
+    /// state falls back to the blunt <see cref="CloseEvent"/>. The restore is left to
+    /// the session, which waits for the FSM to reach idle on a later update.
+    /// </summary>
     private static void CloseShop()
     {
         if (_control == null)
@@ -354,12 +381,112 @@ internal static class ShopCrestMenu
             return;
         }
 
-        _control.SendEvent(CloseEvent);
-        Plugin.Log.LogInfo($"[SHOP] sent '{CloseEvent}' to '{ControlFsmName}'.");
-        if (ActiveState(_control) == IdleState)
+        string state = ActiveState(_control);
+        string eventName = state == OpenState && HasEvent(_control, VanillaCloseEvent)
+            ? VanillaCloseEvent
+            : CloseEvent;
+        _sawOpenState = true;
+        _control.SendEvent(eventName);
+        Plugin.Log.LogInfo($"[SHOP] sent '{eventName}' to '{ControlFsmName}' (state '{state}');" +
+            " restore waits for idle.");
+    }
+
+    /// <summary>
+    /// Remembers the fade group, the window FSM and the two action prompts, and puts
+    /// back what a previous session had to switch off, before the window is reused.
+    /// </summary>
+    private static void BeginTeardown(Transform root)
+    {
+        if (_teardownRoot == root && _teardownCaptured)
         {
-            Restore("purchase");
+            ReviveTeardown();
+            return;
         }
+
+        _teardownRoot = root;
+        _teardownCaptured = true;
+        _fade = root.GetComponent<NestedFadeGroupBase>();
+        _fadeAlpha = _fade != null ? _fade.AlphaSelf : -1f;
+        Transform? window = root.Find("Window");
+        _windowFsm = window != null ? window.GetComponent<PlayMakerFSM>() : null;
+        _cancelPrompt = FindChild(root, "Action Cancel")?.gameObject;
+        _confirmPrompt = FindChild(root, "Action Confirm")?.gameObject;
+        _cancelWasActive = _cancelPrompt != null && _cancelPrompt.activeSelf;
+        _confirmWasActive = _confirmPrompt != null && _confirmPrompt.activeSelf;
+    }
+
+    /// <summary>
+    /// Chokes the window on the way out: alpha to zero, borders faded down through the
+    /// window FSM, prompts hidden. The game's own close path does this; ours is a guard.
+    /// </summary>
+    private static void TeardownShop()
+    {
+        if (!_teardownCaptured)
+        {
+            return;
+        }
+
+        float alpha = -1f;
+        if (_fade != null)
+        {
+            _fade.AlphaSelf = 0f;
+            alpha = _fade.AlphaSelf;
+        }
+
+        bool bordes = false;
+        if (_windowFsm != null)
+        {
+            _windowFsm.SendEvent(BordesDownEvent);
+            bordes = true;
+        }
+
+        int prompts = 0;
+        if (_cancelPrompt != null)
+        {
+            _cancelPrompt.SetActive(false);
+            prompts++;
+        }
+
+        if (_confirmPrompt != null)
+        {
+            _confirmPrompt.SetActive(false);
+            prompts++;
+        }
+
+        Plugin.Log.LogInfo($"[SHOP] teardown: alpha={alpha:F2} bordes={bordes} prompts={prompts}");
+    }
+
+    /// <summary>Puts the fade alpha and the prompts back to the values captured on open.</summary>
+    private static void ReviveTeardown()
+    {
+        if (_fade != null && _fadeAlpha >= 0f)
+        {
+            _fade.AlphaSelf = _fadeAlpha;
+        }
+
+        if (_cancelPrompt != null && _cancelWasActive)
+        {
+            _cancelPrompt.SetActive(true);
+        }
+
+        if (_confirmPrompt != null && _confirmWasActive)
+        {
+            _confirmPrompt.SetActive(true);
+        }
+    }
+
+    /// <summary>First child with this name anywhere under the root, inactive ones included.</summary>
+    private static Transform? FindChild(Transform root, string name)
+    {
+        foreach (Transform child in root.GetComponentsInChildren<Transform>(true))
+        {
+            if (child != null && child.name == name)
+            {
+                return child;
+            }
+        }
+
+        return null;
     }
 
     /// <summary>True once the window has been open and the FSM is back in idle.</summary>
@@ -497,6 +624,7 @@ internal static class ShopCrestMenu
 
             Swapped.Clear();
             BuildLists();
+            TeardownShop();
 
             if (_root != null)
             {

@@ -34,6 +34,9 @@ internal static class ShopCrestSchema
     /// <summary>Schema height in world units before <see cref="Scale"/> is applied.</summary>
     private const float BaseHeight = 1.2f;
 
+    /// <summary>Fraction of the details panel the details schema fills.</summary>
+    private const float PanelFill = 0.8f;
+
     /// <summary>Dot diameter factor for a locked slot.</summary>
     private const float LockedDotFactor = 0.85f;
 
@@ -251,13 +254,80 @@ internal static class ShopCrestSchema
 
         if (showing && _confirmAnchor != null)
         {
-            Vector3 target = _confirmAnchor.position;
-            Transform transform = _confirmSchema.Container.transform;
-            if (transform.position != target)
-            {
-                transform.position = target;
-            }
+            PlaceConfirm(_confirmSchema, _confirmAnchor);
         }
+    }
+
+    /// <summary>
+    /// Puts the confirm schema on the centre of the confirmation text and keeps it
+    /// inside the window backboard, so the container never spills out of the shop.
+    /// </summary>
+    private static void PlaceConfirm(Schema schema, Transform anchor)
+    {
+        Transform container = schema.Container.transform;
+        Vector3 position = AnchorCentre(anchor);
+        if (container.position != position)
+        {
+            container.position = position;
+        }
+
+        if (_root == null)
+        {
+            return;
+        }
+
+        Transform? board = _root.Find("Window/Shop_Backboard");
+        if (board == null || !TryBounds(container, out Bounds inner) || !TryBounds(board, out Bounds outer))
+        {
+            return;
+        }
+
+        Vector3 shift = ClampShift(inner, outer);
+        if (shift != Vector3.zero)
+        {
+            container.position += shift;
+        }
+
+        if (!schema.PlacedLogged)
+        {
+            schema.PlacedLogged = true;
+            Plugin.Log.LogInfo($"[SCHEMA] confirm anchor={Vec(position)}" +
+                $" container=({inner.size.x:F3}x{inner.size.y:F3})" +
+                $" backboard=({outer.size.x:F3}x{outer.size.y:F3})");
+        }
+    }
+
+    /// <summary>Centre of the anchor's world bounds, its position when it draws nothing.</summary>
+    private static Vector3 AnchorCentre(Transform anchor)
+    {
+        return TryBounds(anchor, out Bounds bounds) && bounds.size.sqrMagnitude > 0.000001f
+            ? bounds.center
+            : anchor.position;
+    }
+
+    /// <summary>Shift that moves <paramref name="inner"/> fully inside <paramref name="outer"/>.</summary>
+    private static Vector3 ClampShift(Bounds inner, Bounds outer)
+    {
+        return new Vector3(
+            ClampAxis(inner.center.x, inner.extents.x, outer.min.x, outer.max.x),
+            ClampAxis(inner.center.y, inner.extents.y, outer.min.y, outer.max.y),
+            0f);
+    }
+
+    /// <summary>Delta that pulls one axis centre inside the outer bounds, zero when it does not fit.</summary>
+    private static float ClampAxis(float centre, float half, float min, float max)
+    {
+        if (half * 2f > max - min)
+        {
+            return 0f;
+        }
+
+        return Mathf.Clamp(centre, min + half, max - half) - centre;
+    }
+
+    private static string Vec(Vector3 value)
+    {
+        return $"({value.x:F2},{value.y:F2})";
     }
 
     /// <summary>Retries the fit of a schema whose renderers had no bounds when built.</summary>
@@ -578,20 +648,22 @@ internal static class ShopCrestSchema
             return;
         }
 
-        _detailsSchema = BuildSchema(crest, silhouette, darkened, DetailsParent(), 1f, "Crest Schema");
-        _confirmSchema = BuildSchema(crest, silhouette, darkened, ConfirmGroup(), ConfirmScale,
+        _detailsSchema = BuildSchema(crest, silhouette, darkened, DetailsParent(), 1f, true,
+            "Crest Schema");
+        _confirmSchema = BuildSchema(crest, silhouette, darkened, ConfirmGroup(), ConfirmScale, false,
             "Confirm Crest Schema");
         Plugin.Log.LogInfo($"[SCHEMA] built '{crest.name}' mode={Render} live={LiveContainers()}");
     }
 
     /// <summary>
-    /// Creates one schema instance at container scale 1 and fits it to
-    /// <see cref="BaseHeight"/> times <paramref name="sizeFactor"/> world units from the
-    /// height actually drawn, so no assumption about the parent scale chain is made.
-    /// The container is parented outside the layout group and placed by the caller.
+    /// Creates one schema instance at container scale 1 and fits it to the details
+    /// panel (when <paramref name="fitPanel"/>) or to <see cref="BaseHeight"/> times
+    /// <paramref name="sizeFactor"/> world units from the size actually drawn, so no
+    /// assumption about the parent scale chain is made. The container is parented
+    /// outside the layout group and placed by the caller.
     /// </summary>
     private static Schema? BuildSchema(ToolCrest crest, Sprite silhouette, bool darkened,
-        Transform? parent, float sizeFactor, string label)
+        Transform? parent, float sizeFactor, bool fitPanel, string label)
     {
         if (parent == null)
         {
@@ -606,10 +678,17 @@ internal static class ShopCrestSchema
 
         SpriteRenderer? reference = ReferenceRenderer() ?? BackboardRenderer();
         float targetH = BaseHeight * Scale * sizeFactor;
+        float targetW = 0f;
+        Vector2 panel = Vector2.zero;
+        if (fitPanel && TryPanelSize(out panel))
+        {
+            targetH = PanelFill * panel.y * Scale;
+            targetW = PanelFill * panel.x * Scale;
+        }
 
         if (Render == SchemaRenderMode.Clone)
         {
-            Schema? clone = CloneSchema(crest, parent, targetH, label);
+            Schema? clone = CloneSchema(crest, parent, targetH, targetW, panel, label);
             if (clone != null)
             {
                 LogSprites("clone");
@@ -628,7 +707,11 @@ internal static class ShopCrestSchema
         SpriteRenderer body = AddRenderer(container, "Schema Silhouette", silhouette, reference, 0);
         body.color = darkened ? new Color(0.3f, 0.3f, 0.3f, 1f) : Color.white;
 
-        Schema schema = new Schema(label, container, body, targetH);
+        Schema schema = new Schema(label, container, body, targetH)
+        {
+            TargetWidth = targetW,
+            PanelSize = panel,
+        };
         AddDots(schema, crest, reference);
         Fit(schema);
         LogSprites(vanilla ? "vanilla" : "generated");
@@ -758,8 +841,8 @@ internal static class ShopCrestSchema
     }
 
     /// <summary>
-    /// Scales the container to the wanted height once, when the silhouette reports a
-    /// real height, and logs the numbers the dot fit depends on.
+    /// Scales the container to the wanted height and width once, when it reports a
+    /// real size, and logs the numbers the dot fit depends on.
     /// </summary>
     private static bool FitContainer(Schema schema)
     {
@@ -768,23 +851,35 @@ internal static class ShopCrestSchema
             return true;
         }
 
-        float measuredH = schema.FitWhole
-            ? ContainerHeight(schema.Container.transform)
-            : WorldHeight(schema.Body);
+        Bounds bounds = schema.FitWhole
+            ? ContainerBounds(schema.Container.transform)
+            : schema.Body.bounds;
+        float measuredH = schema.FitWhole ? bounds.size.y : WorldHeight(schema.Body);
         if (measuredH <= 0.0001f)
         {
             return false;
         }
 
         float scaleApplied = schema.TargetHeight / measuredH;
+        if (schema.TargetWidth > 0.0001f && bounds.size.x > 0.0001f)
+        {
+            scaleApplied = Mathf.Min(scaleApplied, schema.TargetWidth / bounds.size.x);
+        }
+
         Transform transform = schema.Container.transform;
         transform.localScale *= scaleApplied;
         schema.ContainerFitted = true;
+        if (schema.PanelSize.x > 0f && schema.PanelSize.y > 0f)
+        {
+            Plugin.Log.LogInfo($"[SCHEMA] fit panel=({schema.PanelSize.x:F3} x {schema.PanelSize.y:F3})" +
+                $" clone=({bounds.size.x:F3} x {bounds.size.y:F3}) scale={scaleApplied:F4}");
+        }
+
         return true;
     }
 
-    /// <summary>World height of everything drawn under a root, used to fit a whole clone.</summary>
-    private static float ContainerHeight(Transform target)
+    /// <summary>World bounds of everything drawn under a root; a zero-size bounds when nothing is.</summary>
+    private static Bounds ContainerBounds(Transform target)
     {
         bool any = false;
         Bounds bounds = default;
@@ -806,7 +901,31 @@ internal static class ShopCrestSchema
             }
         }
 
-        return any ? bounds.size.y : 0f;
+        return any ? bounds : new Bounds(target.position, Vector3.zero);
+    }
+
+    /// <summary>World height of everything drawn under a root, used to fit a whole clone.</summary>
+    private static float ContainerHeight(Transform target)
+    {
+        return ContainerBounds(target).size.y;
+    }
+
+    /// <summary>World width and height of the details panel; false when it draws nothing.</summary>
+    private static bool TryPanelSize(out Vector2 size)
+    {
+        size = Vector2.zero;
+        if (_details == null || !TryBounds(_details, out Bounds bounds))
+        {
+            return false;
+        }
+
+        if (bounds.size.x <= 0.001f || bounds.size.y <= 0.001f)
+        {
+            return false;
+        }
+
+        size = new Vector2(bounds.size.x, bounds.size.y);
+        return true;
     }
 
     /// <summary>True when the measured height is within the dot tolerance of the wanted one.</summary>
@@ -940,7 +1059,8 @@ internal static class ShopCrestSchema
     /// Copies the vanilla crest card of <paramref name="crest"/> into the schema when the
     /// template sprites are unavailable. Null when no such crest is in the loaded scene.
     /// </summary>
-    private static Schema? CloneSchema(ToolCrest crest, Transform parent, float targetH, string label)
+    private static Schema? CloneSchema(ToolCrest crest, Transform parent, float targetH, float targetW,
+        Vector2 panel, string label)
     {
         try
         {
@@ -991,6 +1111,8 @@ internal static class ShopCrestSchema
             Schema schema = new Schema(label, clone, body, targetH)
             {
                 FitWhole = true,
+                TargetWidth = targetW,
+                PanelSize = panel,
             };
             Fit(schema);
             float whole = ContainerHeight(clone.transform);
@@ -1146,9 +1268,23 @@ internal static class ShopCrestSchema
         if (_confirmGroup != null)
         {
             Transform? picture = _confirmGroup.Find("Item Sprite");
-            _confirmAnchor = picture != null ? picture : _confirmGroup;
             // The vanilla FSM draws the item icon here; our schema replaces it.
             HideObject(picture != null ? picture.gameObject : null);
+            Transform? message = _confirmGroup.Find("Confirm/Confirm msg");
+            if (message == null)
+            {
+                foreach (Transform child in _confirmGroup.GetComponentsInChildren<Transform>(true))
+                {
+                    if (child != null && child.name == "Confirm msg")
+                    {
+                        message = child;
+                        break;
+                    }
+                }
+            }
+
+            // The confirmation text sits inside the window, the item picture does not.
+            _confirmAnchor = message ?? _details ?? picture;
             _confirmMessage = FindText(_confirmGroup, "Confirm msg");
         }
 
@@ -1357,6 +1493,15 @@ internal static class ShopCrestSchema
 
         /// <summary>Wanted world height of the silhouette.</summary>
         internal float TargetHeight { get; }
+
+        /// <summary>Wanted maximum world width; zero means height only.</summary>
+        internal float TargetWidth { get; set; }
+
+        /// <summary>World size of the panel the schema was fitted to; zero when not fitted to one.</summary>
+        internal Vector2 PanelSize { get; set; }
+
+        /// <summary>True once the confirm placement numbers were logged.</summary>
+        internal bool PlacedLogged { get; set; }
 
         internal List<SpriteRenderer> Dots { get; } = new List<SpriteRenderer>();
 
