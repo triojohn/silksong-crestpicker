@@ -50,6 +50,9 @@ public sealed class Plugin : BaseUnityPlugin
     private ConfigEntry<KeyboardShortcut> _shopDumpHotkey = null!;
     private ConfigEntry<bool> _showCrestSchema = null!;
     private ConfigEntry<float> _crestSchemaScale = null!;
+    private ConfigEntry<float> _crestDotPositionFactor = null!;
+    private ConfigEntry<float> _crestDotSize = null!;
+    private ConfigEntry<float> _confirmSchemaScale = null!;
     private ConfigEntry<string> _confirmText = null!;
     private ConfigEntry<string> _confirmButtonText = null!;
     private ConfigEntry<bool> _shrinkCrestName = null!;
@@ -81,6 +84,12 @@ public sealed class Plugin : BaseUnityPlugin
             "Рисовать схему знака (силуэт и цветные точки слотов) в панели деталей магазина");
         _crestSchemaScale = Config.Bind("General", "CrestSchemaScale", 3f,
             "Множитель размера схемы знака в панели деталей (схема подтверждения вдвое больше)");
+        _crestDotPositionFactor = Config.Bind("General", "CrestDotPositionFactor", 1f,
+            "Множитель позиций точек слотов; позиции уже в локальных единицах силуэта");
+        _crestDotSize = Config.Bind("General", "CrestDotSize", 1f,
+            "Множитель диаметра точек слотов (доля высоты силуэта 0.06)");
+        _confirmSchemaScale = Config.Bind("General", "ConfirmSchemaScale", 1f,
+            "Размер схемы на экране подтверждения относительно правой панели");
         _confirmText = Config.Bind("General", "ConfirmText", "Вы уверены?",
             "Текст подтверждения покупки знака");
         _confirmButtonText = Config.Bind("General", "ConfirmButtonText", "Выбрать",
@@ -93,6 +102,9 @@ public sealed class Plugin : BaseUnityPlugin
         UseLiveShop = _useLiveShop.Value;
         ShopCrestSchema.Enabled = _showCrestSchema.Value;
         ShopCrestSchema.Scale = _crestSchemaScale.Value;
+        ShopCrestSchema.DotPositionFactor = _crestDotPositionFactor.Value;
+        ShopCrestSchema.DotSize = _crestDotSize.Value;
+        ShopCrestSchema.ConfirmScale = _confirmSchemaScale.Value;
         ShopCosmetics.ConfirmText = _confirmText.Value;
         ShopCosmetics.ConfirmButtonText = _confirmButtonText.Value;
         ShopCosmetics.ShrinkNameToFit = _shrinkCrestName.Value;

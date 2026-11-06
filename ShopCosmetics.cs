@@ -47,7 +47,11 @@ internal static class ShopCosmetics
     private static readonly Dictionary<TMP_Text, TextState> TextStates =
         new Dictionary<TMP_Text, TextState>();
 
+    /// <summary>Path of the item list inside the shop window.</summary>
+    private const string ListPath = "Item List Group/Item List";
+
     private static Transform? _root;
+    private static Transform? _list;
     private static TMP_Text? _confirm;
     private static string? _confirmOriginal;
     private static TMP_Text? _confirmButton;
@@ -71,6 +75,7 @@ internal static class ShopCosmetics
         try
         {
             _root = root;
+            _list = null;
             _frames = 0;
             _missingLogged = false;
             HideCounters(root);
@@ -113,6 +118,7 @@ internal static class ShopCosmetics
     internal static void End()
     {
         _root = null;
+        _list = null;
         try
         {
             ShopCrestSchema.End();
@@ -190,8 +196,8 @@ internal static class ShopCosmetics
     }
 
     /// <summary>
-    /// Puts the name label in the middle of the row: the midpoint between the vanilla
-    /// icon position and the vanilla label position, with centred alignment.
+    /// Centres the name label on the item list: the text centre is moved onto the
+    /// list centre in world X, alignment set to centre so the text is centred in its rect.
     /// </summary>
     private static void CenterName(ShopItemStats row)
     {
@@ -204,10 +210,11 @@ internal static class ShopCosmetics
         if (!NameTargets.TryGetValue(target, out Vector3 wanted))
         {
             PositionStates[target] = target.localPosition;
-            wanted = CentredPosition(row, target);
+            wanted = CentredPosition(row, label);
             NameTargets[target] = wanted;
             Plugin.Log.LogInfo(
-                $"[SHOPFX] row name '{target.name}' centred: x {target.localPosition.x:F3} -> {wanted.x:F3}");
+                $"[SHOPFX] row name '{target.name}' centred: listCentre={ListCentreX() ?? 0f:F3}" +
+                $" textCentre={TextCentreX(label):F3} localX {target.localPosition.x:F3} -> {wanted.x:F3}");
         }
 
         if (target.localPosition != wanted)
@@ -221,17 +228,95 @@ internal static class ShopCosmetics
         }
     }
 
-    /// <summary>Midpoint between the row icon and the row name, in the name's parent space.</summary>
-    private static Vector3 CentredPosition(ShopItemStats row, Transform label)
+    /// <summary>Local position that puts the text centre on the item list centre.</summary>
+    private static Vector3 CentredPosition(ShopItemStats row, TMP_Text label)
     {
-        Vector3 position = label.localPosition;
+        Vector3 position = label.transform.localPosition;
+        float? centre = ListCentreX();
+        RectTransform? rect = label.rectTransform;
+        if (centre == null || rect == null)
+        {
+            return MidpointPosition(row, label);
+        }
+
+        Transform space = label.transform.parent != null ? label.transform.parent : label.transform;
+        Vector3 world = rect.position;
+        world.x += centre.Value - TextCentreX(label);
+        return space.InverseTransformPoint(world);
+    }
+
+    /// <summary>World X of the rendered text centre: the rect centre with centred alignment.</summary>
+    private static float TextCentreX(TMP_Text label)
+    {
+        RectTransform? rect = label.rectTransform;
+        return rect != null ? rect.TransformPoint(rect.rect.center).x : label.transform.position.x;
+    }
+
+    /// <summary>World X of the item list centre, from its rect or its child renderers.</summary>
+    private static float? ListCentreX()
+    {
+        if (_list == null && _root != null)
+        {
+            _list = _root.Find(ListPath);
+            if (_list == null)
+            {
+                foreach (Transform child in _root.GetComponentsInChildren<Transform>(true))
+                {
+                    if (child != null && child.name == "Item List")
+                    {
+                        _list = child;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (_list == null)
+        {
+            return null;
+        }
+
+        if (_list is RectTransform rect)
+        {
+            Vector3[] corners = new Vector3[4];
+            rect.GetWorldCorners(corners);
+            return (corners[0].x + corners[2].x) * 0.5f;
+        }
+
+        bool any = false;
+        Bounds bounds = new Bounds(_list.position, Vector3.zero);
+        foreach (Renderer renderer in _list.GetComponentsInChildren<Renderer>(true))
+        {
+            if (renderer == null)
+            {
+                continue;
+            }
+
+            if (any)
+            {
+                bounds.Encapsulate(renderer.bounds);
+            }
+            else
+            {
+                bounds = renderer.bounds;
+                any = true;
+            }
+        }
+
+        return any ? bounds.center.x : (float?)null;
+    }
+
+    /// <summary>Midpoint between the row icon and the row name, in the name's parent space.</summary>
+    private static Vector3 MidpointPosition(ShopItemStats row, TMP_Text label)
+    {
+        Vector3 position = label.transform.localPosition;
         SpriteRenderer? icon = ItemSpriteField?.GetValue(row) as SpriteRenderer;
         if (icon == null)
         {
             return position;
         }
 
-        Transform space = label.parent != null ? label.parent : label;
+        Transform space = label.transform.parent != null ? label.transform.parent : label.transform;
         float iconX = space.InverseTransformPoint(icon.transform.position).x;
         position.x = (iconX + position.x) * 0.5f;
         return position;

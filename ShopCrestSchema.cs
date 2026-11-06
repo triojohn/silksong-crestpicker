@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Reflection;
+using System.Text;
 using GlobalSettings;
 using TMProOld;
 using UnityEngine;
@@ -19,8 +20,8 @@ internal static class ShopCrestSchema
     /// <summary>Schema height in world units before <see cref="Scale"/> is applied.</summary>
     private const float BaseHeight = 1.2f;
 
-    /// <summary>Dot diameter as a fraction of the schema height.</summary>
-    private const float DotFraction = 0.1f;
+    /// <summary>Dot diameter as a fraction of the silhouette height.</summary>
+    private const float DotFraction = 0.06f;
 
     /// <summary>Dot diameter factor for a locked slot.</summary>
     private const float LockedDotFactor = 0.8f;
@@ -30,9 +31,6 @@ internal static class ShopCrestSchema
 
     /// <summary>Path of the details panel inside the shop window.</summary>
     private const string DetailsPath = "Item List Group/Item Details";
-
-    /// <summary>Confirm-screen schema height relative to the details schema.</summary>
-    private const float ConfirmSizeFactor = 2f;
 
     /// <summary>Confirm group holding the item picture the confirm schema is centred on.</summary>
     private const string ConfirmGroupPath = "Item Confirm Group";
@@ -62,13 +60,21 @@ internal static class ShopCrestSchema
     private static ToolCrest? _builtFor;
     private static Sprite? _dotSprite;
     private static bool _missingLogged;
-    private static bool _numbersLogged;
 
     /// <summary>True to draw the crest schema at all.</summary>
     internal static bool Enabled = true;
 
     /// <summary>Multiplier applied to the schema size.</summary>
     internal static float Scale = 1f;
+
+    /// <summary>Multiplier for slot dot positions, which are silhouette-local units.</summary>
+    internal static float DotPositionFactor = 1f;
+
+    /// <summary>Multiplier for the slot dot diameter.</summary>
+    internal static float DotSize = 1f;
+
+    /// <summary>Confirm-screen schema size relative to the details schema.</summary>
+    internal static float ConfirmScale = 1f;
 
     /// <summary>Remembers the window, hides the duplicate name and draws the schema.</summary>
     /// <param name="root">Shop window root, the object holding <c>shop_control</c>.</param>
@@ -83,7 +89,6 @@ internal static class ShopCrestSchema
             _confirmAnchor = null;
             _builtFor = null;
             _missingLogged = false;
-            _numbersLogged = false;
             Apply();
         }
         catch (Exception ex)
@@ -119,7 +124,6 @@ internal static class ShopCrestSchema
         _confirmGroup = null;
         _confirmAnchor = null;
         _builtFor = null;
-        _numbersLogged = false;
         try
         {
             DestroySchema();
@@ -375,7 +379,7 @@ internal static class ShopCrestSchema
         }
 
         _container = BuildSchema(crest, silhouette, darkened, DetailsParent(), 1f, "Crest Schema");
-        _confirmContainer = BuildSchema(crest, silhouette, darkened, ConfirmGroup(), ConfirmSizeFactor,
+        _confirmContainer = BuildSchema(crest, silhouette, darkened, ConfirmGroup(), ConfirmScale,
             "Confirm Crest Schema");
     }
 
@@ -410,15 +414,14 @@ internal static class ShopCrestSchema
         float height = BaseHeight * Scale * sizeFactor;
         float worldHeight = silhouette.rect.height / Mathf.Max(1f, silhouette.pixelsPerUnit);
         float fit = worldHeight > 0.01f ? height / worldHeight : 1f;
-        float dotFactor = fit / Mathf.Max(1f, silhouette.pixelsPerUnit);
-        float dotSize = height * DotFraction;
+        float dotSize = worldHeight * DotFraction * DotSize;
 
         SpriteRenderer body = AddRenderer(container, "Schema Silhouette", silhouette, reference, 0);
         body.transform.localScale = Vector3.one * fit;
         body.color = darkened ? new Color(0.3f, 0.3f, 0.3f, 1f) : Color.white;
 
-        int dots = AddDots(container, crest, reference, dotFactor, dotSize);
-        LogNumbers(label, crest, silhouette, reference, fit, dotFactor, dotSize, dots);
+        int dots = AddDots(body.transform, crest, reference, dotSize);
+        LogNumbers(label, crest, silhouette, crest.Slots, fit, dotSize, dots);
         return container;
     }
 
@@ -469,9 +472,12 @@ internal static class ShopCrestSchema
         return _confirmGroup;
     }
 
-    /// <summary>Adds one dot per slot; returns how many were created.</summary>
-    private static int AddDots(GameObject container, ToolCrest crest, SpriteRenderer? reference,
-        float dotFactor, float dotSize)
+    /// <summary>
+    /// Adds one dot per slot as a child of the silhouette, so the dots follow its scale.
+    /// Slot positions are silhouette-local units, not pixels.
+    /// </summary>
+    private static int AddDots(Transform silhouette, ToolCrest crest, SpriteRenderer? reference,
+        float dotSize)
     {
         ToolCrest.SlotInfo[]? slots = crest.Slots;
         if (slots == null || slots.Length == 0)
@@ -486,15 +492,17 @@ internal static class ShopCrestSchema
             return 0;
         }
 
+        float worldScale = Mathf.Abs(silhouette.lossyScale.x);
+        float sizeFactor = worldScale > 0.0001f ? 1f / worldScale : 1f;
         int created = 0;
         for (int i = 0; i < slots.Length; i++)
         {
             ToolCrest.SlotInfo slot = slots[i];
             bool locked = IsLocked(crest, i, slot);
-            SpriteRenderer renderer = AddRenderer(container, $"Schema Dot {i}", dot, reference, 1);
-            Vector2 position = slot.Position;
-            renderer.transform.localPosition = new Vector3(position.x * dotFactor, position.y * dotFactor, 0f);
-            float size = locked ? dotSize * LockedDotFactor : dotSize;
+            SpriteRenderer renderer = AddRenderer(silhouette.gameObject, $"Schema Dot {i}", dot, reference, 1);
+            Vector2 position = slot.Position * DotPositionFactor;
+            renderer.transform.localPosition = new Vector3(position.x, position.y, 0f);
+            float size = (locked ? dotSize * LockedDotFactor : dotSize) * sizeFactor;
             renderer.transform.localScale = new Vector3(size, size, 1f);
             Color color = TypeColor(slot.Type);
             color.a = locked ? LockedAlpha : 1f;
@@ -631,25 +639,29 @@ internal static class ShopCrestSchema
     }
 
     /// <summary>One line of real numbers, so the slot scaling can be tuned from the log.</summary>
-    private static void LogNumbers(string label, ToolCrest crest, Sprite silhouette, SpriteRenderer? reference,
-        float fit, float dotFactor, float dotSize, int dots)
+    private static void LogNumbers(string label, ToolCrest crest, Sprite silhouette,
+        ToolCrest.SlotInfo[]? slots, float fit, float dotSize, int dots)
     {
-        if (label != "Crest Schema" || _numbersLogged)
+        float ppu = Mathf.Max(1f, silhouette.pixelsPerUnit);
+        float worldWidth = silhouette.rect.width / ppu;
+        float worldHeight = silhouette.rect.height / ppu;
+        StringBuilder line = new StringBuilder();
+        line.Append($"[SCHEMA] {label} crest='{crest.name}' sprite='{silhouette.name}'");
+        line.Append($" rect={silhouette.rect.width:F0}x{silhouette.rect.height:F0} ppu={silhouette.pixelsPerUnit:F1}");
+        line.Append($" spriteSize=({worldWidth:F3},{worldHeight:F3}) fit={fit:F3}");
+        line.Append($" dot={dotSize:F3} dots={dots} dotFactor={DotPositionFactor:F2} scale={Scale:F2}");
+        if (slots != null)
         {
-            Plugin.Log.LogInfo(
-                $"[SCHEMA] {label} crest='{crest.name}' fit={fit:F3} dot={dotSize:F3} dots={dots}" +
-                $" scale={Scale:F2}");
-            return;
+            int shown = Mathf.Min(3, slots.Length);
+            for (int i = 0; i < shown; i++)
+            {
+                Vector2 raw = slots[i].Position;
+                line.Append($" slot{i}:pos=({raw.x:F2},{raw.y:F2})");
+                line.Append($" local=({raw.x * DotPositionFactor:F3},{raw.y * DotPositionFactor:F3})");
+            }
         }
 
-        _numbersLogged = true;
-        string sorting = reference != null
-            ? $"layer={reference.gameObject.layer} sort='{reference.sortingLayerName}' order={reference.sortingOrder}"
-            : "layer=5 default sorting";
-        Plugin.Log.LogInfo(
-            $"[SCHEMA] crest='{crest.name}' sprite='{silhouette.name}'" +
-            $" rect={silhouette.rect.width:F0}x{silhouette.rect.height:F0} ppu={silhouette.pixelsPerUnit:F1}" +
-            $" fit={fit:F3} dotFactor={dotFactor:F4} dot={dotSize:F3} dots={dots} {sorting} scale={Scale:F2}");
+        Plugin.Log.LogInfo(line.ToString());
     }
 
     /// <summary>Destroys the schema objects of the current crest, details and confirm alike.</summary>
