@@ -48,6 +48,14 @@ internal static class ShopCosmetics
     private static readonly Dictionary<TMP_Text, TextState> TextStates =
         new Dictionary<TMP_Text, TextState>();
 
+    /// <summary>Mesh bounds centre X of every row label, measured before our first shift.</summary>
+    private static readonly Dictionary<Transform, float> BaselineCentres =
+        new Dictionary<Transform, float>();
+
+    /// <summary>World X of every row label before our first shift.</summary>
+    private static readonly Dictionary<Transform, float> BaselinePositions =
+        new Dictionary<Transform, float>();
+
     /// <summary>Path of the item list inside the shop window.</summary>
     private const string ListPath = "Item List Group/Item List";
 
@@ -64,6 +72,19 @@ internal static class ShopCosmetics
     private static bool _missingLogged;
     private static bool _candidatesLogged;
     private static bool _sourceWarned;
+
+    /// <summary>
+    /// World X the row labels centre on, measured once per shop session and then reused.
+    /// The source geometry grows with the shifted text, so re-measuring every frame
+    /// feeds the shift back into the target and the labels drift.
+    /// </summary>
+    private static float? _centreTargetX;
+
+    /// <summary>Source name that produced <see cref="_centreTargetX"/>.</summary>
+    private static string _centreSource = "none";
+
+    /// <summary>Row count seen when <see cref="_centreTargetX"/> was measured.</summary>
+    private static int _centreRows;
 
     /// <summary>
     /// Config key naming the world X the row labels are centred on. Read on every call,
@@ -95,6 +116,11 @@ internal static class ShopCosmetics
             _missingLogged = false;
             _candidatesLogged = false;
             _sourceWarned = false;
+            _centreTargetX = null;
+            _centreSource = "none";
+            _centreRows = 0;
+            BaselineCentres.Clear();
+            BaselinePositions.Clear();
             HideCounters(root);
             Apply(root);
             ShopCrestSchema.Begin(root);
@@ -141,6 +167,9 @@ internal static class ShopCosmetics
         _backboard = null;
         _candidatesLogged = false;
         _sourceWarned = false;
+        _centreTargetX = null;
+        _centreSource = "none";
+        _centreRows = 0;
         try
         {
             ShopCrestSchema.End();
@@ -185,6 +214,8 @@ internal static class ShopCosmetics
             LoggedRows.Clear();
             ObjectStates.Clear();
             TextStates.Clear();
+            BaselineCentres.Clear();
+            BaselinePositions.Clear();
             _confirm = null;
             _confirmOriginal = null;
             _confirmButton = null;
@@ -219,8 +250,10 @@ internal static class ShopCosmetics
 
     /// <summary>
     /// Centres the name label on the drawing rows, from what the text actually draws:
-    /// the mesh bounds centre, not the rect, whose size lags behind the fitter. The
-    /// shift is recomputed every frame from the current centre, never accumulated.
+    /// the mesh bounds centre, not the rect, whose size lags behind the fitter. Both the
+    /// target and each label's baseline are measured once per shop session: the source
+    /// geometry grows with the shifted text, so re-measuring would feed the shift back
+    /// into the target and the labels would drift.
     /// </summary>
     private static void CenterName(ShopItemStats row)
     {
@@ -241,10 +274,19 @@ internal static class ShopCosmetics
         }
 
         Renderer? renderer = label.GetComponent<Renderer>();
-        if (renderer == null || !CentreTargetX(target, out float targetX, out int rows, out string source))
+        if (renderer == null)
         {
             return;
         }
+
+        if (_centreTargetX == null && !MeasureCentre(target, out _))
+        {
+            return;
+        }
+
+        float targetX = _centreTargetX ?? 0f;
+        string source = _centreSource;
+        int rows = _centreRows;
 
         if (source == "original")
         {
@@ -258,26 +300,49 @@ internal static class ShopCosmetics
             if (LoggedRows.Add(target))
             {
                 Plugin.Log.LogInfo($"[SHOPFX] centre '{target.name}' rows={rows}" +
-                    $" target={targetX:F3} textX={renderer.bounds.center.x:F3} delta=0.000 src={source}");
+                    $" target={targetX:F3} baseline={renderer.bounds.center.x:F3}" +
+                    $" pos={target.position.x:F3} src={source}");
             }
 
             return;
         }
 
-        float textX = renderer.bounds.center.x;
-        float delta = targetX - textX;
-        if (Mathf.Abs(delta) > 0.0005f)
+        if (!BaselineCentres.TryGetValue(target, out float baselineCentreX))
         {
-            Vector3 position = target.position;
-            position.x += delta;
-            target.position = position;
+            baselineCentreX = renderer.bounds.center.x;
+            BaselineCentres[target] = baselineCentreX;
+            BaselinePositions[target] = target.position.x;
+            Plugin.Log.LogInfo($"[SHOPFX] centre '{target.name}' rows={rows}" +
+                $" target={targetX:F3} baseline={baselineCentreX:F3}" +
+                $" pos={BaselinePositions[target]:F3} src={source}");
         }
 
-        if (LoggedRows.Add(target))
+        Vector3 position = target.position;
+        position.x = BaselinePositions[target] + (targetX - baselineCentreX);
+        if (Mathf.Abs(position.x - target.position.x) > 0.0005f)
         {
-            Plugin.Log.LogInfo($"[SHOPFX] centre '{target.name}' rows={rows}" +
-                $" target={targetX:F3} textX={textX:F3} delta={delta:F3} src={source}");
+            target.position = position;
         }
+    }
+
+    /// <summary>
+    /// Measures the world X to centre the labels on, once per shop session, and caches it
+    /// with its source name and row count. False while no source is available yet.
+    /// </summary>
+    /// <param name="exclude">Label transform to leave out of any bounds union.</param>
+    /// <param name="x">Cached target world X on success.</param>
+    private static bool MeasureCentre(Transform exclude, out float x)
+    {
+        x = 0f;
+        if (!CentreTargetX(exclude, out x, out int rows, out string source))
+        {
+            return false;
+        }
+
+        _centreTargetX = x;
+        _centreSource = source;
+        _centreRows = rows;
+        return true;
     }
 
     /// <summary>
