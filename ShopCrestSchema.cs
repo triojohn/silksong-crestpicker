@@ -102,6 +102,12 @@ internal static class ShopCrestSchema
     /// <summary>True once the details schema was hidden behind the confirm screen.</summary>
     private static bool _detailsHiddenLogged;
 
+    /// <summary>True from the close start until the next <see cref="Begin"/>; blocks any re-show.</summary>
+    private static bool _closed;
+
+    /// <summary>True once the close-start alpha was logged for this session.</summary>
+    private static bool _closeAlphaLogged;
+
     /// <summary>Flags for the private fields read off the vanilla crest widgets.</summary>
     private const BindingFlags PrivateInstance = BindingFlags.Instance | BindingFlags.NonPublic;
 
@@ -154,6 +160,8 @@ internal static class ShopCrestSchema
             _builtFor = null;
             _missingLogged = false;
             _detailsHiddenLogged = false;
+            _closed = false;
+            _closeAlphaLogged = false;
             _detailsBounds = default;
             DestroySchemaRoot();
             Apply();
@@ -187,14 +195,21 @@ internal static class ShopCrestSchema
     /// outside the fade hierarchy, so the vanilla fade cannot reach them: without this
     /// they stay opaque while the window already goes dark.
     /// </summary>
-    internal static void Hide()
+    /// <param name="alpha">Window fade alpha at the close start; negative when unknown.</param>
+    internal static void Hide(float alpha = -1f)
     {
+        _closed = true;
         try
         {
             bool changed = false;
             changed |= HideContainer(_detailsSchema);
             changed |= HideContainer(_confirmSchema);
-            if (changed)
+            if (!_closeAlphaLogged)
+            {
+                _closeAlphaLogged = true;
+                Plugin.Log.LogInfo($"[SCHEMA] hidden at close start alpha={(alpha < 0f ? 1f : alpha):F3}");
+            }
+            else if (changed)
             {
                 Plugin.Log.LogInfo("[SCHEMA] hidden on close");
             }
@@ -220,6 +235,8 @@ internal static class ShopCrestSchema
     /// <summary>Destroys the schema objects and puts the hidden name back.</summary>
     internal static void End()
     {
+        _closed = false;
+        _closeAlphaLogged = false;
         _root = null;
         _details = null;
         _nameLabel = null;
@@ -253,6 +270,11 @@ internal static class ShopCrestSchema
     /// <summary>Hides the duplicate name and keeps the schema in step with the selection.</summary>
     private static void Apply()
     {
+        if (_closed)
+        {
+            return;
+        }
+
         if (!ResolveDetails())
         {
             return;

@@ -100,6 +100,8 @@ internal static class ShopCrestMenu
     private static float _shopUp;
     private static bool _timingLogged;
 
+    /// <summary>True once the open chain finished fading the window in.</summary>
+    internal static bool TimingLogged => _timingLogged;
     /// <summary>Time of the crest purchase; zero while nothing was bought.</summary>
     private static float _purchaseAt;
 
@@ -111,7 +113,7 @@ internal static class ShopCrestMenu
     private static int _purchaseLines;
 
     /// <summary>True from the moment the close is sent until the full restore finished.</summary>
-    private static bool _closing;
+    internal static bool _closing;
 
     /// <summary>True while the live shop window is showing our crests.</summary>
     internal static bool IsOpen { get; set; }
@@ -495,7 +497,7 @@ internal static class ShopCrestMenu
     }
 
     /// <summary>Reads the root fade alpha, falling back to <paramref name="fallback"/>.</summary>
-    private static float SafeAlpha(float fallback)
+    internal static float SafeAlpha(float fallback)
     {
         try
         {
@@ -1393,6 +1395,12 @@ internal sealed class ShopCrestSession : MonoBehaviour
             ShopCrestMenu.GuardTeardown();
             ShopCrestMenu.CheckOpenTiming(_frames);
             ShopCrestMenu.TickPurchase(_frames);
+
+            if (ShopCrestMenu.IsOpen && !ShopCrestMenu._closing &&
+                ShopCrestMenu.TimingLogged && ShopCrestMenu.SafeAlpha(1f) < 0.99f)
+            {
+                ShopCrestSchema.Hide(ShopCrestMenu.SafeAlpha(1f));
+            }
 
             if (ShopCrestMenu.ClosedByFsm())
             {
