@@ -94,9 +94,9 @@ public sealed class Plugin : BaseUnityPlugin
             "Текст кнопки подтверждения покупки знака");
         _shrinkCrestName = Config.Bind("General", "ShrinkCrestNameToFit", true,
             "Уменьшать шрифт названия знака, чтобы оно влезло в строку");
-        _textCentreSource = Config.Bind("General", "TextCentreSource", "rowBars",
-            "Источник цели для центрирования названия знака: rowBars (среднее X центров строк товаров, " +
-            "та же система координат, что у текста), column (середина между левым краем " +
+        _textCentreSource = Config.Bind("General", "TextCentreSource", "columns",
+            "Источник цели для центрирования названия знака: columns (середина между левым краем " +
+            "Window/Shop_Backboard и левым краем Item Details), column (середина между левым краем " +
             "Item List и левым краем Item Details), columnCentre (между левым краем Item Details " +
             "и правым краем окна), rows (среднее X строк), " +
             "list (Item List), listGroup (Item List Group), backboard (Window/Shop_Backboard), " +

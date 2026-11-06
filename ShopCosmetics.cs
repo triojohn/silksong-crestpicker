@@ -90,6 +90,21 @@ internal static class ShopCosmetics
     /// <summary>Row count seen when <see cref="_centreTargetX"/> was measured.</summary>
     private static int _centreRows;
 
+    /// <summary>True while the one-off post-shift residual measurement waits for the next frame.</summary>
+    private static bool _residualPending;
+
+    /// <summary>True once the residual has been measured and logged for this session.</summary>
+    private static bool _residualDone;
+
+    /// <summary>Label whose residual is measured.</summary>
+    private static Transform? _residualLabel;
+
+    /// <summary>Target world X the residual is compared against.</summary>
+    private static float _residualTargetX;
+
+    /// <summary>Frame the residual shift was applied on.</summary>
+    private static int _residualFrame;
+
     /// <summary>
     /// Config key naming the world X the row labels are centred on. Read on every call,
     /// so an edited cfg file takes effect without a restart. Bound by <see cref="Plugin"/>.
@@ -124,6 +139,11 @@ internal static class ShopCosmetics
             _centreTargetX = null;
             _centreSource = "none";
             _centreRows = 0;
+            _residualPending = false;
+            _residualDone = false;
+            _residualLabel = null;
+            _residualTargetX = 0f;
+            _residualFrame = 0;
             BaselineCentres.Clear();
             BaselinePositions.Clear();
             HideCounters(root);
@@ -176,6 +196,11 @@ internal static class ShopCosmetics
         _centreTargetX = null;
         _centreSource = "none";
         _centreRows = 0;
+        _residualPending = false;
+        _residualDone = false;
+        _residualLabel = null;
+        _residualTargetX = 0f;
+        _residualFrame = 0;
         try
         {
             ShopCrestSchema.End();
@@ -329,6 +354,85 @@ internal static class ShopCosmetics
         {
             target.position = position;
         }
+
+        TrackResidual(target, targetX);
+    }
+
+    /// <summary>
+    /// Schedules a one-off residual check after the first shift, then measures it one frame
+    /// later. Confirms the moved transform really moved the drawn text, i.e. that the
+    /// target and the text share the same world space.
+    /// </summary>
+    /// <param name="target">Label that was just shifted.</param>
+    /// <param name="targetX">Target world X applied to it.</param>
+    private static void TrackResidual(Transform target, float targetX)
+    {
+        if (_residualDone)
+        {
+            return;
+        }
+
+        if (!_residualPending)
+        {
+            _residualPending = true;
+            _residualLabel = target;
+            _residualTargetX = targetX;
+            _residualFrame = _frames;
+            return;
+        }
+
+        if (_frames <= _residualFrame)
+        {
+            return;
+        }
+
+        _residualPending = false;
+        _residualDone = true;
+        LogResidual();
+    }
+
+    /// <summary>Logs how far the drawn text still sits from the target world X.</summary>
+    private static void LogResidual()
+    {
+        if (_residualLabel == null)
+        {
+            return;
+        }
+
+        Renderer? renderer = TextRenderer(_residualLabel);
+        if (renderer == null)
+        {
+            return;
+        }
+
+        float text = renderer.bounds.center.x;
+        float residual = text - _residualTargetX;
+        Plugin.Log.LogInfo($"[SHOPFX] centre residual '{_residualLabel.name}'" +
+            $" target={_residualTargetX:F3} text={text:F3} residual={residual:F3}");
+        if (Mathf.Abs(residual) > 0.05f)
+        {
+            Plugin.Log.LogWarning("[SHOPFX] centre residual too big, scale or pivot issue");
+        }
+    }
+
+    /// <summary>Renderer of the TMP submesh under the label, else the label's own renderer.</summary>
+    private static Renderer? TextRenderer(Transform label)
+    {
+        foreach (Transform sub in label)
+        {
+            if (sub.name != "New Game Object")
+            {
+                continue;
+            }
+
+            Renderer? submesh = sub.GetComponent<Renderer>();
+            if (submesh != null && submesh.enabled)
+            {
+                return submesh;
+            }
+        }
+
+        return label.GetComponent<Renderer>();
     }
 
     /// <summary>
@@ -359,8 +463,10 @@ internal static class ShopCosmetics
 
     /// <summary>
     /// World X to centre the row labels on, taken from the source named by the
-    /// <c>General/TextCentreSource</c> config key. Falls back to the rows, then the list
-    /// rect, then the list group when the requested source is not available.
+    /// <c>General/TextCentreSource</c> config key. The <c>columns</c> source has no
+    /// fallback: its anchors live in another space than the label, so a substitute would
+    /// poison the cached target. The other sources fall back to the rows, then the list
+    /// rect, then the list group.
     /// </summary>
     /// <param name="exclude">Label transform to leave out of any bounds union.</param>
     private static bool CentreTargetX(Transform exclude, out float x, out int rows, out string source)
@@ -369,11 +475,11 @@ internal static class ShopCosmetics
         source = ResolveSourceName();
         LogCandidatesOnce(exclude);
 
-        if (source == "rowBars")
+        if (source == "columns")
         {
-            // No fallback: the other candidates live in other spaces and would poison the cache.
+            // Retry on later frames instead of caching a substitute anchor.
             rows = 0;
-            return RowBarsX(exclude, out x, out rows);
+            return ColumnsX(out x, out _, out _) && IsSane(x);
         }
 
         if (TryCentre(source, exclude, out x) && IsSane(x))
@@ -409,8 +515,8 @@ internal static class ShopCosmetics
     {
         switch (source)
         {
-            case "rowBars":
-                return RowBarsX(exclude, out x, out _);
+            case "columns":
+                return ColumnsX(out x, out _, out _);
             case "rows":
                 return RowCentreX(out x, out _);
             case "list":
@@ -430,17 +536,17 @@ internal static class ShopCosmetics
             case "original":
                 return OriginalX(exclude, out x);
             default:
-                return RowBarsX(exclude, out x, out _);
+                return ColumnsX(out x, out _, out _);
         }
     }
 
-    /// <summary>Configured source name, with an unknown value warned about once and replaced by <c>rowBars</c>.</summary>
+    /// <summary>Configured source name, with an unknown value warned about once and replaced by <c>columns</c>.</summary>
     private static string ResolveSourceName()
     {
         string? name = CentreSource?.Value;
         switch (name)
         {
-            case "rowBars":
+            case "columns":
             case "rows":
             case "list":
             case "column":
@@ -454,10 +560,10 @@ internal static class ShopCosmetics
                 if (!_sourceWarned)
                 {
                     _sourceWarned = true;
-                    Plugin.Log.LogWarning($"[SHOPFX] unknown TextCentreSource '{name}', using 'rowBars'.");
+                    Plugin.Log.LogWarning($"[SHOPFX] unknown TextCentreSource '{name}', using 'columns'.");
                 }
 
-                return "rowBars";
+                return "columns";
         }
     }
 
@@ -486,15 +592,17 @@ internal static class ShopCosmetics
         _candidatesLogged = true;
         RowCentreX(out float rowX, out int rowCount);
         string rowText = rowCount > 0 ? rowX.ToString("F3") : "n/a";
-        bool haveBars = RowBarsX(exclude, out float barX, out int barsUsed);
-        string barText = haveBars ? barX.ToString("F3") : "n/a";
-        Plugin.Log.LogInfo($"[SHOPFX] centre candidates: rowBars={barText} rowsUsed={barsUsed}" +
-            $" rows={rowText}" +
-            $" listMin={LeftText(_list)} detailsMin={LeftText(_details)}" +
+        string backboardText = BackboardMinX(out float backboardMin) ? backboardMin.ToString("F3") : "n/a";
+        string detailsText = DetailsMinX(out float detailsMin) ? detailsMin.ToString("F3") : "n/a";
+        string columnsText = ColumnsX(out float columns, out _, out _) ? columns.ToString("F3") : "n/a";
+        Plugin.Log.LogInfo($"[SHOPFX] centre candidates: rows={rowText} rowsUsed={rowCount}" +
+            $" listMin={LeftText(_list)}" +
             $" column={ColumnText(exclude)} columnCentre={ColumnCentreText(exclude)}" +
             $" list={SpanText(_list, exclude)} listGroup={SpanText(_listGroup, exclude)}" +
             $" backboard={SpanText(_backboard, exclude)} window={SpanText(_window, exclude)}" +
-            $" original={OriginalText(exclude)} chosen={ResolveSourceName()}");
+            $" original={OriginalText(exclude)}" +
+            $" backboardMin={backboardText} detailsMin={detailsText} columns={columnsText}" +
+            $" chosen={ResolveSourceName()}");
     }
 
     /// <summary>Min/max world X of a panel, as <c>(min..max, centre..)</c>, or <c>n/a</c>.</summary>
@@ -616,6 +724,92 @@ internal static class ShopCosmetics
 
         x = (detailsMin + windowMax) * 0.5f;
         return true;
+    }
+
+    /// <summary>
+    /// World X midway between the left edge of the backboard and the left edge of the
+    /// details panel. Both anchors are structural and live in the same world space as the
+    /// label, so the value can be cached. No substitute is taken when either is missing.
+    /// </summary>
+    /// <param name="x">Centre world X on success.</param>
+    /// <param name="backboardMin">Left edge world X of the backboard.</param>
+    /// <param name="detailsMin">Left edge world X of the details panel.</param>
+    private static bool ColumnsX(out float x, out float backboardMin, out float detailsMin)
+    {
+        x = 0f;
+        backboardMin = 0f;
+        detailsMin = 0f;
+        ResolveTargets();
+        if (!BackboardMinX(out backboardMin) || !DetailsMinX(out detailsMin))
+        {
+            return false;
+        }
+
+        x = (backboardMin + detailsMin) * 0.5f;
+        return true;
+    }
+
+    /// <summary>Left edge world X of <c>Window/Shop_Backboard</c>, from its renderer bounds.</summary>
+    private static bool BackboardMinX(out float min)
+    {
+        min = 0f;
+        if (_backboard == null)
+        {
+            return false;
+        }
+
+        Renderer? renderer = _backboard.GetComponent<Renderer>() ??
+            _backboard.GetComponentInChildren<Renderer>(true);
+        if (renderer == null || renderer.bounds.size.x <= 0.0001f)
+        {
+            return false;
+        }
+
+        min = renderer.bounds.min.x;
+        return IsSane(min);
+    }
+
+    /// <summary>
+    /// Left edge world X of <c>Item List Group/Item Details</c>: rect corners first, then
+    /// its renderers, then its position.
+    /// </summary>
+    private static bool DetailsMinX(out float min)
+    {
+        min = 0f;
+        if (_details == null)
+        {
+            return false;
+        }
+
+        if (_details is RectTransform rect)
+        {
+            Vector3[] corners = new Vector3[4];
+            rect.GetWorldCorners(corners);
+            float lo = Mathf.Min(corners[0].x, corners[2].x);
+            float hi = Mathf.Max(corners[0].x, corners[2].x);
+            if (hi - lo > 0.0001f)
+            {
+                min = lo;
+                return IsSane(min);
+            }
+        }
+
+        Renderer? renderer = _details.GetComponent<Renderer>();
+        if (renderer == null || renderer.bounds.size.x <= 0.0001f)
+        {
+            renderer = null;
+            foreach (Renderer child in _details.GetComponentsInChildren<Renderer>(true))
+            {
+                if (child != null && child.enabled && child.gameObject.activeInHierarchy)
+                {
+                    renderer = child;
+                    break;
+                }
+            }
+        }
+
+        min = renderer != null ? renderer.bounds.min.x : _details.position.x;
+        return IsSane(min);
     }
 
     /// <summary>Left edge of a panel as text, for the candidate log.</summary>
@@ -778,89 +972,6 @@ internal static class ShopCosmetics
         }
 
         return target.name == "Item cost";
-    }
-
-    /// <summary>
-    /// Mean world X of the centre of the drawn row bars. For every active row the union of
-    /// its child renderer bounds is taken, leaving out our name label and the hidden icon,
-    /// so the value lives in the same space as the label's own <c>Renderer.bounds</c>.
-    /// Needs at least two usable rows, otherwise the reading is a half-built frame.
-    /// </summary>
-    /// <param name="exclude">Label transform to leave out of the union.</param>
-    /// <param name="x">Mean bar centre world X.</param>
-    /// <param name="rowsUsed">Rows that produced a usable union.</param>
-    private static bool RowBarsX(Transform? exclude, out float x, out int rowsUsed)
-    {
-        x = 0f;
-        rowsUsed = 0;
-        if (_root == null)
-        {
-            return false;
-        }
-
-        float sum = 0f;
-        foreach (ShopItemStats row in _root.GetComponentsInChildren<ShopItemStats>(true))
-        {
-            if (row == null || !row.gameObject.activeInHierarchy)
-            {
-                continue;
-            }
-
-            if (!RowBarBounds(row.transform, exclude, out Bounds bounds))
-            {
-                continue;
-            }
-
-            sum += bounds.center.x;
-            rowsUsed++;
-        }
-
-        if (rowsUsed < 2)
-        {
-            return false;
-        }
-
-        x = sum / rowsUsed;
-        return IsSane(x);
-    }
-
-    /// <summary>Union of a row's child renderer bounds, minus the label and the hidden icon.</summary>
-    /// <param name="row">Row transform to scan.</param>
-    /// <param name="exclude">Label transform to leave out of the union.</param>
-    /// <param name="bounds">Union bounds on success.</param>
-    private static bool RowBarBounds(Transform row, Transform? exclude, out Bounds bounds)
-    {
-        bounds = new Bounds(row.position, Vector3.zero);
-        bool any = false;
-        foreach (Renderer renderer in row.GetComponentsInChildren<Renderer>(true))
-        {
-            if (renderer == null || !renderer.enabled || !renderer.gameObject.activeInHierarchy)
-            {
-                continue;
-            }
-
-            if (IsNameLabel(renderer.transform, exclude) || renderer.transform.name == "Item Sprite")
-            {
-                continue;
-            }
-
-            if (renderer.bounds.size.x <= 0.0001f)
-            {
-                continue;
-            }
-
-            if (any)
-            {
-                bounds.Encapsulate(renderer.bounds);
-            }
-            else
-            {
-                bounds = renderer.bounds;
-                any = true;
-            }
-        }
-
-        return any && bounds.size.x > 0.0001f;
     }
 
     /// <summary>Rejects NaN, infinity and absurd world X values from a half-built UI.</summary>
