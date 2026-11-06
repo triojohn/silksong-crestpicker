@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Reflection;
 using BepInEx.Configuration;
 using CrestPicker.Pure;
+using TeamCherry.NestedFadeGroup;
 using TMProOld;
 using UnityEngine;
 
@@ -99,6 +100,13 @@ internal static class ShopCosmetics
 
     /// <summary>True once the first own label and its reference have been logged.</summary>
     private static bool _labelDiagLogged;
+
+    /// <summary>Fade groups of every own label, collected once when the label is built.</summary>
+    private static readonly Dictionary<TMP_Text, NestedFadeGroupBase[]> LabelFades =
+        new Dictionary<TMP_Text, NestedFadeGroupBase[]>();
+
+    /// <summary>True once the fade groups of the first own label have been logged.</summary>
+    private static bool _fadeDiagLogged;
 
     /// <summary>Max label build attempts per row, one per frame, about a second at 60 fps.</summary>
     private const int MaxLabelAttempts = 60;
@@ -209,6 +217,9 @@ internal static class ShopCosmetics
             SourceLogged.Clear();
             _invisibleLogged = false;
             _sourceDiagLogged = false;
+            _labelDiagLogged = false;
+            _fadeDiagLogged = false;
+            LabelFades.Clear();
             LabelAttempts.Clear();
             LabelGivenUp.Clear();
             _readyLogged = 0;
@@ -276,6 +287,7 @@ internal static class ShopCosmetics
         try
         {
             ApplyRowNames();
+            ForceLabelAlpha();
             ApplyConfirmButton();
             ApplyPurchaseText();
         }
@@ -343,6 +355,75 @@ internal static class ShopCosmetics
 
             AddFallbackLabel(label, pair.Value);
         }
+    }
+
+    /// <summary>
+    /// Keeps our own row labels drawn. A cloned <c>NestedFadeGroup*</c> writes the text
+    /// colour and the renderer state from its own <c>AlphaSelf</c> every frame, so a clone
+    /// whose fade group starts at zero stays invisible no matter what we set once. The
+    /// values are forced back in the late pass, after the fade groups had their Update.
+    /// </summary>
+    private static void ForceLabelAlpha()
+    {
+        foreach (KeyValuePair<TMP_Text, TMP_Text> pair in FallbackLabels)
+        {
+            TMP_Text? label = pair.Value;
+            if (label == null)
+            {
+                continue;
+            }
+
+            if (!LabelFades.TryGetValue(label, out NestedFadeGroupBase[] groups))
+            {
+                groups = label.GetComponentsInChildren<NestedFadeGroupBase>(true);
+                LabelFades[label] = groups;
+            }
+
+            string? before = _fadeDiagLogged ? null : FadeLine(label, groups);
+            foreach (NestedFadeGroupBase group in groups)
+            {
+                if (group != null)
+                {
+                    group.AlphaSelf = 1f;
+                }
+            }
+
+            if (label.color != Color.white)
+            {
+                label.color = Color.white;
+            }
+
+            Renderer? renderer = label.GetComponent<Renderer>();
+            if (renderer != null && !renderer.enabled)
+            {
+                renderer.enabled = true;
+            }
+
+            if (before != null)
+            {
+                _fadeDiagLogged = true;
+                Plugin.Log.LogInfo("[SHOPFX] label fades: before " + before);
+                Plugin.Log.LogInfo("[SHOPFX] label fades: after " + FadeLine(label, groups));
+            }
+        }
+    }
+
+    /// <summary>Fade state of one label as a single log line.</summary>
+    /// <param name="label">Label whose state is read.</param>
+    /// <param name="groups">Fade groups found on that label.</param>
+    /// <returns>Line naming every fade group and the text alpha.</returns>
+    private static string FadeLine(TMP_Text label, NestedFadeGroupBase[] groups)
+    {
+        List<string> items = new List<string>(groups.Length);
+        foreach (NestedFadeGroupBase group in groups)
+        {
+            if (group != null)
+            {
+                items.Add($"{group.name}={group.AlphaSelf:F2}/{group.AlphaTotal:F2}");
+            }
+        }
+
+        return $"count={items.Count} [{string.Join(", ", items)}] textAlpha={label.color.a:F2}";
     }
 
     /// <summary>
@@ -567,6 +648,7 @@ internal static class ShopCosmetics
             TextStates.Clear();
             RowNames.Clear();
             FallbackLabels.Clear();
+            LabelFades.Clear();
             MeshChecked.Clear();
             HiddenLabels.Clear();
             BaselineCentres.Clear();
