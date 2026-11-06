@@ -20,14 +20,11 @@ internal static class ShopCrestSchema
     /// <summary>Schema height in world units before <see cref="Scale"/> is applied.</summary>
     private const float BaseHeight = 1.2f;
 
-    /// <summary>Dot diameter as a fraction of the silhouette height.</summary>
-    private const float DotFraction = 0.06f;
-
     /// <summary>Dot diameter factor for a locked slot.</summary>
     private const float LockedDotFactor = 0.8f;
 
     /// <summary>Dot alpha for a locked slot.</summary>
-    private const float LockedAlpha = 0.4f;
+    private const float LockedAlpha = 0.5f;
 
     /// <summary>Path of the details panel inside the shop window.</summary>
     private const string DetailsPath = "Item List Group/Item Details";
@@ -53,6 +50,7 @@ internal static class ShopCrestSchema
     private static TMP_Text? _nameLabel;
     private static Transform? _confirmGroup;
     private static Transform? _confirmAnchor;
+    private static TMP_Text? _confirmMessage;
 
     /// <summary>Schema objects created for the current crest; destroyed on rebuild.</summary>
     private static GameObject? _container;
@@ -67,11 +65,8 @@ internal static class ShopCrestSchema
     /// <summary>Multiplier applied to the schema size.</summary>
     internal static float Scale = 1f;
 
-    /// <summary>Multiplier for slot dot positions, which are silhouette-local units.</summary>
-    internal static float DotPositionFactor = 1f;
-
-    /// <summary>Multiplier for the slot dot diameter.</summary>
-    internal static float DotSize = 1f;
+    /// <summary>Multiplier for the slot dot diameter, as a fraction of the schema height.</summary>
+    internal static float DotSize = 0.11f;
 
     /// <summary>Confirm-screen schema size relative to the details schema.</summary>
     internal static float ConfirmScale = 1f;
@@ -87,6 +82,7 @@ internal static class ShopCrestSchema
             _nameLabel = null;
             _confirmGroup = null;
             _confirmAnchor = null;
+            _confirmMessage = null;
             _builtFor = null;
             _missingLogged = false;
             Apply();
@@ -123,6 +119,7 @@ internal static class ShopCrestSchema
         _nameLabel = null;
         _confirmGroup = null;
         _confirmAnchor = null;
+        _confirmMessage = null;
         _builtFor = null;
         try
         {
@@ -159,6 +156,8 @@ internal static class ShopCrestSchema
             return;
         }
 
+        ConfirmGroup();
+
         ToolCrest? crest = SelectedCrest();
         if (crest != null && crest != _builtFor)
         {
@@ -190,10 +189,14 @@ internal static class ShopCrestSchema
             return;
         }
 
-        bool showing = _confirmGroup != null && _confirmGroup.gameObject.activeInHierarchy;
+        string reason = ConfirmHiddenReason();
+        bool showing = reason.Length == 0;
         if (_confirmContainer.activeSelf != showing)
         {
             _confirmContainer.SetActive(showing);
+            Plugin.Log.LogInfo(showing
+                ? "[SCHEMA] confirm visible"
+                : $"[SCHEMA] confirm hidden ({reason})");
         }
 
         if (showing && _confirmAnchor != null)
@@ -204,6 +207,36 @@ internal static class ShopCrestSchema
                 _confirmContainer.transform.position = target;
             }
         }
+    }
+
+    /// <summary>
+    /// Empty when the confirm schema belongs on screen, otherwise why it does not:
+    /// our schema replaces the vanilla item picture, so it follows the confirmation
+    /// text the game actually shows, not the bare group activity.
+    /// </summary>
+    private static string ConfirmHiddenReason()
+    {
+        if (_confirmGroup == null)
+        {
+            return "no group";
+        }
+
+        if (!_confirmGroup.gameObject.activeInHierarchy)
+        {
+            return "group inactive";
+        }
+
+        if (_confirmMessage == null)
+        {
+            return "no confirm msg";
+        }
+
+        if (!_confirmMessage.gameObject.activeInHierarchy)
+        {
+            return "confirm msg inactive";
+        }
+
+        return string.IsNullOrEmpty(SafeText(_confirmMessage)) ? "confirm msg empty" : string.Empty;
     }
 
     /// <summary>World bounds of a UI panel: rect corners, then child renderers, then its position.</summary>
@@ -403,25 +436,27 @@ internal static class ShopCrestSchema
         }
 
         SpriteRenderer? reference = ReferenceRenderer() ?? BackboardRenderer();
+
+        // Slot positions are silhouette-local units, so the whole schema is one scaled
+        // container: silhouette at scale 1 (native), dots at slot positions unscaled.
+        float h0 = silhouette.rect.height / Mathf.Max(1f, silhouette.pixelsPerUnit);
+        float height = BaseHeight * Scale * sizeFactor;
+        float k = h0 > 0.01f ? height / h0 : 1f;
+        float dotWorld = height * DotSize;
+
         GameObject container = new GameObject(label);
         // A plain Transform child: layout groups only lay out RectTransform children,
         // so this container keeps its hand-placed position.
         container.transform.SetParent(parent, false);
-        float parentScale = parent.lossyScale.x;
-        container.transform.localScale = Vector3.one * (Mathf.Approximately(parentScale, 0f) ? 1f : 1f / parentScale);
+        float parentScale = Mathf.Abs(parent.lossyScale.x);
+        container.transform.localScale = Vector3.one * (k / (parentScale > 0.0001f ? parentScale : 1f));
         container.transform.position = parent.position;
 
-        float height = BaseHeight * Scale * sizeFactor;
-        float worldHeight = silhouette.rect.height / Mathf.Max(1f, silhouette.pixelsPerUnit);
-        float fit = worldHeight > 0.01f ? height / worldHeight : 1f;
-        float dotSize = worldHeight * DotFraction * DotSize;
-
         SpriteRenderer body = AddRenderer(container, "Schema Silhouette", silhouette, reference, 0);
-        body.transform.localScale = Vector3.one * fit;
         body.color = darkened ? new Color(0.3f, 0.3f, 0.3f, 1f) : Color.white;
 
-        int dots = AddDots(body.transform, crest, reference, dotSize);
-        LogNumbers(label, crest, silhouette, crest.Slots, fit, dotSize, dots);
+        int dots = AddDots(container.transform, crest, reference, dotWorld / k);
+        LogNumbers(label, crest, silhouette, crest.Slots, h0, height, k, dotWorld, dots);
         return container;
     }
 
@@ -467,17 +502,39 @@ internal static class ShopCrestSchema
         {
             Transform? picture = _confirmGroup.Find("Item Sprite");
             _confirmAnchor = picture != null ? picture : _confirmGroup;
+            // The vanilla FSM draws the item icon here; our schema replaces it.
+            HideObject(picture != null ? picture.gameObject : null);
+            _confirmMessage = FindText(_confirmGroup, "Confirm msg");
         }
 
         return _confirmGroup;
     }
 
+    /// <summary>Hides one object for the session, remembering its vanilla state once.</summary>
+    private static void HideObject(GameObject? go)
+    {
+        if (go == null)
+        {
+            return;
+        }
+
+        if (!ObjectStates.ContainsKey(go))
+        {
+            ObjectStates[go] = go.activeSelf;
+        }
+
+        if (go.activeSelf)
+        {
+            go.SetActive(false);
+        }
+    }
+
     /// <summary>
-    /// Adds one dot per slot as a child of the silhouette, so the dots follow its scale.
-    /// Slot positions are silhouette-local units, not pixels.
+    /// Adds one dot per slot as a child of the schema container. Slot positions are
+    /// silhouette-local units, so they need no factor; only the dot diameter does.
     /// </summary>
-    private static int AddDots(Transform silhouette, ToolCrest crest, SpriteRenderer? reference,
-        float dotSize)
+    private static int AddDots(Transform container, ToolCrest crest, SpriteRenderer? reference,
+        float dotLocalScale)
     {
         ToolCrest.SlotInfo[]? slots = crest.Slots;
         if (slots == null || slots.Length == 0)
@@ -492,17 +549,15 @@ internal static class ShopCrestSchema
             return 0;
         }
 
-        float worldScale = Mathf.Abs(silhouette.lossyScale.x);
-        float sizeFactor = worldScale > 0.0001f ? 1f / worldScale : 1f;
         int created = 0;
         for (int i = 0; i < slots.Length; i++)
         {
             ToolCrest.SlotInfo slot = slots[i];
             bool locked = IsLocked(crest, i, slot);
-            SpriteRenderer renderer = AddRenderer(silhouette.gameObject, $"Schema Dot {i}", dot, reference, 1);
-            Vector2 position = slot.Position * DotPositionFactor;
+            SpriteRenderer renderer = AddRenderer(container.gameObject, $"Schema Dot {i}", dot, reference, 1);
+            Vector2 position = slot.Position;
             renderer.transform.localPosition = new Vector3(position.x, position.y, 0f);
-            float size = (locked ? dotSize * LockedDotFactor : dotSize) * sizeFactor;
+            float size = locked ? dotLocalScale * LockedDotFactor : dotLocalScale;
             renderer.transform.localScale = new Vector3(size, size, 1f);
             Color color = TypeColor(slot.Type);
             color.a = locked ? LockedAlpha : 1f;
@@ -640,24 +695,20 @@ internal static class ShopCrestSchema
 
     /// <summary>One line of real numbers, so the slot scaling can be tuned from the log.</summary>
     private static void LogNumbers(string label, ToolCrest crest, Sprite silhouette,
-        ToolCrest.SlotInfo[]? slots, float fit, float dotSize, int dots)
+        ToolCrest.SlotInfo[]? slots, float h0, float height, float k, float dotWorld, int dots)
     {
-        float ppu = Mathf.Max(1f, silhouette.pixelsPerUnit);
-        float worldWidth = silhouette.rect.width / ppu;
-        float worldHeight = silhouette.rect.height / ppu;
         StringBuilder line = new StringBuilder();
         line.Append($"[SCHEMA] {label} crest='{crest.name}' sprite='{silhouette.name}'");
         line.Append($" rect={silhouette.rect.width:F0}x{silhouette.rect.height:F0} ppu={silhouette.pixelsPerUnit:F1}");
-        line.Append($" spriteSize=({worldWidth:F3},{worldHeight:F3}) fit={fit:F3}");
-        line.Append($" dot={dotSize:F3} dots={dots} dotFactor={DotPositionFactor:F2} scale={Scale:F2}");
+        line.Append($" h0={h0:F3} H={height:F3} k={k:F3} dotWorld={dotWorld:F3}");
+        line.Append($" dots={dots} scale={Scale:F2}");
         if (slots != null)
         {
             int shown = Mathf.Min(3, slots.Length);
             for (int i = 0; i < shown; i++)
             {
                 Vector2 raw = slots[i].Position;
-                line.Append($" slot{i}:pos=({raw.x:F2},{raw.y:F2})");
-                line.Append($" local=({raw.x * DotPositionFactor:F3},{raw.y * DotPositionFactor:F3})");
+                line.Append($" slot{i}:pos=({raw.x:F2},{raw.y:F2}) local=({raw.x:F3},{raw.y:F3})");
             }
         }
 

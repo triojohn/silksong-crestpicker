@@ -37,8 +37,8 @@ internal static class ShopCosmetics
     /// <summary>Vanilla local position of every row name we centred.</summary>
     private static readonly Dictionary<Transform, Vector3> PositionStates = new Dictionary<Transform, Vector3>();
 
-    /// <summary>Centred local position of every row name, computed once.</summary>
-    private static readonly Dictionary<Transform, Vector3> NameTargets = new Dictionary<Transform, Vector3>();
+    /// <summary>Row names whose centring has been logged once.</summary>
+    private static readonly HashSet<Transform> LoggedRows = new HashSet<Transform>();
 
     /// <summary>Vanilla active state of every object we hid.</summary>
     private static readonly Dictionary<GameObject, bool> ObjectStates = new Dictionary<GameObject, bool>();
@@ -160,7 +160,7 @@ internal static class ShopCosmetics
         finally
         {
             PositionStates.Clear();
-            NameTargets.Clear();
+            LoggedRows.Clear();
             ObjectStates.Clear();
             TextStates.Clear();
             _confirm = null;
@@ -196,8 +196,9 @@ internal static class ShopCosmetics
     }
 
     /// <summary>
-    /// Centres the name label on the item list: the text centre is moved onto the
-    /// list centre in world X, alignment set to centre so the text is centred in its rect.
+    /// Centres the name label on the item list from what is actually drawn: the mesh
+    /// bounds of the text, not the rect, whose size lags behind the fitter. The shift
+    /// is recomputed every frame from the current centre, never accumulated.
     /// </summary>
     private static void CenterName(ShopItemStats row)
     {
@@ -207,49 +208,37 @@ internal static class ShopCosmetics
         }
 
         Transform target = label.transform;
-        if (!NameTargets.TryGetValue(target, out Vector3 wanted))
+        if (!PositionStates.ContainsKey(target))
         {
             PositionStates[target] = target.localPosition;
-            wanted = CentredPosition(row, label);
-            NameTargets[target] = wanted;
-            Plugin.Log.LogInfo(
-                $"[SHOPFX] row name '{target.name}' centred: listCentre={ListCentreX() ?? 0f:F3}" +
-                $" textCentre={TextCentreX(label):F3} localX {target.localPosition.x:F3} -> {wanted.x:F3}");
-        }
-
-        if (target.localPosition != wanted)
-        {
-            target.localPosition = wanted;
         }
 
         if (label.alignment != TextAlignmentOptions.Center)
         {
             label.alignment = TextAlignmentOptions.Center;
         }
-    }
 
-    /// <summary>Local position that puts the text centre on the item list centre.</summary>
-    private static Vector3 CentredPosition(ShopItemStats row, TMP_Text label)
-    {
-        Vector3 position = label.transform.localPosition;
-        float? centre = ListCentreX();
-        RectTransform? rect = label.rectTransform;
-        if (centre == null || rect == null)
+        Renderer? renderer = label.GetComponent<Renderer>();
+        float? listX = ListCentreX();
+        if (renderer == null || listX == null)
         {
-            return MidpointPosition(row, label);
+            return;
         }
 
-        Transform space = label.transform.parent != null ? label.transform.parent : label.transform;
-        Vector3 world = rect.position;
-        world.x += centre.Value - TextCentreX(label);
-        return space.InverseTransformPoint(world);
-    }
+        float textX = renderer.bounds.center.x;
+        float delta = listX.Value - textX;
+        if (Mathf.Abs(delta) > 0.0005f)
+        {
+            Vector3 position = target.position;
+            position.x += delta;
+            target.position = position;
+        }
 
-    /// <summary>World X of the rendered text centre: the rect centre with centred alignment.</summary>
-    private static float TextCentreX(TMP_Text label)
-    {
-        RectTransform? rect = label.rectTransform;
-        return rect != null ? rect.TransformPoint(rect.rect.center).x : label.transform.position.x;
+        if (LoggedRows.Add(target))
+        {
+            Plugin.Log.LogInfo($"[SHOPFX] centre '{target.name}' listX={listX.Value:F3}" +
+                $" textX={textX:F3} delta={delta:F3}");
+        }
     }
 
     /// <summary>World X of the item list centre, from its rect or its child renderers.</summary>
@@ -304,22 +293,6 @@ internal static class ShopCosmetics
         }
 
         return any ? bounds.center.x : (float?)null;
-    }
-
-    /// <summary>Midpoint between the row icon and the row name, in the name's parent space.</summary>
-    private static Vector3 MidpointPosition(ShopItemStats row, TMP_Text label)
-    {
-        Vector3 position = label.transform.localPosition;
-        SpriteRenderer? icon = ItemSpriteField?.GetValue(row) as SpriteRenderer;
-        if (icon == null)
-        {
-            return position;
-        }
-
-        Transform space = label.transform.parent != null ? label.transform.parent : label.transform;
-        float iconX = space.InverseTransformPoint(icon.transform.position).x;
-        position.x = (iconX + position.x) * 0.5f;
-        return position;
     }
 
     /// <summary>Row icon renderer, used by the details schema as a sorting reference.</summary>
