@@ -53,15 +53,12 @@ internal static class ShopCosmetics
     private static Transform? _root;
     private static Transform? _list;
     private static Transform? _listGroup;
-    private static Transform? _backboard;
-    private static Transform? _window;
     private static TMP_Text? _confirm;
     private static string? _confirmOriginal;
     private static TMP_Text? _confirmButton;
     private static string? _confirmButtonOriginal;
     private static int _frames;
     private static bool _missingLogged;
-    private static bool _centresLogged;
 
     /// <summary>Confirmation text written over the vanilla purchase prompt.</summary>
     internal static string ConfirmText = "Вы уверены?";
@@ -81,11 +78,8 @@ internal static class ShopCosmetics
             _root = root;
             _list = null;
             _listGroup = null;
-            _backboard = null;
-            _window = null;
             _frames = 0;
             _missingLogged = false;
-            _centresLogged = false;
             HideCounters(root);
             Apply(root);
             ShopCrestSchema.Begin(root);
@@ -128,8 +122,6 @@ internal static class ShopCosmetics
         _root = null;
         _list = null;
         _listGroup = null;
-        _backboard = null;
-        _window = null;
         try
         {
             ShopCrestSchema.End();
@@ -207,9 +199,9 @@ internal static class ShopCosmetics
     }
 
     /// <summary>
-    /// Centres the name label on the list frame from what is actually drawn: the mesh
-    /// bounds of the text, not the rect, whose size lags behind the fitter. The shift
-    /// is recomputed every frame from the current centre, never accumulated.
+    /// Centres the name label on the drawing rows, from what the text actually draws:
+    /// the mesh bounds centre, not the rect, whose size lags behind the fitter. The
+    /// shift is recomputed every frame from the current centre, never accumulated.
     /// </summary>
     private static void CenterName(ShopItemStats row)
     {
@@ -230,7 +222,7 @@ internal static class ShopCosmetics
         }
 
         Renderer? renderer = label.GetComponent<Renderer>();
-        if (renderer == null || !CentreTargetX(out float targetX, out string source))
+        if (renderer == null || !CentreTargetX(target, out float targetX, out int rows, out string source))
         {
             return;
         }
@@ -246,40 +238,33 @@ internal static class ShopCosmetics
 
         if (LoggedRows.Add(target))
         {
-            Plugin.Log.LogInfo($"[SHOPFX] centre '{target.name}' target={targetX:F3}" +
-                $" textX={textX:F3} delta={delta:F3} src={source}");
+            Plugin.Log.LogInfo($"[SHOPFX] centre '{target.name}' rows={rows}" +
+                $" target={targetX:F3} textX={textX:F3} delta={delta:F3} src={source}");
         }
     }
 
     /// <summary>
-    /// World X to centre the row labels on: the list backboard, then the window, then
-    /// the list group. Logs every candidate centre once per session for tuning.
+    /// World X to centre the row labels on: the mean of the drawn row positions, which
+    /// stays put while the labels move. Falls back to the list rect, then the list group.
     /// </summary>
-    private static bool CentreTargetX(out float x, out string source)
+    /// <param name="exclude">Label transform to leave out of any bounds union.</param>
+    private static bool CentreTargetX(Transform exclude, out float x, out int rows, out string source)
     {
-        if (_root == null)
-        {
-            x = 0f;
-            source = "none";
-            return false;
-        }
-
         ResolveTargets();
-        LogCentres();
 
-        if (CentreX(_backboard, out x))
+        if (RowCentreX(out x, out rows))
         {
-            source = "backboard";
+            source = "rows";
             return true;
         }
 
-        if (CentreX(_window, out x))
+        if (CentreX(_list, exclude, out x))
         {
-            source = "window";
+            source = "list";
             return true;
         }
 
-        if (CentreX(_listGroup, out x))
+        if (CentreX(_listGroup, exclude, out x))
         {
             source = "listGroup";
             return true;
@@ -289,42 +274,47 @@ internal static class ShopCosmetics
         return false;
     }
 
-    /// <summary>One line of every candidate centre, so the target can be judged from the log.</summary>
-    private static void LogCentres()
+    /// <summary>Mean world X of the rows that are actually drawn, with their count.</summary>
+    private static bool RowCentreX(out float x, out int rows)
     {
-        if (_centresLogged)
+        x = 0f;
+        rows = 0;
+        if (_root == null)
         {
-            return;
+            return false;
         }
 
-        _centresLogged = true;
-        Plugin.Log.LogInfo($"[SHOPFX] centres: list={CentreText(_list)}" +
-            $" listGroup={CentreText(_listGroup)}" +
-            $" backboard={CentreText(_backboard)}" +
-            $" window={CentreText(_window)}" +
-            $" rowsUnion={RowsText()}");
+        float sum = 0f;
+        foreach (ShopItemStats row in _root.GetComponentsInChildren<ShopItemStats>(true))
+        {
+            if (row == null || !row.gameObject.activeInHierarchy)
+            {
+                continue;
+            }
+
+            sum += row.transform.position.x;
+            rows++;
+        }
+
+        if (rows == 0)
+        {
+            return false;
+        }
+
+        x = sum / rows;
+        return true;
     }
 
-    private static string CentreText(Transform? target)
-    {
-        return CentreX(target, out float x) ? x.ToString("F3") : "n/a";
-    }
-
-    /// <summary>Resolves the window, list group and backboard once per session.</summary>
+    /// <summary>Resolves the list and the list group once per session.</summary>
     private static void ResolveTargets()
     {
-        if (_root == null || _window != null)
+        if (_root == null || _list != null)
         {
             return;
         }
 
-        _window = _root.Find("Window");
         _listGroup = _root.Find("Item List Group") ?? FindByName(_root, "Item List Group");
-        _backboard = _root.Find("Window/Shop_Backboard") ?? FindByName(_root, "Shop_Backboard");
-        if (_list == null)
-        {
-            _list = _root.Find(ListPath) ?? FindByName(_root, "Item List");
-        }
+        _list = _root.Find(ListPath) ?? FindByName(_root, "Item List");
     }
 
     /// <summary>First descendant with the given name.</summary>
@@ -343,9 +333,11 @@ internal static class ShopCosmetics
 
     /// <summary>
     /// World X of a panel: rect corners when it has a real rect, else the centre of what
-    /// it draws, else its position.
+    /// it draws, else its position. Our own name labels are left out of the union: they
+    /// are moved to this very centre, so counting them would feed the target back.
     /// </summary>
-    private static bool CentreX(Transform? target, out float x)
+    /// <param name="exclude">Label transform to leave out of the bounds union.</param>
+    private static bool CentreX(Transform? target, Transform? exclude, out float x)
     {
         x = 0f;
         if (target == null)
@@ -367,7 +359,7 @@ internal static class ShopCosmetics
         }
 
         Renderer? own = target.GetComponent<Renderer>();
-        if (own != null && own.enabled)
+        if (own != null && own.enabled && !IsNameLabel(own.transform, exclude))
         {
             Bounds ownBounds = own.bounds;
             if (ownBounds.size.x > 0.0001f)
@@ -382,6 +374,11 @@ internal static class ShopCosmetics
         foreach (Renderer renderer in target.GetComponentsInChildren<Renderer>(true))
         {
             if (renderer == null || !renderer.enabled || !renderer.gameObject.activeInHierarchy)
+            {
+                continue;
+            }
+
+            if (IsNameLabel(renderer.transform, exclude))
             {
                 continue;
             }
@@ -401,38 +398,15 @@ internal static class ShopCosmetics
         return true;
     }
 
-    /// <summary>Centre of the union of the row rects, which does not follow the labels we move.</summary>
-    private static string RowsText()
+    /// <summary>True for the price label we rewrote, on any row.</summary>
+    private static bool IsNameLabel(Transform target, Transform? exclude)
     {
-        if (_root == null)
+        if (exclude != null && (target == exclude || target.IsChildOf(exclude)))
         {
-            return "n/a";
+            return true;
         }
 
-        float min = float.MaxValue;
-        float max = float.MinValue;
-        foreach (ShopItemStats row in _root.GetComponentsInChildren<ShopItemStats>(true))
-        {
-            if (row == null || !row.gameObject.activeInHierarchy)
-            {
-                continue;
-            }
-
-            if (row.transform is RectTransform rect)
-            {
-                Vector3[] corners = new Vector3[4];
-                rect.GetWorldCorners(corners);
-                min = Mathf.Min(min, corners[0].x, corners[2].x);
-                max = Mathf.Max(max, corners[0].x, corners[2].x);
-            }
-            else
-            {
-                min = Mathf.Min(min, row.transform.position.x);
-                max = Mathf.Max(max, row.transform.position.x);
-            }
-        }
-
-        return max > min ? ((min + max) * 0.5f).ToString("F3") : "n/a";
+        return target.name == "Item cost";
     }
 
     /// <summary>Row icon renderer, used by the details schema as a sorting reference.</summary>

@@ -25,6 +25,12 @@ internal static class ShopCrestSchema
     /// <summary>Dot alpha for a locked slot.</summary>
     private const float LockedAlpha = 0.5f;
 
+    /// <summary>Dot fits tried per frame before the next frame takes over.</summary>
+    private const int MaxDotAttempts = 3;
+
+    /// <summary>Relative error a dot fit accepts as done.</summary>
+    private const float DotTolerance = 0.05f;
+
     /// <summary>Path of the details panel inside the shop window.</summary>
     private const string DetailsPath = "Item List Group/Item Details";
 
@@ -466,52 +472,135 @@ internal static class ShopCrestSchema
         SpriteRenderer body = AddRenderer(container, "Schema Silhouette", silhouette, reference, 0);
         body.color = darkened ? new Color(0.3f, 0.3f, 0.3f, 1f) : Color.white;
 
-        Schema schema = new Schema(label, container, body, targetH, targetH * DotSize);
+        Schema schema = new Schema(label, container, body, targetH);
         AddDots(schema, crest, reference);
         Fit(schema);
         return schema;
     }
 
     /// <summary>
-    /// Scales the container to <see cref="Schema.TargetHeight"/> and the dots to
-    /// <see cref="Schema.DotWorld"/> from the heights actually drawn, then applies the
-    /// locked-slot look. Stays pending while the renderers still report empty bounds;
-    /// <see cref="Place"/> retries every frame until the fit succeeds once.
+    /// Scales the container once to <see cref="Schema.TargetHeight"/> from the height
+    /// actually drawn, then fits every dot to a fraction of the height the silhouette
+    /// draws *after* that scale, up to a few attempts per frame.
     /// </summary>
     private static void Fit(Schema schema)
     {
-        if (schema.Fitted)
+        if (!FitContainer(schema))
         {
             return;
+        }
+
+        float h2 = WorldHeight(schema.Body);
+        if (h2 <= 0.0001f)
+        {
+            return;
+        }
+
+        if (!schema.BoundsLogged)
+        {
+            schema.BoundsLogged = true;
+            Bounds bounds = schema.Body.bounds;
+            Transform container = schema.Container.transform;
+            Plugin.Log.LogInfo($"[SCHEMA] {schema.Label} silhouette" +
+                $" bounds={bounds.size.x:F3}x{bounds.size.y:F3}x{bounds.size.z:F3}" +
+                $" h2={h2:F3} targetH={schema.TargetHeight:F3}" +
+                $" lossyScale={container.lossyScale.y:F3} containerScale={container.localScale.x:F3}");
+        }
+
+        float wanted = h2 * DotSize;
+        float firstBefore = schema.Dots.Count > 0 ? WorldHeight(schema.Dots[0]) : 0f;
+        Vector3 firstScaleBefore = schema.Dots.Count > 0
+            ? schema.Dots[0].transform.localScale
+            : Vector3.zero;
+        int attempts = 0;
+        bool exhausted = false;
+
+        for (int i = 0; i < schema.Dots.Count; i++)
+        {
+            if (schema.DotDone[i])
+            {
+                continue;
+            }
+
+            SpriteRenderer dot = schema.Dots[i];
+            Transform scale = dot.transform;
+            float target = wanted * (schema.Locked[i] ? LockedDotFactor : 1f);
+            Color color = dot.color;
+            color.a = schema.Locked[i] ? LockedAlpha : 1f;
+            dot.color = color;
+
+            for (int attempt = 0; attempt < MaxDotAttempts; attempt++)
+            {
+                float measured = WorldHeight(dot);
+                if (measured <= 0.0001f)
+                {
+                    break;
+                }
+
+                if (Mathf.Abs(measured - target) <= target * DotTolerance)
+                {
+                    schema.DotDone[i] = true;
+                    break;
+                }
+
+                attempts++;
+                float factor = target / measured;
+                Vector3 current = scale.localScale;
+                scale.localScale = new Vector3(current.x * factor, current.y * factor, 1f);
+            }
+
+            if (schema.DotDone[i] || IsClose(WorldHeight(dot), target))
+            {
+                schema.DotDone[i] = true;
+            }
+            else if (attempts >= MaxDotAttempts)
+            {
+                exhausted = true;
+            }
+        }
+
+        if (schema.Logged || (!schema.AllDone && !exhausted))
+        {
+            return;
+        }
+
+        schema.Logged = true;
+        string first = schema.Dots.Count > 0
+            ? $"dot0 measuredBefore={firstBefore:F3} measuredAfter={WorldHeight(schema.Dots[0]):F3}" +
+                $" localScaleBefore={firstScaleBefore.x:F3} localScaleAfter={schema.Dots[0].transform.localScale.x:F3}"
+            : "dot0 n/a";
+        Plugin.Log.LogInfo($"[SCHEMA] {schema.Label} H2={h2:F3} CrestDotSize={DotSize:F3}" +
+            $" desiredDotWorld={wanted:F3} {first} dots={schema.Dots.Count} attempts={attempts}");
+    }
+
+    /// <summary>
+    /// Scales the container to the wanted height once, when the silhouette reports a
+    /// real height, and logs the numbers the dot fit depends on.
+    /// </summary>
+    private static bool FitContainer(Schema schema)
+    {
+        if (schema.ContainerFitted)
+        {
+            return true;
         }
 
         float measuredH = WorldHeight(schema.Body);
         if (measuredH <= 0.0001f)
         {
-            return;
+            return false;
         }
 
         float scaleApplied = schema.TargetHeight / measuredH;
-        schema.Container.transform.localScale *= scaleApplied;
+        Transform transform = schema.Container.transform;
+        transform.localScale *= scaleApplied;
+        schema.ContainerFitted = true;
+        return true;
+    }
 
-        float measuredDot = schema.Dots.Count > 0 ? WorldHeight(schema.Dots[0]) : 0f;
-        float dotFactor = measuredDot > 0.0001f ? schema.DotWorld / measuredDot : 1f;
-        for (int i = 0; i < schema.Dots.Count; i++)
-        {
-            bool locked = schema.Locked[i];
-            Transform transform = schema.Dots[i].transform;
-            float size = transform.localScale.x * dotFactor * (locked ? LockedDotFactor : 1f);
-            transform.localScale = new Vector3(size, size, 1f);
-            Color color = schema.Dots[i].color;
-            color.a = locked ? LockedAlpha : 1f;
-            schema.Dots[i].color = color;
-        }
-
-        schema.Fitted = true;
-        Plugin.Log.LogInfo($"[SCHEMA] {schema.Label} targetH={schema.TargetHeight:F3}" +
-            $" measuredH={measuredH:F3} scaleApplied={scaleApplied:F3}" +
-            $" dotDesired={schema.DotWorld:F3} dotMeasured={measuredDot:F3}" +
-            $" localScale={schema.Container.transform.localScale.x:F3} dots={schema.Dots.Count}");
+    /// <summary>True when the measured height is within the dot tolerance of the wanted one.</summary>
+    private static bool IsClose(float measured, float target)
+    {
+        return measured > 0.0001f && Mathf.Abs(measured - target) <= target * DotTolerance;
     }
 
     /// <summary>World height the renderer actually draws; sprite size when bounds are empty.</summary>
@@ -629,7 +718,9 @@ internal static class ShopCrestSchema
         }
 
         float lossy = Mathf.Abs(schema.Container.transform.lossyScale.y);
-        float approx = lossy > 0.0001f ? schema.DotWorld / (SpriteHeight(dot) * lossy) : 1f;
+        float approx = lossy > 0.0001f
+            ? (schema.TargetHeight * DotSize) / (SpriteHeight(dot) * lossy)
+            : 1f;
         for (int i = 0; i < slots.Length; i++)
         {
             ToolCrest.SlotInfo slot = slots[i];
@@ -640,6 +731,7 @@ internal static class ShopCrestSchema
             renderer.color = TypeColor(slot.Type);
             schema.Dots.Add(renderer);
             schema.Locked.Add(IsLocked(crest, i, slot));
+            schema.DotDone.Add(false);
         }
     }
 
@@ -771,14 +863,12 @@ internal static class ShopCrestSchema
     /// <summary>One built schema instance and its pending fit.</summary>
     private sealed class Schema
     {
-        internal Schema(string label, GameObject container, SpriteRenderer body,
-            float targetHeight, float dotWorld)
+        internal Schema(string label, GameObject container, SpriteRenderer body, float targetHeight)
         {
             Label = label;
             Container = container;
             Body = body;
             TargetHeight = targetHeight;
-            DotWorld = dotWorld;
         }
 
         internal string Label { get; }
@@ -790,16 +880,39 @@ internal static class ShopCrestSchema
         /// <summary>Wanted world height of the silhouette.</summary>
         internal float TargetHeight { get; }
 
-        /// <summary>Wanted world diameter of an unlocked dot.</summary>
-        internal float DotWorld { get; }
-
         internal List<SpriteRenderer> Dots { get; } = new List<SpriteRenderer>();
 
         /// <summary>Locked flag per dot, in creation order.</summary>
         internal List<bool> Locked { get; } = new List<bool>();
 
-        /// <summary>True once the sizes were fitted to the drawn heights.</summary>
-        internal bool Fitted { get; set; }
+        /// <summary>Fit-done flag per dot, in creation order.</summary>
+        internal List<bool> DotDone { get; } = new List<bool>();
+
+        /// <summary>True once the container reached its wanted height.</summary>
+        internal bool ContainerFitted { get; set; }
+
+        /// <summary>True once the fit numbers were logged for this schema.</summary>
+        internal bool Logged { get; set; }
+
+        /// <summary>True once the silhouette bounds were logged for this schema.</summary>
+        internal bool BoundsLogged { get; set; }
+
+        /// <summary>True when every dot reached its wanted diameter.</summary>
+        internal bool AllDone
+        {
+            get
+            {
+                foreach (bool done in DotDone)
+                {
+                    if (!done)
+                    {
+                        return false;
+                    }
+                }
+
+                return true;
+            }
+        }
     }
 
     /// <summary>Destroys the schema objects of the current crest, details and confirm alike.</summary>
