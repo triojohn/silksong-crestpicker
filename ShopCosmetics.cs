@@ -66,6 +66,22 @@ internal static class ShopCosmetics
     /// <summary>True once the fallback-label count has been logged for this session.</summary>
     private static bool _fallbackLogged;
 
+    /// <summary>Object name of our own row label.</summary>
+    private const string OwnLabelName = "CrestPicker Row Name";
+
+    /// <summary>
+    /// Row label source: <c>Own</c> draws our own TMP label with the localized font,
+    /// <c>Vanilla</c> keeps the game label and its empty-mesh fallback. Read on every
+    /// call, so an edited cfg file takes effect without a restart.
+    /// </summary>
+    internal static string RowLabelMode = "Own";
+
+    /// <summary>Localized font of the details panel name, resolved once per session.</summary>
+    private static TMP_FontAsset? _rowFont;
+
+    /// <summary>True once our own row label has been logged for this session.</summary>
+    private static bool _ownLabelLogged;
+
     /// <summary>Mesh bounds centre X of every row label, measured before our first shift.</summary>
     private static readonly Dictionary<Transform, float> BaselineCentres =
         new Dictionary<Transform, float>();
@@ -168,6 +184,8 @@ internal static class ShopCosmetics
             _candidatesLogged = false;
             _sourceWarned = false;
             _fallbackLogged = false;
+            _rowFont = null;
+            _ownLabelLogged = false;
             _centreTargetX = null;
             _centreSource = "none";
             _centreRows = 0;
@@ -440,6 +458,8 @@ internal static class ShopCosmetics
         _candidatesLogged = false;
         _sourceWarned = false;
         _fallbackLogged = false;
+        _rowFont = null;
+        _ownLabelLogged = false;
         _centreTargetX = null;
         _centreSource = "none";
         _centreRows = 0;
@@ -528,9 +548,49 @@ internal static class ShopCosmetics
         }
     }
 
+    /// <summary>
+    /// Drops our labels whose row was rebuilt or destroyed, so a fresh row never gets a
+    /// second name label stacked on it.
+    /// </summary>
+    private static void PruneOwnLabels()
+    {
+        if (FallbackLabels.Count == 0)
+        {
+            return;
+        }
+
+        List<TMP_Text> dead = new List<TMP_Text>();
+        foreach (KeyValuePair<TMP_Text, TMP_Text> pair in FallbackLabels)
+        {
+            if (pair.Key == null)
+            {
+                dead.Add(pair.Key!);
+                if (pair.Value != null)
+                {
+                    UnityEngine.Object.Destroy(pair.Value.gameObject);
+                }
+            }
+            else if (pair.Value == null)
+            {
+                dead.Add(pair.Key);
+                HiddenLabels.Remove(pair.Key);
+            }
+        }
+
+        foreach (TMP_Text key in dead)
+        {
+            FallbackLabels.Remove(key);
+        }
+    }
+
     /// <summary>Applies every cosmetic change to the rows and the confirmation prompt.</summary>
     private static void Apply(Transform root)
     {
+        if (UsesOwnLabel)
+        {
+            PruneOwnLabels();
+        }
+
         foreach (ShopItemStats row in root.GetComponentsInChildren<ShopItemStats>(true))
         {
             if (row == null)
@@ -561,10 +621,12 @@ internal static class ShopCosmetics
     /// </summary>
     private static void CenterName(ShopItemStats row)
     {
-        if (!(CostTextField?.GetValue(row) is TMP_Text label) || label == null)
+        if (!(CostTextField?.GetValue(row) is TMP_Text vanilla) || vanilla == null)
         {
             return;
         }
+
+        TMP_Text label = OwnLabelFor(vanilla);
 
         Transform target = label.transform;
         if (!PositionStates.ContainsKey(target))
@@ -1259,7 +1321,12 @@ internal static class ShopCosmetics
         HideSprite(CostSpriteField?.GetValue(row) as SpriteRenderer);
         HideSprite(MaterialIconField?.GetValue(row) as SpriteRenderer);
 
-        if (CostTextField?.GetValue(row) is TMP_Text label && label != null)
+        if (!(CostTextField?.GetValue(row) is TMP_Text label) || label == null)
+        {
+            return;
+        }
+
+        if (!UsesOwnLabel)
         {
             FitLabel(label);
             if (label.text != name)
@@ -1268,7 +1335,196 @@ internal static class ShopCosmetics
             }
 
             RowNames[label] = name!;
+            return;
         }
+
+        EnsureOwnLabel(row, label, name!);
+    }
+
+    /// <summary>Our own label of that row, else the vanilla label itself.</summary>
+    private static TMP_Text OwnLabelFor(TMP_Text vanilla)
+    {
+        return FallbackLabels.TryGetValue(vanilla, out TMP_Text own) && own != null ? own : vanilla;
+    }
+
+    /// <summary>True when the row name is drawn by our own label, not the vanilla one.</summary>
+    private static bool UsesOwnLabel
+    {
+        get { return !string.Equals(RowLabelMode, "Vanilla", StringComparison.OrdinalIgnoreCase); }
+    }
+
+    /// <summary>
+    /// Creates our own row name label once per row and reuses it afterwards. The vanilla
+    /// <c>Item cost</c> label draws nothing for Cyrillic (its root mesh is empty), so it is
+    /// switched off for the session and the name goes into a label of our own that uses the
+    /// same font and material as the Russian text of <c>Item Details/Item name</c>.
+    /// </summary>
+    /// <param name="row">Row the label belongs to.</param>
+    /// <param name="vanilla">Vanilla <c>Item cost</c> label of that row.</param>
+    /// <param name="name">Crest name to draw.</param>
+    /// <returns>Our label, or null when it could not be built.</returns>
+    private static TMP_Text? EnsureOwnLabel(ShopItemStats row, TMP_Text vanilla, string name)
+    {
+        if (FallbackLabels.TryGetValue(vanilla, out TMP_Text existing) && existing != null)
+        {
+            if (existing.text != name)
+            {
+                existing.text = name;
+            }
+
+            if (vanilla.enabled)
+            {
+                vanilla.enabled = false;
+            }
+
+            return existing;
+        }
+
+        FallbackLabels.Remove(vanilla);
+
+        TMP_FontAsset? font = RowFont();
+        if (font == null)
+        {
+            Plugin.Log.LogWarning(
+                "[SHOPFX] row label failed step=resolve font: font of 'Item Details/Item name' not found");
+            return null;
+        }
+
+        SpriteRenderer? icon = RowIcon(row);
+        GameObject go = new GameObject(OwnLabelName, typeof(RectTransform));
+        go.layer = icon != null ? icon.gameObject.layer : vanilla.gameObject.layer;
+        go.transform.SetParent(vanilla.transform.parent, false);
+
+        TextMeshPro? text = null;
+        if (!Step("add component", go, () => text = go.AddComponent<TextMeshPro>())
+            || !Step("assign font", go, () => text!.font = font)
+            || !Step("set material", go, () => text!.fontSharedMaterial = font.material)
+            || !Step("style", go, () => StyleOwnLabel(text!, vanilla, name))
+            || !Step("rect", go, () => CopyLabelRect(vanilla, text!.rectTransform))
+            || !Step("sorting", go, () => CopyRowSorting(icon, go.GetComponent<MeshRenderer>()))
+            || !Step("mesh", go, () => ForceOwnMesh(text!)))
+        {
+            return null;
+        }
+
+        FallbackLabels[vanilla] = text!;
+        HiddenLabels.Add(vanilla);
+        vanilla.enabled = false;
+
+        if (!_ownLabelLogged)
+        {
+            _ownLabelLogged = true;
+            Plugin.Log.LogInfo($"[SHOPFX] own row label ready step=mesh font={font.name}"
+                + $" material={(font.material != null ? font.material.name : "none")}"
+                + $" labels={FallbackLabels.Count}");
+        }
+
+        return text;
+    }
+
+    /// <summary>Runs one build step, naming the step in the log and dropping the object on failure.</summary>
+    /// <param name="step">Step name shown in the log.</param>
+    /// <param name="go">Object under construction.</param>
+    /// <param name="action">Work of that step.</param>
+    /// <returns>True when the step succeeded.</returns>
+    private static bool Step(string step, GameObject go, Action action)
+    {
+        try
+        {
+            action();
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Plugin.Log.LogWarning($"[SHOPFX] row label failed step={step}: {ex.Message}");
+            if (go != null)
+            {
+                UnityEngine.Object.Destroy(go);
+            }
+
+            return false;
+        }
+    }
+
+    /// <summary>Text settings of our own row label: plain white, no wrap, no auto-size.</summary>
+    private static void StyleOwnLabel(TMP_Text text, TMP_Text vanilla, string name)
+    {
+        text.color = new Color(1f, 1f, 1f, 1f);
+        text.enableAutoSizing = false;
+        text.enableWordWrapping = false;
+        text.OverflowMode = TextOverflowModes.Overflow;
+        text.fontSize = vanilla.fontSize;
+        text.alignment = TextAlignmentOptions.Center;
+        text.text = name;
+    }
+
+    /// <summary>Copies the vanilla label rect so our label sits exactly on the price spot.</summary>
+    private static void CopyLabelRect(TMP_Text vanilla, RectTransform rect)
+    {
+        if (!(vanilla.transform is RectTransform source))
+        {
+            throw new InvalidOperationException("vanilla label has no RectTransform");
+        }
+
+        rect.sizeDelta = source.sizeDelta;
+        rect.pivot = source.pivot;
+        rect.anchoredPosition = source.anchoredPosition;
+        rect.localScale = source.localScale;
+        rect.localRotation = source.localRotation;
+    }
+
+    /// <summary>Sorting of the row icon, raised by one so the name draws over the icon.</summary>
+    private static void CopyRowSorting(SpriteRenderer? icon, MeshRenderer? renderer)
+    {
+        if (icon == null || renderer == null)
+        {
+            return;
+        }
+
+        renderer.sortingLayerID = icon.sortingLayerID;
+        renderer.sortingOrder = icon.sortingOrder + 1;
+    }
+
+    /// <summary>Builds the mesh and rejects an empty one.</summary>
+    private static void ForceOwnMesh(TMP_Text text)
+    {
+        text.ForceMeshUpdate();
+        Renderer? renderer = text.GetComponent<Renderer>();
+        if (renderer == null || renderer.bounds.size.x <= 0.0001f)
+        {
+            throw new InvalidOperationException("own label drew an empty mesh");
+        }
+    }
+
+    /// <summary>Font of <c>Item Details/Item name</c>: the game font that holds Cyrillic.</summary>
+    private static TMP_FontAsset? RowFont()
+    {
+        if (_rowFont != null)
+        {
+            return _rowFont;
+        }
+
+        try
+        {
+            ResolveTargets();
+            if (_details != null)
+            {
+                foreach (TMP_Text text in _details.GetComponentsInChildren<TMP_Text>(true))
+                {
+                    if (text != null && text.name == "Item name" && text.font != null)
+                    {
+                        _rowFont = text.font;
+                        return _rowFont;
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Plugin.Log.LogWarning($"[SHOPFX] row label font lookup failed: {ex.Message}");
+        }
+
+        return null;
     }
 
     /// <summary>Hides one sprite object, remembering its vanilla state once.</summary>

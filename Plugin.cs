@@ -60,6 +60,7 @@ public sealed class Plugin : BaseUnityPlugin
     private ConfigEntry<string> _purchaseText = null!;
     private ConfigEntry<bool> _shrinkCrestName = null!;
     private ConfigEntry<string> _textCentreSource = null!;
+    private ConfigEntry<string> _rowLabelMode = null!;
 
     private bool _loggedAlive;
 
@@ -107,6 +108,10 @@ public sealed class Plugin : BaseUnityPlugin
             "Текст сообщения о покупке знака в окне подтверждения");
         _shrinkCrestName = Config.Bind("General", "ShrinkCrestNameToFit", true,
             "Уменьшать шрифт названия знака, чтобы оно влезло в строку");
+        _rowLabelMode = Config.Bind("General", "RowLabelMode", "Own",
+            "Откуда берётся название знака в строке списка: Own — собственная метка с русским шрифтом " +
+            "из Item Details/Item name (значение по умолчанию), Vanilla — прежнее поведение с меткой Item cost " +
+            "и запасной меткой. Ключ нужен только для отката.");
         _textCentreSource = Config.Bind("General", "TextCentreSource", "columns",
             "Источник цели для центрирования названия знака: columns (середина между левым краем " +
             "Window/Shop_Backboard и левым краем Item Details), column (середина между левым краем " +
@@ -142,6 +147,7 @@ public sealed class Plugin : BaseUnityPlugin
         ShopCosmetics.ConfirmButtonText = _confirmButtonText.Value;
         ShopCosmetics.PurchaseText = _purchaseText.Value;
         ShopCosmetics.ShrinkNameToFit = _shrinkCrestName.Value;
+        ShopCosmetics.RowLabelMode = _rowLabelMode.Value;
         ShopCosmetics.CentreSourceConfig = _textCentreSource;
         Logger.LogInfo($"[CREST] crest pool mode: {CrestPickerService.PoolMode}" +
             $" (GrantAllCrests={_grantAllCrests.Value}, CrestPool={_crestPool.Value}).");
