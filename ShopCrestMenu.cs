@@ -95,6 +95,12 @@ internal static class ShopCrestMenu
     /// <summary>True once the guard raised the alpha in this session.</summary>
     private static bool _guardRaised;
 
+    /// <summary>Monotonic session counter; incremented by <see cref="TryOpen"/>.</summary>
+    private static int _session;
+
+    /// <summary>Current session number, captured by every live <see cref="ShopCrestSession"/>.</summary>
+    internal static int Session => _session;
+
     /// <summary>Monotonic times of the open steps, for the one timing line.</summary>
     private static float _openStart;
     private static float _stockReady;
@@ -140,6 +146,7 @@ internal static class ShopCrestMenu
         }
 
         ResetSession();
+        _session++;
         _openStart = Time.realtimeSinceStartup;
         try
         {
@@ -563,26 +570,24 @@ internal static class ShopCrestMenu
     }
 
     /// <summary>
-    /// Undoes the one case that needs it: the guard raised the root alpha to keep a reused
-    /// window visible, so the raise is written off again. Otherwise nothing is written -
-    /// the vanilla close chain owns the alpha and tweens it down to its resting zero.
+    /// Writes nothing to the root alpha. A raise the guard made in this session is only
+    /// written off on the next open, never pulled down to zero: a zero written into a
+    /// window that is already being reopened becomes its new resting alpha.
     /// </summary>
     private static void RestoreAlpha()
     {
-        if (_fade == null || !_teardownCaptured)
+        if (!_teardownCaptured)
         {
             return;
         }
 
-        bool raised = _guardRaised;
+        if (!_guardRaised)
+        {
+            return;
+        }
+
         _guardRaised = false;
-        if (!raised)
-        {
-            return;
-        }
-
-        _fade.AlphaSelf = 0f;
-        Plugin.Log.LogInfo("[SHOP] alpha cleared after guard raise");
+        Plugin.Log.LogInfo("[SHOP] alpha was raised this session");
     }
 
     /// <summary>Switches both action prompts off; returns how many were touched.</summary>
@@ -726,7 +731,6 @@ internal static class ShopCrestMenu
             return;
         }
 
-        _guardRaised = true;
         try
         {
             if (_fade == null || _fade.gameObject == null)
@@ -735,6 +739,7 @@ internal static class ShopCrestMenu
             }
 
             _fade.AlphaSelf = 1f;
+            _guardRaised = true;
             Plugin.Log.LogInfo($"[SHOP] guard raised alpha (was {alpha:F2})");
         }
         catch (Exception ex)
@@ -766,6 +771,29 @@ internal static class ShopCrestMenu
         Plugin.Log.LogInfo($"[SHOP] timing: open->stock={( _stockReady - _openStart) * 1000f:F0}ms" +
             $" open->SHOPUP={(_shopUp - _openStart) * 1000f:F0}ms" +
             $" open->alpha1={(now - _openStart) * 1000f:F0}ms frames={frames}");
+    }
+
+    /// <summary>
+    /// Logs the root alpha and the FSM state for the first 60 frames after the open, one
+    /// line every 10 frames: these lines say whether the vanilla tween raises the root.
+    /// </summary>
+    /// <param name="frames">Frames the session has been running.</param>
+    internal static void TraceRootAlpha(int frames)
+    {
+        if (frames > 60 || frames % 10 != 0)
+        {
+            return;
+        }
+
+        try
+        {
+            string state = _control != null ? ActiveState(_control) : "<none>";
+            Plugin.Log.LogInfo($"[SHOP] rootAlpha={SafeAlpha(-1f):F2} state='{state}' frames={frames}");
+        }
+        catch (Exception ex)
+        {
+            Plugin.Log.LogWarning($"[SHOP] root alpha trace failed: {ex.Message}");
+        }
     }
 
     /// <summary>First child with this name anywhere under the root, inactive ones included.</summary>
@@ -898,15 +926,37 @@ internal static class ShopCrestMenu
     /// True when the vanilla close chain never ran, so the fade and the prompts must be
     /// torn down here. The normal path leaves both to the FSM.
     /// </param>
-    internal static void Restore(string reason = "closed", bool emergency = false)
+    /// <param name="session">
+    /// Session number of the caller, or -1 to skip the check. A late call from an old
+    /// session must not touch a window that was already reopened.
+    /// </param>
+    internal static void Restore(string reason = "closed", bool emergency = false, int session = -1)
     {
+        // A newer session already owns the window: this call is a leftover. Same for a
+        // call with no live session and nothing left to put back.
+        bool foreign = IsOpen && session >= 0 && session != _session;
+        bool idle = !IsOpen && _stock == null;
+        if (foreign || idle)
+        {
+            if (!IsOpen)
+            {
+                ShopInputLock.Unblock(reason);
+            }
+
+            RestorePrompts();
+            Plugin.Log.LogInfo($"[SHOP] restore skipped, no session of ours (reason={reason} ours={session} now={_session} open={IsOpen})");
+            return;
+        }
+
         _closing = true;
         ShopCrestSchema.Hide();
         ShopInputLock.Unblock(reason);
-        if (_stock == null && !IsOpen)
+        if (_stock == null)
         {
+            IsOpen = false;
             RestorePrompts();
             ResetSession();
+            _closing = false;
             return;
         }
 
@@ -1377,6 +1427,7 @@ internal sealed class ShopCrestSession : MonoBehaviour
     private const float TimeoutSeconds = 900f;
 
     private int _frames;
+    private int _session = -1;
     private float _deadline;
     private float _openedAt;
     private bool _renderCaptured;
@@ -1386,6 +1437,7 @@ internal sealed class ShopCrestSession : MonoBehaviour
     {
         _deadline = Time.unscaledTime + TimeoutSeconds;
         _openedAt = Time.unscaledTime;
+        _session = ShopCrestMenu.Session;
     }
 
     private void Update()
@@ -1412,6 +1464,7 @@ internal sealed class ShopCrestSession : MonoBehaviour
             ShopCrestMenu.ReassertStock();
             ShopCosmetics.Tick();
             ShopCrestMenu.GuardTeardown();
+            ShopCrestMenu.TraceRootAlpha(_frames);
             ShopCrestMenu.CheckOpenTiming(_frames);
             ShopCrestMenu.TickPurchase(_frames);
 
@@ -1425,7 +1478,7 @@ internal sealed class ShopCrestSession : MonoBehaviour
             if (ShopCrestMenu.ClosedByFsm())
             {
                 Plugin.Log.LogInfo("[SHOP] shop FSM returned to idle, restoring vanilla shop.");
-                ShopCrestMenu.Restore("fsm idle");
+                ShopCrestMenu.Restore("fsm idle", false, _session);
                 Destroy(this);
                 return;
             }
@@ -1433,14 +1486,14 @@ internal sealed class ShopCrestSession : MonoBehaviour
             if (Time.unscaledTime > _deadline)
             {
                 Plugin.Log.LogWarning("[SHOP] live shop session timed out, restoring vanilla shop.");
-                ShopCrestMenu.Restore("timeout");
+                ShopCrestMenu.Restore("timeout", false, _session);
                 Destroy(this);
             }
         }
         catch (Exception ex)
         {
             Plugin.Log.LogWarning($"[SHOP] live shop session failed: {ex.Message}");
-            ShopCrestMenu.Restore("exception");
+            ShopCrestMenu.Restore("exception", false, _session);
             Destroy(this);
         }
     }
@@ -1452,7 +1505,7 @@ internal sealed class ShopCrestSession : MonoBehaviour
 
     private void OnDestroy()
     {
-        ShopCrestMenu.Restore("scene unload");
+        ShopCrestMenu.Restore("scene unload", false, _session);
     }
 }
 
