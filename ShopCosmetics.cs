@@ -146,7 +146,10 @@ internal static class ShopCosmetics
             _residualFrame = 0;
             BaselineCentres.Clear();
             BaselinePositions.Clear();
+            _confirmButton = null;
+            _confirmButtonOriginal = null;
             HideCounters(root);
+            CaptureConfirmButton(root);
             Apply(root);
             ShopCrestSchema.Begin(root);
         }
@@ -179,6 +182,25 @@ internal static class ShopCosmetics
         catch (Exception ex)
         {
             Plugin.Log.LogWarning($"[SHOPFX] cosmetic tick failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>Late per-frame pass: the FSM writes the confirm label in its own Update,
+    /// so our rewrite must be the last word of the frame.</summary>
+    internal static void LateTick()
+    {
+        if (_root == null)
+        {
+            return;
+        }
+
+        try
+        {
+            ApplyConfirmButton();
+        }
+        catch (Exception ex)
+        {
+            Plugin.Log.LogWarning($"[SHOPFX] confirm button late pass failed: {ex.Message}");
         }
     }
 
@@ -276,7 +298,6 @@ internal static class ShopCosmetics
         }
 
         ApplyConfirm(root);
-        ApplyConfirmButton(root);
     }
 
     /// <summary>
@@ -1137,43 +1158,42 @@ internal static class ShopCosmetics
         return null;
     }
 
-    /// <summary>Overwrites the confirmation button label while its group is showing.</summary>
-    private static void ApplyConfirmButton(Transform root)
+    /// <summary>
+    /// Remembers the vanilla confirm button label once per session, unconditionally:
+    /// after a previous session the label already reads our own text, and skipping the
+    /// capture then would keep our text as the "original" forever.
+    /// </summary>
+    private static void CaptureConfirmButton(Transform root)
     {
-        if (string.IsNullOrEmpty(ConfirmButtonText))
-        {
-            return;
-        }
-
+        _confirmButton = FindConfirmButton(root);
         if (_confirmButton == null)
         {
-            _confirmButton = FindConfirmButton(root);
-            if (_confirmButton == null)
+            if (!_missingLogged)
             {
-                if (!_missingLogged)
-                {
-                    _missingLogged = true;
-                    Plugin.Log.LogWarning("[SHOPFX] 'Action Confirm/Text' not found.");
-                }
-
-                return;
+                _missingLogged = true;
+                Plugin.Log.LogWarning("[SHOPFX] 'Action Confirm/Text' not found.");
             }
+
+            _confirmButtonOriginal = null;
+            return;
         }
 
-        if (!_confirmButton.gameObject.activeInHierarchy)
+        _confirmButtonOriginal = _confirmButton.text;
+        Plugin.Log.LogInfo($"[SHOPFX] confirm label capture='{_confirmButtonOriginal}'" +
+            $" -> '{ConfirmButtonText}'");
+    }
+
+    /// <summary>Overwrites the confirmation button label; runs after the FSM's own write.</summary>
+    private static void ApplyConfirmButton()
+    {
+        if (string.IsNullOrEmpty(ConfirmButtonText) || _confirmButton == null)
         {
             return;
         }
 
-        string wanted = ConfirmButtonText;
-        if (_confirmButtonOriginal == null && _confirmButton.text != wanted)
+        if (_confirmButton.text != ConfirmButtonText)
         {
-            _confirmButtonOriginal = _confirmButton.text;
-        }
-
-        if (_confirmButton.text != wanted)
-        {
-            _confirmButton.text = wanted;
+            _confirmButton.text = ConfirmButtonText;
         }
     }
 

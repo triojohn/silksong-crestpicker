@@ -85,6 +85,9 @@ internal static class ShopCrestMenu
     private static bool _teardownCaptured;
     private static bool _reviveLogged;
 
+    /// <summary>True from the moment the close is sent until the full restore finished.</summary>
+    private static bool _closing;
+
     /// <summary>True while the live shop window is showing our crests.</summary>
     internal static bool IsOpen { get; set; }
 
@@ -376,6 +379,7 @@ internal static class ShopCrestMenu
     /// </summary>
     private static void CloseShop()
     {
+        _closing = true;
         if (_control == null)
         {
             Restore("purchase");
@@ -409,8 +413,10 @@ internal static class ShopCrestMenu
     }
 
     /// <summary>
-    /// Chokes the window on the way out: alpha to zero, borders faded down through the
-    /// window FSM, prompts hidden. The game's own close path does this; ours is a guard.
+    /// Chokes the window on the way out in the order the game expects: the two action
+    /// prompts first, then the borders through the window FSM, then the root alpha last.
+    /// The alpha setter walks the fade lists and used to throw, which aborted the whole
+    /// restore before the prompts were touched, so every step is isolated here.
     /// </summary>
     private static void TeardownShop()
     {
@@ -419,20 +425,43 @@ internal static class ShopCrestMenu
             return;
         }
 
-        float alpha = -1f;
-        if (_fade != null)
+        int prompts = 0;
+        try
         {
-            _fade.AlphaSelf = 0f;
-            alpha = _fade.AlphaSelf;
+            prompts = HidePrompts();
+        }
+        catch (Exception ex)
+        {
+            TeardownFailure("prompts", ex);
         }
 
         bool bordes = false;
-        if (_windowFsm != null && HasEvent(_windowFsm, BordesDownEvent))
+        try
         {
-            _windowFsm.SendEvent(BordesDownEvent);
-            bordes = true;
+            bordes = BordersDown();
+        }
+        catch (Exception ex)
+        {
+            TeardownFailure("bordes", ex);
         }
 
+        float alpha = -1f;
+        try
+        {
+            alpha = FadeOut();
+        }
+        catch (Exception ex)
+        {
+            TeardownFailure("alpha", ex);
+            _fade = null;
+        }
+
+        Plugin.Log.LogInfo($"[SHOP] teardown done prompts={prompts} bordes={bordes} alpha={alpha:F2}");
+    }
+
+    /// <summary>Switches both action prompts off; returns how many were touched.</summary>
+    private static int HidePrompts()
+    {
         int prompts = 0;
         if (_cancelPrompt != null)
         {
@@ -446,7 +475,36 @@ internal static class ShopCrestMenu
             prompts++;
         }
 
-        Plugin.Log.LogInfo($"[SHOP] teardown: alpha={alpha:F2} bordes={bordes} prompts={prompts}");
+        return prompts;
+    }
+
+    /// <summary>Asks the window FSM to fade its borders out; false when it has no such event.</summary>
+    private static bool BordersDown()
+    {
+        if (_windowFsm == null || !HasEvent(_windowFsm, BordesDownEvent))
+        {
+            return false;
+        }
+
+        _windowFsm.SendEvent(BordesDownEvent);
+        return true;
+    }
+
+    /// <summary>Sets the root fade alpha to zero, last of the teardown steps; -1 when there is none.</summary>
+    private static float FadeOut()
+    {
+        if (_fade == null)
+        {
+            return -1f;
+        }
+
+        _fade.AlphaSelf = 0f;
+        return _fade.AlphaSelf;
+    }
+
+    private static void TeardownFailure(string step, Exception ex)
+    {
+        Plugin.Log.LogWarning($"[SHOP] teardown step '{step}' failed: {ex.GetType().Name}: {ex.Message}");
     }
 
     /// <summary>
@@ -518,7 +576,7 @@ internal static class ShopCrestMenu
     /// </summary>
     internal static void GuardTeardown()
     {
-        if (!IsOpen || !_teardownCaptured)
+        if (_closing || !IsOpen || !_teardownCaptured)
         {
             return;
         }
@@ -746,6 +804,7 @@ internal static class ShopCrestMenu
             IsOpen = false;
             CrestSelectMenu.IsOpen = false;
             ResetSession();
+            _closing = false;
         }
     }
 
@@ -782,6 +841,11 @@ internal static class ShopCrestMenu
         SuppressDialogue = false;
         _teardownCaptured = false;
         _reviveLogged = false;
+        _closing = false;
+        _fade = null;
+        _windowFsm = null;
+        _cancelPrompt = null;
+        _confirmPrompt = null;
     }
 
     /// <summary>Destroys the temp scriptable objects so they do not accumulate.</summary>
@@ -1201,6 +1265,11 @@ internal sealed class ShopCrestSession : MonoBehaviour
             ShopCrestMenu.Restore("exception");
             Destroy(this);
         }
+    }
+
+    private void LateUpdate()
+    {
+        ShopCosmetics.LateTick();
     }
 
     private void OnDestroy()

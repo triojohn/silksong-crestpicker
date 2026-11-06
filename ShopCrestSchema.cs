@@ -71,7 +71,14 @@ internal static class ShopCrestSchema
     /// <summary>Vanilla active state of every object we hid.</summary>
     private static readonly Dictionary<GameObject, bool> ObjectStates = new Dictionary<GameObject, bool>();
 
+    /// <summary>Neutral holder of both schema containers, parented outside every fade group.</summary>
+    private const string SchemaRootName = "CrestPicker Schemas";
+
+    /// <summary>Child of a container that carries the fit scale; the container stays at scale 1.</summary>
+    private const string ContentName = "Content";
+
     private static Transform? _root;
+    private static Transform? _schemaRoot;
     private static Transform? _details;
     private static TMP_Text? _nameLabel;
     private static Transform? _confirmGroup;
@@ -136,6 +143,7 @@ internal static class ShopCrestSchema
             _confirmMessage = null;
             _builtFor = null;
             _missingLogged = false;
+            DestroySchemaRoot();
             Apply();
         }
         catch (Exception ex)
@@ -174,6 +182,7 @@ internal static class ShopCrestSchema
         try
         {
             DestroySchema();
+            DestroySchemaRoot();
             foreach (KeyValuePair<GameObject, bool> pair in ObjectStates)
             {
                 if (pair.Key != null)
@@ -233,11 +242,7 @@ internal static class ShopCrestSchema
 
         float lowerCentreY = Mathf.Lerp(bounds.min.y, bounds.center.y, 0.5f);
         Vector3 target = new Vector3(bounds.center.x, lowerCentreY, bounds.center.z);
-        Transform detailsContainer = _detailsSchema.Container.transform;
-        if (detailsContainer.position != target)
-        {
-            detailsContainer.position = target;
-        }
+        PlaceAt(_detailsSchema, target);
 
         if (_confirmSchema == null)
         {
@@ -256,31 +261,48 @@ internal static class ShopCrestSchema
 
         if (showing)
         {
-            PlaceConfirm(_confirmSchema, detailsContainer);
+            PlaceConfirm(_confirmSchema);
+        }
+    }
+
+    /// <summary>Moves a schema in world space so its own drawn centre lands on <paramref name="target"/>.</summary>
+    private static void PlaceAt(Schema schema, Vector3 target)
+    {
+        Transform container = schema.Container.transform;
+        Bounds bounds = ContainerBounds(container);
+        Vector3 shift = target - bounds.center;
+        shift.z = 0f;
+        if (shift.sqrMagnitude > 0.0000001f)
+        {
+            container.position += shift;
         }
     }
 
     /// <summary>
-    /// Puts the confirm schema on the already working details schema position, scaled
-    /// by <see cref="ConfirmScale"/>, and keeps it inside the window backboard. The
-    /// confirm text lives in a different coordinate space, so it is not used as an
-    /// anchor: its container flew off the window.
+    /// Puts the confirm schema on the details schema, scaled by <see cref="ConfirmScale"/>,
+    /// and keeps it inside the window backboard. The position comes from the drawn bounds
+    /// of the container itself, so no parent scale chain is assumed.
     /// </summary>
-    private static void PlaceConfirm(Schema schema, Transform detailsContainer)
+    private static void PlaceConfirm(Schema schema)
     {
-        Transform container = schema.Container.transform;
-        container.position = detailsContainer.position;
-
-        Vector3 wanted = detailsContainer.lossyScale * ConfirmScale;
-        Vector3 current = container.lossyScale;
-        if (Mathf.Abs(current.x) > 0.00001f && Mathf.Abs(current.y) > 0.00001f)
+        if (_detailsSchema == null)
         {
-            Vector3 local = container.localScale;
-            container.localScale = new Vector3(
-                local.x * (wanted.x / current.x),
-                local.y * (wanted.y / current.y),
-                local.z);
+            return;
         }
+
+        Transform container = schema.Container.transform;
+        Bounds detailsBounds = ContainerBounds(_detailsSchema.Container.transform);
+        float wanted = detailsBounds.size.y * ConfirmScale;
+        float current = ContainerBounds(container).size.y;
+        Transform content = schema.Content.transform;
+        if (current > 0.0001f && wanted > 0.0001f && Mathf.Abs(current - wanted) > wanted * 0.001f)
+        {
+            float factor = wanted / current;
+            Vector3 local = content.localScale;
+            content.localScale = new Vector3(local.x * factor, local.y * factor, local.z);
+        }
+
+        PlaceAt(schema, detailsBounds.center);
 
         if (_root != null)
         {
@@ -298,9 +320,9 @@ internal static class ShopCrestSchema
         if (!schema.PlacedLogged)
         {
             schema.PlacedLogged = true;
-            Vector3 scale = container.lossyScale;
-            Plugin.Log.LogInfo($"[SCHEMA] confirm placed at details position={Vec(detailsContainer.position)}" +
-                $" scale={scale.y:F4} confirmScale={ConfirmScale:F3}");
+            Plugin.Log.LogInfo($"[SCHEMA] confirm placed at bounds centre={Vec(container.position)}" +
+                $" h={ContainerBounds(container).size.y:F3} detailsH={detailsBounds.size.y:F3}" +
+                $" confirmScale={ConfirmScale:F3}");
         }
     }
 
@@ -647,9 +669,8 @@ internal static class ShopCrestSchema
             return;
         }
 
-        _detailsSchema = BuildSchema(crest, silhouette, darkened, DetailsParent(), 1f, true,
-            "Crest Schema");
-        _confirmSchema = BuildSchema(crest, silhouette, darkened, ConfirmGroup(), ConfirmScale, false,
+        _detailsSchema = BuildSchema(crest, silhouette, darkened, 1f, true, "Crest Schema");
+        _confirmSchema = BuildSchema(crest, silhouette, darkened, ConfirmScale, false,
             "Confirm Crest Schema");
         Plugin.Log.LogInfo($"[SCHEMA] built '{crest.name}' mode={Render} live={LiveContainers()}");
     }
@@ -658,18 +679,19 @@ internal static class ShopCrestSchema
     /// Creates one schema instance at container scale 1 and fits it to the details
     /// panel (when <paramref name="fitPanel"/>) or to <see cref="BaseHeight"/> times
     /// <paramref name="sizeFactor"/> world units from the size actually drawn, so no
-    /// assumption about the parent scale chain is made. The container is parented
-    /// outside the layout group and placed by the caller.
+    /// assumption about the parent scale chain is made. The container lives under the
+    /// neutral schema root and is placed by the caller.
     /// </summary>
     private static Schema? BuildSchema(ToolCrest crest, Sprite silhouette, bool darkened,
-        Transform? parent, float sizeFactor, bool fitPanel, string label)
+        float sizeFactor, bool fitPanel, string label)
     {
-        if (parent == null)
+        Transform? host = SchemaHost();
+        if (host == null)
         {
             if (!_missingLogged)
             {
                 _missingLogged = true;
-                Plugin.Log.LogWarning($"[SCHEMA] '{label}' parent not found, schema skipped.");
+                Plugin.Log.LogWarning($"[SCHEMA] '{label}' has no fade-free parent, schema skipped.");
             }
 
             return null;
@@ -685,9 +707,18 @@ internal static class ShopCrestSchema
             targetW = PanelFill * panel.x * Scale;
         }
 
+        GameObject container = new GameObject(label);
+        container.transform.SetParent(host, false);
+        container.transform.localScale = Vector3.one;
+
+        GameObject content = new GameObject(ContentName);
+        content.transform.SetParent(container.transform, false);
+        content.transform.localScale = Vector3.one;
+        LogContainer(container.transform);
+
         if (Render == SchemaRenderMode.Clone)
         {
-            Schema? clone = CloneSchema(crest, parent, targetH, targetW, panel, label);
+            Schema? clone = CloneSchema(crest, container, content, targetH, targetW, panel, label);
             if (clone != null)
             {
                 LogSprites("clone");
@@ -696,17 +727,10 @@ internal static class ShopCrestSchema
         }
 
         bool vanilla = Render != SchemaRenderMode.Generated && TemplateSprites() != null;
-        GameObject container = new GameObject(label);
-        // A plain Transform child: layout groups only lay out RectTransform children,
-        // so this container keeps its hand-placed position.
-        container.transform.SetParent(parent, false);
-        container.transform.localScale = Vector3.one;
-        container.transform.position = parent.position;
-
-        SpriteRenderer body = AddRenderer(container, "Schema Silhouette", silhouette, reference, 0);
+        SpriteRenderer body = AddRenderer(content, "Schema Silhouette", silhouette, reference, 0);
         body.color = darkened ? new Color(0.3f, 0.3f, 0.3f, 1f) : Color.white;
 
-        Schema schema = new Schema(label, container, body, targetH)
+        Schema schema = new Schema(label, container, content, body, targetH)
         {
             TargetWidth = targetW,
             PanelSize = panel,
@@ -741,11 +765,11 @@ internal static class ShopCrestSchema
         {
             schema.BoundsLogged = true;
             Bounds bounds = schema.Body.bounds;
-            Transform container = schema.Container.transform;
+            Transform content = schema.Content.transform;
             Plugin.Log.LogInfo($"[SCHEMA] {schema.Label} silhouette" +
                 $" bounds={bounds.size.x:F3}x{bounds.size.y:F3}x{bounds.size.z:F3}" +
                 $" h2={h2:F3} targetH={schema.TargetHeight:F3}" +
-                $" lossyScale={container.lossyScale.y:F3} containerScale={container.localScale.x:F3}");
+                $" lossyScale={content.lossyScale.y:F3} contentScale={content.localScale.x:F3}");
         }
 
         float wanted = h2 * DotSize;
@@ -829,7 +853,7 @@ internal static class ShopCrestSchema
 
         schema.OffsetApplied = true;
         Vector3 world = new Vector3(0f, DotOffsetY * h2, 0f);
-        Vector3 local = schema.Container.transform.InverseTransformVector(world);
+        Vector3 local = schema.Content.transform.InverseTransformVector(world);
         schema.Offset = local;
         for (int i = 0; i < schema.Dots.Count; i++)
         {
@@ -863,7 +887,7 @@ internal static class ShopCrestSchema
             scaleApplied = Mathf.Min(scaleApplied, schema.TargetWidth / bounds.size.x);
         }
 
-        Transform transform = schema.Container.transform;
+        Transform transform = schema.Content.transform;
         transform.localScale *= scaleApplied;
         schema.ContainerFitted = true;
         if (schema.PanelSize.x > 0f && schema.PanelSize.y > 0f)
@@ -882,7 +906,8 @@ internal static class ShopCrestSchema
         Bounds bounds = default;
         foreach (Renderer renderer in target.GetComponentsInChildren<Renderer>(true))
         {
-            if (renderer == null || (renderer is SpriteRenderer sprite && sprite.sprite == null))
+            if (renderer == null || (renderer is SpriteRenderer sprite && sprite.sprite == null) ||
+                renderer.bounds.size.sqrMagnitude <= 0.0000001f)
             {
                 continue;
             }
@@ -1056,8 +1081,8 @@ internal static class ShopCrestSchema
     /// Copies the vanilla crest card of <paramref name="crest"/> into the schema when the
     /// template sprites are unavailable. Null when no such crest is in the loaded scene.
     /// </summary>
-    private static Schema? CloneSchema(ToolCrest crest, Transform parent, float targetH, float targetW,
-        Vector2 panel, string label)
+    private static Schema? CloneSchema(ToolCrest crest, GameObject container, GameObject content,
+        float targetH, float targetW, Vector2 panel, string label)
     {
         try
         {
@@ -1068,7 +1093,7 @@ internal static class ShopCrestSchema
                 return null;
             }
 
-            GameObject clone = UnityEngine.Object.Instantiate(source.gameObject, parent, false);
+            GameObject clone = UnityEngine.Object.Instantiate(source.gameObject, content.transform, false);
             clone.name = label;
             clone.SetActive(false);
             clone.transform.localPosition = Vector3.zero;
@@ -1105,7 +1130,7 @@ internal static class ShopCrestSchema
                 return null;
             }
 
-            Schema schema = new Schema(label, clone, body, targetH)
+            Schema schema = new Schema(label, container, content, body, targetH)
             {
                 TargetWidth = targetW,
                 PanelSize = panel,
@@ -1257,15 +1282,105 @@ internal static class ShopCrestSchema
         }
     }
 
-    /// <summary>Parent for the details schema: the details panel's own parent, not the layout group itself.</summary>
-    private static Transform? DetailsParent()
+    /// <summary>
+    /// Neutral parent of every schema container: a <c>CrestPicker Schemas</c> object under
+    /// the first ancestor of the shop window that carries no fade group. Parented under a
+    /// fade group, the containers were walked by <c>NestedFadeGroupBase.UpdateAlpha</c>
+    /// after destruction (null reference) and inherited a 3-4x lossy scale.
+    /// </summary>
+    private static Transform? SchemaHost()
     {
-        if (_details == null)
+        if (_schemaRoot != null)
+        {
+            return _schemaRoot;
+        }
+
+        if (_root == null)
         {
             return null;
         }
 
-        return _details.parent != null ? _details.parent : _root;
+        Transform? host = null;
+        for (Transform? current = _root; current != null; current = current.parent)
+        {
+            if (current.GetComponent<NestedFadeGroupBase>() == null)
+            {
+                host = current;
+                break;
+            }
+        }
+
+        if (host == null)
+        {
+            Transform top = _root;
+            while (top.parent != null)
+            {
+                top = top.parent;
+            }
+
+            host = top;
+            LogOnce($"[SCHEMA] no fade-free ancestor above '{PathOf(_root)}', schemas parented to '{PathOf(top)}'");
+        }
+
+        GameObject go = new GameObject(SchemaRootName);
+        go.transform.SetParent(host, false);
+        go.transform.localScale = Vector3.one;
+        _schemaRoot = go.transform;
+        Plugin.Log.LogInfo($"[SCHEMA] schema root parent='{PathOf(_schemaRoot)}'" +
+            $" fadeAncestors={FadeAncestors(_schemaRoot)}");
+        return _schemaRoot;
+    }
+
+    /// <summary>Destroys the neutral schema root, so nothing of ours outlives the session.</summary>
+    private static void DestroySchemaRoot()
+    {
+        if (_schemaRoot == null)
+        {
+            _schemaRoot = null;
+            return;
+        }
+
+        GameObject root = _schemaRoot.gameObject;
+        root.SetActive(false);
+        UnityEngine.Object.Destroy(root);
+        Plugin.Log.LogInfo($"[SCHEMA] schema root retired live={LiveContainers()}");
+        _schemaRoot = null;
+    }
+
+    /// <summary>One <c>[SCHEMA] container</c> line: where the container sits and what it inherits.</summary>
+    private static void LogContainer(Transform container)
+    {
+        Vector3 scale = container.lossyScale;
+        Plugin.Log.LogInfo($"[SCHEMA] container parent='{PathOf(container)}'" +
+            $" fadeAncestors={FadeAncestors(container)}" +
+            $" lossyScale=({scale.x:F3},{scale.y:F3},{scale.z:F3})");
+    }
+
+    /// <summary>How many fade groups the object and its ancestors carry; zero means none.</summary>
+    private static int FadeAncestors(Transform target)
+    {
+        int count = 0;
+        for (Transform? current = target; current != null; current = current.parent)
+        {
+            if (current.GetComponent<NestedFadeGroupBase>() != null)
+            {
+                count++;
+            }
+        }
+
+        return count;
+    }
+
+    /// <summary>Scene path of an object, for the schema logs.</summary>
+    private static string PathOf(Transform target)
+    {
+        string path = target.name;
+        for (Transform? current = target.parent; current != null; current = current.parent)
+        {
+            path = current.name + "/" + path;
+        }
+
+        return path;
     }
 
     /// <summary>Confirm group and the item picture the confirm schema is centred on.</summary>
@@ -1338,7 +1453,7 @@ internal static class ShopCrestSchema
             return;
         }
 
-        float lossy = Mathf.Abs(schema.Container.transform.lossyScale.y);
+        float lossy = Mathf.Abs(schema.Content.transform.lossyScale.y);
         for (int i = 0; i < slots.Length; i++)
         {
             ToolCrest.SlotInfo slot = slots[i];
@@ -1351,7 +1466,7 @@ internal static class ShopCrestSchema
             float approx = lossy > 0.0001f
                 ? (schema.TargetHeight * DotSize) / (SpriteHeight(dot) * lossy)
                 : 1f;
-            SpriteRenderer renderer = AddRenderer(schema.Container, $"Schema Dot {i}", dot, reference, 1);
+            SpriteRenderer renderer = AddRenderer(schema.Content, $"Schema Dot {i}", dot, reference, 1);
             Vector2 position = slot.Position;
             Vector3 local = new Vector3(position.x, position.y, 0f);
             renderer.transform.localPosition = local;
@@ -1492,10 +1607,12 @@ internal static class ShopCrestSchema
     /// <summary>One built schema instance and its pending fit.</summary>
     private sealed class Schema
     {
-        internal Schema(string label, GameObject container, Renderer body, float targetHeight)
+        internal Schema(string label, GameObject container, GameObject content, Renderer body,
+            float targetHeight)
         {
             Label = label;
             Container = container;
+            Content = content;
             Body = body;
             TargetHeight = targetHeight;
         }
@@ -1503,6 +1620,9 @@ internal static class ShopCrestSchema
         internal string Label { get; }
 
         internal GameObject Container { get; }
+
+        /// <summary>Child that carries the fit scale; the container itself stays at scale 1.</summary>
+        internal GameObject Content { get; }
 
         internal Renderer Body { get; }
 
@@ -1591,9 +1711,12 @@ internal static class ShopCrestSchema
             return;
         }
 
+        string path = PathOf(container.transform);
+        int fade = FadeAncestors(container.transform);
         container.SetActive(false);
         UnityEngine.Object.Destroy(container);
-        Plugin.Log.LogInfo($"[SCHEMA] container retired live={LiveContainers()}");
+        Plugin.Log.LogInfo($"[SCHEMA] container retired live={LiveContainers()}" +
+            $" parent='{path}' fadeAncestors={fade}");
     }
 
     /// <summary>Schema containers currently drawn, retired ones excluded.</summary>
