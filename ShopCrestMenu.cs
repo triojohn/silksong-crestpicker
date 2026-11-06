@@ -78,9 +78,6 @@ internal static class ShopCrestMenu
     private static GameObject? _confirmPrompt;
     private static bool _teardownCaptured;
 
-    /// <summary>Vanilla root fade alpha captured when the window opens; the FSM owns it.</summary>
-    private static float _savedAlpha;
-
     /// <summary>Vanilla active state of the two action prompts, captured when the window opens.</summary>
     private static bool _cancelWasActive;
     private static bool _confirmWasActive;
@@ -480,7 +477,7 @@ internal static class ShopCrestMenu
     /// <summary>
     /// Remembers the fade group, the window FSM and the two action prompts with their
     /// vanilla state, so nothing of ours has to guess what the FSM wants. The root alpha
-    /// is only read here: the vanilla open chain raises it, and we must not fight it.
+    /// is not touched: the vanilla open chain owns it.
     /// </summary>
     private static void BeginTeardown(Transform root)
     {
@@ -490,7 +487,6 @@ internal static class ShopCrestMenu
         _windowFsm = window != null ? window.GetComponent<PlayMakerFSM>() : null;
         _cancelPrompt = FindChild(root, "Action Cancel")?.gameObject;
         _confirmPrompt = FindChild(root, "Action Confirm")?.gameObject;
-        _savedAlpha = SafeAlpha(0f);
         _cancelWasActive = _cancelPrompt != null && _cancelPrompt.activeSelf;
         _confirmWasActive = _confirmPrompt != null && _confirmPrompt.activeSelf;
         _guardRaised = false;
@@ -564,9 +560,9 @@ internal static class ShopCrestMenu
     }
 
     /// <summary>
-    /// Puts the root alpha back to the value captured on open, whatever the guard did to
-    /// it: the guard raises the alpha to keep a reused window visible, and leaving it
-    /// raised keeps the window half opaque over the vendor after the close.
+    /// Undoes the one case that needs it: the guard raised the root alpha to keep a reused
+    /// window visible, so the raise is written off again. Otherwise nothing is written -
+    /// the vanilla close chain owns the alpha and tweens it down to its resting zero.
     /// </summary>
     private static void RestoreAlpha()
     {
@@ -576,9 +572,14 @@ internal static class ShopCrestMenu
         }
 
         bool raised = _guardRaised;
-        _fade.AlphaSelf = _savedAlpha;
         _guardRaised = false;
-        Plugin.Log.LogInfo($"[SHOP] alpha restored to saved {_savedAlpha:F2} guardRaised={raised}");
+        if (!raised)
+        {
+            return;
+        }
+
+        _fade.AlphaSelf = 0f;
+        Plugin.Log.LogInfo("[SHOP] alpha cleared after guard raise");
     }
 
     /// <summary>Switches both action prompts off; returns how many were touched.</summary>
@@ -666,8 +667,9 @@ internal static class ShopCrestMenu
 
     /// <summary>
     /// Puts the captions the vanilla chain may have left off back on, and only the borders
-    /// if our emergency teardown sent them down. The root alpha is restored to the value
-    /// captured on open, never forced up: the vanilla open chain raises it on its own.
+    /// if our emergency teardown sent them down. The root alpha is never written here: the
+    /// vanilla open chain raises it on its own, and a leftover value would become the new
+    /// resting alpha of the window.
     /// </summary>
     private static void ReviveTeardown()
     {
@@ -676,20 +678,8 @@ internal static class ShopCrestMenu
             return;
         }
 
-        float alpha = -1f;
+        float alpha = SafeAlpha(-1f);
         bool bordes = false;
-        try
-        {
-            if (_fade != null)
-            {
-                _fade.AlphaSelf = _savedAlpha;
-                alpha = _fade.AlphaSelf;
-            }
-        }
-        catch (Exception ex)
-        {
-            Plugin.Log.LogWarning($"[SHOP] revive alpha failed: {ex.Message}");
-        }
 
         try
         {
@@ -705,14 +695,14 @@ internal static class ShopCrestMenu
             Plugin.Log.LogWarning($"[SHOP] revive borders failed: {ex.Message}");
         }
 
-        Plugin.Log.LogInfo($"[SHOP] revive: alpha={alpha:F2} (saved) bordes={bordes}");
+        Plugin.Log.LogInfo($"[SHOP] revive: alpha={alpha:F2} bordes={bordes}");
     }
 
     /// <summary>
     /// Session safety net: the vanilla chain sometimes leaves a reused window faded out
     /// while the FSM says it is open. After 60 such frames the root alpha is raised once,
     /// and only once per session, and only while the window is open and not closing;
-    /// <see cref="RestoreAlpha"/> puts the captured value back on close.
+    /// <see cref="RestoreAlpha"/> clears the guard raise on close.
     /// </summary>
     internal static void GuardTeardown()
     {
@@ -736,6 +726,11 @@ internal static class ShopCrestMenu
         _guardRaised = true;
         try
         {
+            if (_fade == null || _fade.gameObject == null)
+            {
+                return;
+            }
+
             _fade.AlphaSelf = 1f;
             Plugin.Log.LogInfo($"[SHOP] guard raised alpha (was {alpha:F2})");
         }
@@ -991,7 +986,6 @@ internal static class ShopCrestMenu
         SuppressDialogue = false;
         _teardownCaptured = false;
         _closing = false;
-        _savedAlpha = 0f;
         _cancelWasActive = true;
         _confirmWasActive = true;
         _guardRaised = false;
