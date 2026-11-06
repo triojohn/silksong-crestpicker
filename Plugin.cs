@@ -2,6 +2,7 @@ using System;
 using BepInEx;
 using BepInEx.Configuration;
 using BepInEx.Logging;
+using CrestPicker.Pure;
 using GlobalEnums;
 using HarmonyLib;
 using UnityEngine;
@@ -119,20 +120,19 @@ public sealed class Plugin : BaseUnityPlugin
         UseLiveShop = _useLiveShop.Value;
         ShopCrestSchema.Enabled = _showCrestSchema.Value;
         ShopCrestSchema.Render = _schemaRender.Value;
-        float schemaScale = _crestSchemaScale.Value;
-        if (schemaScale > 2f)
+        float schemaScale = ConfigRules.NormalizeSchemaScale(_crestSchemaScale.Value);
+        if (schemaScale != _crestSchemaScale.Value)
         {
-            Logger.LogWarning($"[SCHEMA] CrestSchemaScale={schemaScale:F2} looks like the old absolute" +
+            Logger.LogWarning($"[SCHEMA] CrestSchemaScale={_crestSchemaScale.Value:F2} looks like the old absolute" +
                 " multiplier, using 1.00 (schema now fits the details panel).");
-            schemaScale = 1f;
         }
 
         ShopCrestSchema.Scale = schemaScale;
         float dotSizeRaw = _crestDotSize.Value;
         ShopCrestSchema.DotSizeRaw = dotSizeRaw;
-        ShopCrestSchema.DotSize = dotSizeRaw > 0.5f ? dotSizeRaw * 0.11f : dotSizeRaw;
+        ShopCrestSchema.DotSize = ConfigRules.NormalizeDotSize(dotSizeRaw);
         ShopCrestSchema.DotOffsetY = _crestDotOffsetY.Value;
-        if (dotSizeRaw > 0.5f)
+        if (ShopCrestSchema.DotSize != dotSizeRaw)
         {
             Logger.LogWarning($"[SCHEMA] CrestDotSize={dotSizeRaw:F3}" +
                 $" looks like legacy multiplier, using {ShopCrestSchema.DotSize:F3}");
@@ -142,7 +142,7 @@ public sealed class Plugin : BaseUnityPlugin
         ShopCosmetics.ConfirmButtonText = _confirmButtonText.Value;
         ShopCosmetics.PurchaseText = _purchaseText.Value;
         ShopCosmetics.ShrinkNameToFit = _shrinkCrestName.Value;
-        ShopCosmetics.CentreSource = _textCentreSource;
+        ShopCosmetics.CentreSourceConfig = _textCentreSource;
         Logger.LogInfo($"[CREST] crest pool mode: {CrestPickerService.PoolMode}" +
             $" (GrantAllCrests={_grantAllCrests.Value}, CrestPool={_crestPool.Value}).");
         CrestSelectMenu.Closed += OnMenuClosed;

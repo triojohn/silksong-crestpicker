@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Reflection;
+using CrestPicker.Pure;
 using HarmonyLib;
 using HutongGames.PlayMaker;
 using TeamCherry.NestedFadeGroup;
@@ -463,24 +464,19 @@ internal static class ShopCrestMenu
                 return;
             }
 
-            if (!_emergencyClose)
+            switch (PurchaseClose.Decide(elapsed, _messageSeen, _messageShownAt, _emergencyClose))
             {
-                float dueAt = _messageSeen ? _messageShownAt + 0.5f : 3f;
-                if (elapsed >= dueAt && IsOpen && _control != null)
-                {
+                case CloseDecision.CloseWindow when IsOpen && _control != null:
                     _emergencyClose = true;
                     _control.SendEvent(CloseEvent);
                     string why = _messageSeen ? "message + 0.5s" : "3s fallback";
                     Plugin.Log.LogInfo($"[SHOP] sent '{CloseEvent}' {elapsed:F2}s after purchase ({why})");
-                }
+                    break;
 
-                return;
-            }
-
-            if (elapsed >= 5f)
-            {
-                _purchaseAt = 0f;
-                ForceIdle($"'{state}' 5s after purchase");
+                case CloseDecision.ForceIdle:
+                    _purchaseAt = 0f;
+                    ForceIdle($"'{state}' 5s after purchase");
+                    break;
             }
         }
         catch (Exception ex)

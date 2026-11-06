@@ -91,6 +91,7 @@ The version comes from `Directory.Build.props`.
 ## Docs
 
 `PLAN.md` — work plan and stage status. `REQUIREMENTS.md` — technical facts from
-the decompiled game and the remaining decisions.
+the decompiled game and the remaining decisions. `TESTING.md` — what unit tests
+cover, what needs a manual in-game check, how to run them.
 `docs/crest-shop-centering.md` — why shop row labels are centred the way they are,
 what anchor failed and what replaced it.

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Reflection;
+using CrestPicker.Pure;
 using GlobalSettings;
 using HutongGames.PlayMaker;
 using TeamCherry.NestedFadeGroup;
@@ -497,7 +498,7 @@ internal static class ShopCrestSchema
             return 0f;
         }
 
-        return Mathf.Clamp(centre, min + half, max - half) - centre;
+        return Geometry.ClampAxis(centre, half, min, max) - centre;
     }
 
     private static string Vec(Vector3 value)

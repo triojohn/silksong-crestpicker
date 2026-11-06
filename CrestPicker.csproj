@@ -22,6 +22,12 @@
     <BepInExCoreDir>$(SilksongFolder)/BepInEx/core</BepInExCoreDir>
   </PropertyGroup>
 
+  <!-- The unit test project lives in a subfolder and must not be compiled into the mod. -->
+  <ItemGroup>
+    <Compile Remove="CrestPicker.Tests/**" />
+    <None Remove="CrestPicker.Tests/**" />
+  </ItemGroup>
+
   <ItemGroup>
     <Reference Include="BepInEx">
       <HintPath>$(BepInExCoreDir)/BepInEx.dll</HintPath>

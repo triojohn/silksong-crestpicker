@@ -3,37 +3,37 @@ using System.Collections.Generic;
 using System.IO;
 using BepInEx;
 using Newtonsoft.Json;
+using CrestPicker.Pure;
 
 namespace CrestPicker;
 
 /// <summary>
 /// Per-save-slot flag that remembers whether the chapel maid already offered
 /// the crest choice. The slot key is <c>GameManager.profileID</c>, the same
-/// number the game uses to address the save file.
+/// number the game uses to address the save file. Parsing and writing live in
+/// <see cref="OfferStore"/>; this class only adds the default path and logging.
 /// </summary>
 internal static class CrestOfferState
 {
-    private static readonly string StateFile =
+    /// <summary>State file used when a caller passes no path.</summary>
+    internal static readonly string DefaultStateFile =
         Path.Combine(Paths.ConfigPath, "CrestPicker", "state.json");
 
     private static Dictionary<string, bool>? _slots;
+    private static string? _loadedPath;
 
     /// <summary>True when the offer was already consumed for this save slot.</summary>
     /// <param name="slotId">Save slot index; negative values are never offered.</param>
-    internal static bool IsOffered(int slotId)
+    /// <param name="stateFile">State file path; defaults to <see cref="DefaultStateFile"/>.</param>
+    internal static bool IsOffered(int slotId, string? stateFile = null)
     {
-        if (slotId < 0)
-        {
-            return false;
-        }
-
-        Dictionary<string, bool> slots = Load();
-        return slots.TryGetValue(slotId.ToString(), out bool offered) && offered;
+        return OfferStore.IsOffered(Load(stateFile), slotId);
     }
 
     /// <summary>Records that the player picked a crest in this save slot.</summary>
     /// <param name="slotId">Save slot index; negative values are ignored.</param>
-    internal static void MarkOffered(int slotId)
+    /// <param name="stateFile">State file path; defaults to <see cref="DefaultStateFile"/>.</param>
+    internal static void MarkOffered(int slotId, string? stateFile = null)
     {
         if (slotId < 0)
         {
@@ -41,9 +41,12 @@ internal static class CrestOfferState
             return;
         }
 
-        Dictionary<string, bool> slots = Load();
-        slots[slotId.ToString()] = true;
-        Save(slots);
+        Dictionary<string, bool> slots = Load(stateFile);
+        OfferStore.Mark(slots, slotId);
+        if (!OfferStore.SaveFile(stateFile ?? DefaultStateFile, slots))
+        {
+            Plugin.Log.LogError($"[CREST] Offer state write failed ({stateFile ?? DefaultStateFile}).");
+        }
     }
 
     /// <summary>Logs a JSON round-trip and path check. Returns true on success.</summary>
@@ -52,11 +55,10 @@ internal static class CrestOfferState
         try
         {
             Dictionary<string, bool> sample = new Dictionary<string, bool> { ["7"] = true };
-            string json = JsonConvert.SerializeObject(sample);
-            Dictionary<string, bool>? back =
-                JsonConvert.DeserializeObject<Dictionary<string, bool>>(json);
-            bool ok = back != null && back.TryGetValue("7", out bool value) && value;
-            Plugin.Log.LogInfo($"[CREST] Offer state self-check {(ok ? "passed" : "FAILED")} ({StateFile}).");
+            string json = OfferStore.Serialize(sample);
+            bool ok = OfferStore.Load(json, out Dictionary<string, bool> back) &&
+                OfferStore.IsOffered(back, 7);
+            Plugin.Log.LogInfo($"[CREST] Offer state self-check {(ok ? "passed" : "FAILED")} ({DefaultStateFile}).");
             return ok;
         }
         catch (Exception ex)
@@ -66,39 +68,21 @@ internal static class CrestOfferState
         }
     }
 
-    private static Dictionary<string, bool> Load()
+    private static Dictionary<string, bool> Load(string? stateFile)
     {
-        if (_slots != null)
+        string path = stateFile ?? DefaultStateFile;
+        if (_slots != null && _loadedPath == path)
         {
             return _slots;
         }
 
-        try
+        if (!OfferStore.LoadFile(path, out Dictionary<string, bool> slots))
         {
-            if (File.Exists(StateFile))
-            {
-                string json = File.ReadAllText(StateFile);
-                _slots = JsonConvert.DeserializeObject<Dictionary<string, bool>>(json);
-            }
-        }
-        catch (Exception ex)
-        {
-            Plugin.Log.LogWarning($"[CREST] Offer state read failed: {ex.Message}");
+            Plugin.Log.LogWarning($"[CREST] Offer state read failed, starting empty ({path}).");
         }
 
-        return _slots ??= new Dictionary<string, bool>();
-    }
-
-    private static void Save(Dictionary<string, bool> slots)
-    {
-        try
-        {
-            Directory.CreateDirectory(Path.GetDirectoryName(StateFile)!);
-            File.WriteAllText(StateFile, JsonConvert.SerializeObject(slots, Formatting.Indented));
-        }
-        catch (Exception ex)
-        {
-            Plugin.Log.LogError($"[CREST] Offer state write failed: {ex}");
-        }
+        _slots = slots;
+        _loadedPath = path;
+        return _slots;
     }
 }

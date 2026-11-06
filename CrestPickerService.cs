@@ -1,18 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using CrestPicker.Pure;
 
 namespace CrestPicker;
-
-/// <summary>Which crests the picker offers.</summary>
-internal enum CrestPoolMode
-{
-    /// <summary>Every normal base crest, regardless of save state.</summary>
-    All,
-
-    /// <summary>Only crests already unlocked in the current save.</summary>
-    Unlocked,
-}
 
 /// <summary>
 /// Core crest selection logic with no UI dependency. All game calls are wrapped
@@ -37,11 +28,11 @@ internal static class CrestPickerService
         try
         {
             List<ToolCrest> pool = ToolItemManager.GetAllCrests()
-                .Where(crest => crest != null && crest.IsBaseVersion && !crest.IsHidden)
-                .Where(crest => PoolMode == CrestPoolMode.All || crest.IsUnlocked)
+                .Where(crest => crest != null &&
+                    CrestPoolRules.IsSelectable(crest.IsBaseVersion, crest.IsHidden, crest.IsUnlocked, PoolMode))
                 .ToList();
 
-            int excluded = pool.RemoveAll(SafeIsEquipped);
+            int excluded = pool.RemoveAll(crest => CrestPoolRules.IsEquippedExcluded(SafeIsEquipped(crest)));
             Plugin.Log.LogInfo(
                 $"[CREST] crest pool ({PoolMode}): {pool.Count} selectable, {excluded} equipped excluded.");
             return pool;
@@ -80,20 +71,17 @@ internal static class CrestPickerService
             return string.Empty;
         }
 
+        string? localised = null;
         try
         {
-            string localised = crest.DisplayName;
-            if (!string.IsNullOrWhiteSpace(localised))
-            {
-                return localised;
-            }
+            localised = crest.DisplayName;
         }
         catch (Exception ex)
         {
             Plugin.Log.LogWarning($"[CREST] DisplayName lookup failed for '{crest.name}': {ex.Message}");
         }
 
-        return crest.name ?? string.Empty;
+        return CrestLabel.LabelOrName(localised, crest.name);
     }
 
     /// <summary>

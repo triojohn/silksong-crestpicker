@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Reflection;
 using BepInEx.Configuration;
+using CrestPicker.Pure;
 using TMProOld;
 using UnityEngine;
 
@@ -125,7 +126,13 @@ internal static class ShopCosmetics
     /// Config key naming the world X the row labels are centred on. Read on every call,
     /// so an edited cfg file takes effect without a restart. Bound by <see cref="Plugin"/>.
     /// </summary>
-    internal static ConfigEntry<string>? CentreSource;
+    internal static ConfigEntry<string>? CentreSourceConfig;
+
+    /// <summary>Source names <see cref="CrestPicker.Pure.CentreSource"/> accepts.</summary>
+    private static readonly string[] CentreSourceNames =
+    {
+        "columns", "rows", "list", "column", "columnCentre", "listGroup", "backboard", "window", "original",
+    };
 
     /// <summary>Confirmation text written over the vanilla purchase prompt.</summary>
     internal static string ConfirmText = "Вы уверены?";
@@ -706,28 +713,16 @@ internal static class ShopCosmetics
     /// <summary>Configured source name, with an unknown value warned about once and replaced by <c>columns</c>.</summary>
     private static string ResolveSourceName()
     {
-        string? name = CentreSource?.Value;
-        switch (name)
+        string resolved = CrestPicker.Pure.CentreSource.Resolve(
+            CentreSourceConfig?.Value, CentreSourceNames, "columns", out bool unknown);
+        if (unknown && !_sourceWarned)
         {
-            case "columns":
-            case "rows":
-            case "list":
-            case "column":
-            case "columnCentre":
-            case "listGroup":
-            case "backboard":
-            case "window":
-            case "original":
-                return name;
-            default:
-                if (!_sourceWarned)
-                {
-                    _sourceWarned = true;
-                    Plugin.Log.LogWarning($"[SHOPFX] unknown TextCentreSource '{name}', using 'columns'.");
-                }
-
-                return "columns";
+            _sourceWarned = true;
+            Plugin.Log.LogWarning(
+                $"[SHOPFX] unknown TextCentreSource '{CentreSourceConfig?.Value}', using 'columns'.");
         }
+
+        return resolved;
     }
 
     /// <summary>World X of the label's vanilla position, remembered before our first shift.</summary>
@@ -1140,7 +1135,7 @@ internal static class ShopCosmetics
     /// <summary>Rejects NaN, infinity and absurd world X values from a half-built UI.</summary>
     private static bool IsSane(float x)
     {
-        return !float.IsNaN(x) && !float.IsInfinity(x) && Mathf.Abs(x) < 1000f;
+        return Geometry.IsSane(x);
     }
 
     /// <summary>Row icon renderer, used by the details schema as a sorting reference.</summary>
