@@ -76,8 +76,17 @@ internal static class ShopCosmetics
     /// </summary>
     internal static string RowLabelMode = "Own";
 
-    /// <summary>Localized font of the details panel name, resolved once per session.</summary>
-    private static TMP_FontAsset? _rowFont;
+    /// <summary>Visible TMP text of the details panel, cloned for the row labels.</summary>
+    private static TMP_Text? _labelSource;
+
+    /// <summary>Details texts already written to the log by the source scan.</summary>
+    private static readonly HashSet<TMP_Text> SourceLogged = new HashSet<TMP_Text>();
+
+    /// <summary>True once the invisibility check of our label has been logged.</summary>
+    private static bool _invisibleLogged;
+
+    /// <summary>True once the chosen label source has been logged.</summary>
+    private static bool _sourceDiagLogged;
 
     /// <summary>Build attempts made for each row label, keyed by the vanilla label.</summary>
     private static readonly Dictionary<TMP_Text, int> LabelAttempts = new Dictionary<TMP_Text, int>();
@@ -196,7 +205,10 @@ internal static class ShopCosmetics
             _candidatesLogged = false;
             _sourceWarned = false;
             _fallbackLogged = false;
-            _rowFont = null;
+            _labelSource = null;
+            SourceLogged.Clear();
+            _invisibleLogged = false;
+            _sourceDiagLogged = false;
             LabelAttempts.Clear();
             LabelGivenUp.Clear();
             _readyLogged = 0;
@@ -472,7 +484,10 @@ internal static class ShopCosmetics
         _candidatesLogged = false;
         _sourceWarned = false;
         _fallbackLogged = false;
-        _rowFont = null;
+        _labelSource = null;
+        SourceLogged.Clear();
+        _invisibleLogged = false;
+        _sourceDiagLogged = false;
         LabelAttempts.Clear();
         LabelGivenUp.Clear();
         _readyLogged = 0;
@@ -1420,8 +1435,8 @@ internal static class ShopCosmetics
     /// <summary>
     /// Creates our own row name label once per row and reuses it afterwards. The vanilla
     /// <c>Item cost</c> label draws nothing for Cyrillic (its root mesh is empty), so it is
-    /// switched off for the session and the name goes into a label of our own that uses the
-    /// same font and material as the Russian text of <c>Item Details/Item name</c>.
+    /// switched off for the session and the name goes into a label of our own, cloned from
+    /// a TMP text of <c>Item Details</c> that is actually drawn on screen.
     /// </summary>
     /// <param name="row">Row the label belongs to.</param>
     /// <param name="vanilla">Vanilla <c>Item cost</c> label of that row.</param>
@@ -1462,22 +1477,24 @@ internal static class ShopCosmetics
 
         LabelAttempts[vanilla] = attempt;
 
-        TMP_FontAsset? font = RowFont();
-        if (font == null || font.material == null)
+        TMP_Text? source = VisibleLabelSource();
+        if (source == null || source.font == null || source.fontSharedMaterial == null)
         {
             if (attempt == 1)
             {
                 Plugin.Log.LogWarning(
-                    "[SHOPFX] row label failed step=resolve font: font of 'Item Details/Item name' not ready");
+                    "[SHOPFX] row label failed step=resolve source: no visible TMP text in 'Item Details' yet");
             }
 
             return null;
         }
 
+        TMP_FontAsset font = source.font;
         SpriteRenderer? icon = RowIcon(row);
         GameObject go;
         TextMeshPro? text;
-        if (!CloneVanillaLabel(vanilla, out go, out text))
+        if (!CloneSourceLabel(source, vanilla, icon != null ? icon.gameObject.layer : vanilla.gameObject.layer,
+                out go, out text))
         {
             // Last resort: a TMP built from scratch. Its font usually cannot be set, so this
             // path is only here to keep the row from losing its name entirely.
@@ -1492,7 +1509,7 @@ internal static class ShopCosmetics
 
         if (!Step("alive", go, attempt, () => RequireLive(text))
             || !Step("assign font", go, attempt, () => text!.font = font)
-            || !Step("set material", go, attempt, () => text!.fontSharedMaterial = font.material)
+            || !Step("set material", go, attempt, () => text!.fontSharedMaterial = source.fontSharedMaterial)
             || !Step("style", go, attempt, () => StyleOwnLabel(text!, vanilla))
             || !Step("text", go, attempt, () => text!.SetText(name))
             || !Step("rect", go, attempt, () => CopyLabelRect(vanilla, text!.rectTransform))
@@ -1507,33 +1524,45 @@ internal static class ShopCosmetics
         HiddenLabels.Add(vanilla);
         vanilla.enabled = false;
 
+        if (!_sourceDiagLogged)
+        {
+            _sourceDiagLogged = true;
+            Plugin.Log.LogInfo($"[SHOPFX] row label source path='{PathOf(source.transform)}'"
+                + $" font='{font.name}' verts={VertexCount(source)}");
+        }
+
         Plugin.Log.LogInfo($"[SHOPFX] own row label row={RowIndex(row, vanilla)}"
             + $" attempts={attempt} font={font.name}");
 
         LogLabelDiagnostics(text!);
+        LogInvisibleCheck(text!);
         return text;
     }
 
     /// <summary>
-    /// Copies an already initialised vanilla label instead of building one. A TMP created at
-    /// runtime cannot take a font, while the clone already has a working material, shader and
-    /// mesh setup.
+    /// Clones an already visible TMP text of the details panel. A TMP created at runtime
+    /// cannot take a font, while a clone keeps a working font, material, shader and mesh
+    /// setup; the rect is then copied from the vanilla row label.
     /// </summary>
+    /// <param name="source">Visible details text that becomes the label.</param>
     /// <param name="vanilla">Vanilla <c>Item cost</c> label of the row.</param>
+    /// <param name="layer">Layer of the row icon.</param>
     /// <param name="go">Clone object, null when the clone was not made.</param>
     /// <param name="text">Clone label, null when the clone was not made.</param>
     /// <returns>True when the clone is usable.</returns>
-    private static bool CloneVanillaLabel(TMP_Text vanilla, out GameObject go, out TextMeshPro? text)
+    private static bool CloneSourceLabel(TMP_Text source, TMP_Text vanilla, int layer,
+        out GameObject go, out TextMeshPro? text)
     {
         go = null!;
         text = null;
-        if (!(vanilla is TextMeshPro source))
+        if (!(source is TextMeshPro) || vanilla.transform.parent == null)
         {
             return false;
         }
 
         GameObject clone = UnityEngine.Object.Instantiate(source.gameObject, vanilla.transform.parent);
         clone.name = OwnLabelName;
+        clone.layer = layer;
         TextMeshPro? copy = clone.GetComponent<TextMeshPro>();
         if (copy == null)
         {
@@ -1545,6 +1574,145 @@ internal static class ShopCosmetics
         go = clone;
         text = copy;
         return true;
+    }
+
+    /// <summary>
+    /// Picks the first drawn TMP text of the details panel to clone for the row labels.
+    /// <c>Item desc</c> wins, then <c>Item name</c>, then any other drawn text. Every text
+    /// of the panel is written to the log once, with its font, atlas and vertex count.
+    /// </summary>
+    /// <returns>Visible source text, or null while the panel still draws nothing.</returns>
+    private static TMP_Text? VisibleLabelSource()
+    {
+        if (_labelSource != null)
+        {
+            return _labelSource;
+        }
+
+        try
+        {
+            ResolveTargets();
+            Transform? details = _details;
+            if (details == null)
+            {
+                return null;
+            }
+
+            TMP_Text? best = null;
+            int bestRank = int.MaxValue;
+            foreach (TMP_Text text in details.GetComponentsInChildren<TMP_Text>(true))
+            {
+                if (text == null)
+                {
+                    continue;
+                }
+
+                int verts = VertexCount(text);
+                if (SourceLogged.Add(text))
+                {
+                    LogTmpText(text, verts);
+                }
+
+                if (!(text is TextMeshPro) || verts <= 0 || text.alpha <= 0f)
+                {
+                    continue;
+                }
+
+                int rank = text.name == "Item desc" ? 0 : (text.name == "Item name" ? 1 : 2);
+                if (rank < bestRank)
+                {
+                    bestRank = rank;
+                    best = text;
+                }
+            }
+
+            if (best != null)
+            {
+                _labelSource = best;
+            }
+
+            return best;
+        }
+        catch (Exception ex)
+        {
+            Plugin.Log.LogWarning($"[SHOPFX] label source lookup failed: {ex.Message}");
+            return null;
+        }
+    }
+
+    /// <summary>Writes one details text with its font, atlas and vertex count.</summary>
+    /// <param name="text">Text to describe.</param>
+    /// <param name="verts">Vertex count of the text.</param>
+    private static void LogTmpText(TMP_Text text, int verts)
+    {
+        TMP_FontAsset? font = text.font;
+        Material? mat = text.fontSharedMaterial;
+        Renderer? renderer = text.GetComponent<Renderer>();
+        if (mat == null && renderer != null)
+        {
+            mat = renderer.sharedMaterial;
+        }
+
+        Plugin.Log.LogInfo($"[SHOPFX] tmptext path='{PathOf(text.transform)}'"
+            + $" font='{(font != null ? font.name : "none")}'"
+            + $" mat='{(mat != null ? mat.name : "none")}'"
+            + $" verts={verts} alpha={text.alpha:0.##}"
+            + $" atlas={(font != null && font.atlas != null ? font.atlas.width + "x" + font.atlas.height : "none")}"
+            + $" mode={(font != null ? font.fontAssetType.ToString() : "none")}");
+    }
+
+    /// <summary>Hierarchy path of a transform below the shop window root.</summary>
+    /// <param name="target">Transform to describe.</param>
+    private static string PathOf(Transform target)
+    {
+        List<string> parts = new List<string>();
+        Transform? node = target;
+        while (node != null && node != _root)
+        {
+            parts.Add(node.name);
+            node = node.parent;
+        }
+
+        parts.Reverse();
+        return string.Join("/", parts);
+    }
+
+    /// <summary>
+    /// Logs once why our label might still be invisible: world bounds, depth, camera mask,
+    /// layer and sorting. One line, no further guessing.
+    /// </summary>
+    /// <param name="text">Our label that was just built.</param>
+    private static void LogInvisibleCheck(TMP_Text text)
+    {
+        if (_invisibleLogged)
+        {
+            return;
+        }
+
+        try
+        {
+            _invisibleLogged = true;
+            Renderer? renderer = text.GetComponent<Renderer>();
+            Vector3 size = renderer != null ? renderer.bounds.size : Vector3.zero;
+            Camera? camera = Camera.main;
+            int layer = text.gameObject.layer;
+            int mask = camera != null ? camera.cullingMask : 0;
+            int order = renderer != null ? renderer.sortingOrder : 0;
+            string sort = renderer != null && !string.IsNullOrEmpty(renderer.sortingLayerName)
+                ? renderer.sortingLayerName
+                : "none";
+
+            Plugin.Log.LogInfo($"[SHOPFX] row label invisible check"
+                + $" bounds=({size.x:0.##},{size.y:0.##},{size.z:0.##})"
+                + $" worldZ={text.transform.position.z:0.##}"
+                + $" camMask={(mask & (1 << layer)) != 0}"
+                + $" layer={layer} order={order} sort={sort}"
+                + $" verts={VertexCount(text)}");
+        }
+        catch (Exception ex)
+        {
+            Plugin.Log.LogWarning($"[SHOPFX] invisible check failed: {ex.Message}");
+        }
     }
 
     /// <summary>Logs render state of the first own label and of <c>Item Details/Item name</c>.</summary>
@@ -1768,6 +1936,8 @@ internal static class ShopCosmetics
             throw new InvalidOperationException("vanilla label has no RectTransform");
         }
 
+        rect.anchorMin = source.anchorMin;
+        rect.anchorMax = source.anchorMax;
         rect.sizeDelta = source.sizeDelta;
         rect.pivot = source.pivot;
         rect.anchoredPosition = source.anchoredPosition;
@@ -1796,30 +1966,6 @@ internal static class ShopCosmetics
         {
             throw new InvalidOperationException("own label drew an empty mesh");
         }
-    }
-
-    /// <summary>Font of <c>Item Details/Item name</c>: the game font that holds Cyrillic.</summary>
-    private static TMP_FontAsset? RowFont()
-    {
-        if (_rowFont != null)
-        {
-            return _rowFont;
-        }
-
-        try
-        {
-            TMP_Text? reference = ItemNameLabel();
-            if (reference != null && reference.font != null)
-            {
-                _rowFont = reference.font;
-            }
-        }
-        catch (Exception ex)
-        {
-            Plugin.Log.LogWarning($"[SHOPFX] row label font lookup failed: {ex.Message}");
-        }
-
-        return null;
     }
 
     /// <summary>Hides one sprite object, remembering its vanilla state once.</summary>
