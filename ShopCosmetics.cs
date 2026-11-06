@@ -79,8 +79,17 @@ internal static class ShopCosmetics
     /// <summary>Localized font of the details panel name, resolved once per session.</summary>
     private static TMP_FontAsset? _rowFont;
 
-    /// <summary>True once our own row label has been logged for this session.</summary>
-    private static bool _ownLabelLogged;
+    /// <summary>Build attempts made for each row label, keyed by the vanilla label.</summary>
+    private static readonly Dictionary<TMP_Text, int> LabelAttempts = new Dictionary<TMP_Text, int>();
+
+    /// <summary>Rows whose label we stopped retrying this session.</summary>
+    private static readonly HashSet<TMP_Text> LabelGivenUp = new HashSet<TMP_Text>();
+
+    /// <summary>Outstanding row labels, logged when the count changes.</summary>
+    private static int _readyLogged;
+
+    /// <summary>Max label build attempts per row, one per frame, about a second at 60 fps.</summary>
+    private const int MaxLabelAttempts = 60;
 
     /// <summary>Mesh bounds centre X of every row label, measured before our first shift.</summary>
     private static readonly Dictionary<Transform, float> BaselineCentres =
@@ -185,7 +194,9 @@ internal static class ShopCosmetics
             _sourceWarned = false;
             _fallbackLogged = false;
             _rowFont = null;
-            _ownLabelLogged = false;
+            LabelAttempts.Clear();
+            LabelGivenUp.Clear();
+            _readyLogged = 0;
             _centreTargetX = null;
             _centreSource = "none";
             _centreRows = 0;
@@ -459,7 +470,9 @@ internal static class ShopCosmetics
         _sourceWarned = false;
         _fallbackLogged = false;
         _rowFont = null;
-        _ownLabelLogged = false;
+        LabelAttempts.Clear();
+        LabelGivenUp.Clear();
+        _readyLogged = 0;
         _centreTargetX = null;
         _centreSource = "none";
         _centreRows = 0;
@@ -554,6 +567,8 @@ internal static class ShopCosmetics
     /// </summary>
     private static void PruneOwnLabels()
     {
+        PruneLabelState();
+
         if (FallbackLabels.Count == 0)
         {
             return;
@@ -583,6 +598,44 @@ internal static class ShopCosmetics
         }
     }
 
+    /// <summary>Forgets retry counters of vanilla labels whose row was destroyed.</summary>
+    private static void PruneLabelState()
+    {
+        if (LabelAttempts.Count > 0)
+        {
+            List<TMP_Text> stale = new List<TMP_Text>();
+            foreach (TMP_Text key in LabelAttempts.Keys)
+            {
+                if (key == null)
+                {
+                    stale.Add(key!);
+                }
+            }
+
+            foreach (TMP_Text key in stale)
+            {
+                LabelAttempts.Remove(key);
+            }
+        }
+
+        if (LabelGivenUp.Count > 0)
+        {
+            List<TMP_Text> stale = new List<TMP_Text>();
+            foreach (TMP_Text key in LabelGivenUp)
+            {
+                if (key == null)
+                {
+                    stale.Add(key!);
+                }
+            }
+
+            foreach (TMP_Text key in stale)
+            {
+                LabelGivenUp.Remove(key);
+            }
+        }
+    }
+
     /// <summary>Applies every cosmetic change to the rows and the confirmation prompt.</summary>
     private static void Apply(Transform root)
     {
@@ -591,6 +644,7 @@ internal static class ShopCosmetics
             PruneOwnLabels();
         }
 
+        int rows = 0;
         foreach (ShopItemStats row in root.GetComponentsInChildren<ShopItemStats>(true))
         {
             if (row == null)
@@ -604,9 +658,15 @@ internal static class ShopCosmetics
                 continue;
             }
 
+            rows++;
             HideSprite(ItemSpriteField?.GetValue(row) as SpriteRenderer);
             ReplacePrice(row, crest.DisplayName);
             CenterName(row);
+        }
+
+        if (UsesOwnLabel)
+        {
+            ReportOwnLabels(rows);
         }
 
         ApplyConfirm(root);
@@ -1381,12 +1441,32 @@ internal static class ShopCosmetics
         }
 
         FallbackLabels.Remove(vanilla);
+        if (LabelGivenUp.Contains(vanilla))
+        {
+            return null;
+        }
+
+        int attempt = LabelAttempts.TryGetValue(vanilla, out int made) ? made + 1 : 1;
+        if (attempt > MaxLabelAttempts)
+        {
+            LabelAttempts.Remove(vanilla);
+            LabelGivenUp.Add(vanilla);
+            Plugin.Log.LogWarning($"[SHOPFX] row label giving up after {MaxLabelAttempts} attempts"
+                + $" row={RowIndex(row, vanilla)}");
+            return null;
+        }
+
+        LabelAttempts[vanilla] = attempt;
 
         TMP_FontAsset? font = RowFont();
-        if (font == null)
+        if (font == null || font.material == null)
         {
-            Plugin.Log.LogWarning(
-                "[SHOPFX] row label failed step=resolve font: font of 'Item Details/Item name' not found");
+            if (attempt == 1)
+            {
+                Plugin.Log.LogWarning(
+                    "[SHOPFX] row label failed step=resolve font: font of 'Item Details/Item name' not ready");
+            }
+
             return null;
         }
 
@@ -1396,38 +1476,69 @@ internal static class ShopCosmetics
         go.transform.SetParent(vanilla.transform.parent, false);
 
         TextMeshPro? text = null;
-        if (!Step("add component", go, () => text = go.AddComponent<TextMeshPro>())
-            || !Step("assign font", go, () => text!.font = font)
-            || !Step("set material", go, () => text!.fontSharedMaterial = font.material)
-            || !Step("style", go, () => StyleOwnLabel(text!, vanilla, name))
-            || !Step("rect", go, () => CopyLabelRect(vanilla, text!.rectTransform))
-            || !Step("sorting", go, () => CopyRowSorting(icon, go.GetComponent<MeshRenderer>()))
-            || !Step("mesh", go, () => ForceOwnMesh(text!)))
+        if (!Step("add component", go, attempt, () => text = go.AddComponent<TextMeshPro>())
+            || !Step("alive", go, attempt, () => RequireLive(text))
+            || !Step("assign font", go, attempt, () => text!.font = font)
+            || !Step("set material", go, attempt, () => text!.fontSharedMaterial = font.material)
+            || !Step("style", go, attempt, () => StyleOwnLabel(text!, vanilla))
+            || !Step("text", go, attempt, () => text!.SetText(name))
+            || !Step("rect", go, attempt, () => CopyLabelRect(vanilla, text!.rectTransform))
+            || !Step("sorting", go, attempt, () => CopyRowSorting(icon, go.GetComponent<MeshRenderer>()))
+            || !Step("mesh", go, attempt, () => ForceOwnMesh(text!)))
         {
             return null;
         }
 
+        LabelAttempts.Remove(vanilla);
         FallbackLabels[vanilla] = text!;
         HiddenLabels.Add(vanilla);
         vanilla.enabled = false;
 
-        if (!_ownLabelLogged)
-        {
-            _ownLabelLogged = true;
-            Plugin.Log.LogInfo($"[SHOPFX] own row label ready step=mesh font={font.name}"
-                + $" material={(font.material != null ? font.material.name : "none")}"
-                + $" labels={FallbackLabels.Count}");
-        }
+        Plugin.Log.LogInfo($"[SHOPFX] own row label row={RowIndex(row, vanilla)}"
+            + $" attempts={attempt} font={font.name}");
 
         return text;
+    }
+
+    /// <summary>Throws unless the component survived <c>AddComponent</c>.</summary>
+    /// <param name="text">Component under construction.</param>
+    private static void RequireLive(TMP_Text? text)
+    {
+        if (text == null || text.gameObject == null)
+        {
+            throw new InvalidOperationException("component died right after AddComponent");
+        }
+    }
+
+    /// <summary>Position of the row in the shop list, used by the logs.</summary>
+    /// <param name="row">Row the label belongs to.</param>
+    /// <param name="vanilla">Vanilla label of that row.</param>
+    private static int RowIndex(ShopItemStats row, TMP_Text vanilla)
+    {
+        return row != null ? row.transform.GetSiblingIndex() : vanilla.transform.GetSiblingIndex();
+    }
+
+    /// <summary>Logs the total of ready labels when it changes.</summary>
+    /// <param name="rows">Rows seen in this pass.</param>
+    private static void ReportOwnLabels(int rows)
+    {
+        int ready = FallbackLabels.Count;
+        if (ready == _readyLogged)
+        {
+            return;
+        }
+
+        _readyLogged = ready;
+        Plugin.Log.LogInfo($"[SHOPFX] own row labels ready={ready}/{rows}");
     }
 
     /// <summary>Runs one build step, naming the step in the log and dropping the object on failure.</summary>
     /// <param name="step">Step name shown in the log.</param>
     /// <param name="go">Object under construction.</param>
+    /// <param name="attempt">Attempt number, only the first one is logged.</param>
     /// <param name="action">Work of that step.</param>
     /// <returns>True when the step succeeded.</returns>
-    private static bool Step(string step, GameObject go, Action action)
+    private static bool Step(string step, GameObject go, int attempt, Action action)
     {
         try
         {
@@ -1436,7 +1547,11 @@ internal static class ShopCosmetics
         }
         catch (Exception ex)
         {
-            Plugin.Log.LogWarning($"[SHOPFX] row label failed step={step}: {ex.Message}");
+            if (attempt <= 1)
+            {
+                Plugin.Log.LogWarning($"[SHOPFX] row label failed step={step}: {ex.Message}");
+            }
+
             if (go != null)
             {
                 UnityEngine.Object.Destroy(go);
@@ -1447,7 +1562,7 @@ internal static class ShopCosmetics
     }
 
     /// <summary>Text settings of our own row label: plain white, no wrap, no auto-size.</summary>
-    private static void StyleOwnLabel(TMP_Text text, TMP_Text vanilla, string name)
+    private static void StyleOwnLabel(TMP_Text text, TMP_Text vanilla)
     {
         text.color = new Color(1f, 1f, 1f, 1f);
         text.enableAutoSizing = false;
@@ -1455,7 +1570,6 @@ internal static class ShopCosmetics
         text.OverflowMode = TextOverflowModes.Overflow;
         text.fontSize = vanilla.fontSize;
         text.alignment = TextAlignmentOptions.Center;
-        text.text = name;
     }
 
     /// <summary>Copies the vanilla label rect so our label sits exactly on the price spot.</summary>
@@ -1507,9 +1621,16 @@ internal static class ShopCosmetics
         try
         {
             ResolveTargets();
-            if (_details != null)
+            Transform? details = _details;
+            if (details == null && _root != null)
             {
-                foreach (TMP_Text text in _details.GetComponentsInChildren<TMP_Text>(true))
+                _details = _root.Find(DetailsPath) ?? FindByName(_root, "Item Details");
+                details = _details;
+            }
+
+            if (details != null)
+            {
+                foreach (TMP_Text text in details.GetComponentsInChildren<TMP_Text>(true))
                 {
                     if (text != null && text.name == "Item name" && text.font != null)
                     {
