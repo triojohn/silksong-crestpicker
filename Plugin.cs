@@ -51,6 +51,7 @@ public sealed class Plugin : BaseUnityPlugin
     private ConfigEntry<bool> _showCrestSchema = null!;
     private ConfigEntry<float> _crestSchemaScale = null!;
     private ConfigEntry<float> _crestDotSize = null!;
+    private ConfigEntry<float> _crestDotOffsetY = null!;
     private ConfigEntry<float> _confirmSchemaScale = null!;
     private ConfigEntry<string> _confirmText = null!;
     private ConfigEntry<string> _confirmButtonText = null!;
@@ -82,10 +83,12 @@ public sealed class Plugin : BaseUnityPlugin
             "Показывать выбор знака в настоящем окне магазина (сток и позиция восстанавливаются)");
         _showCrestSchema = Config.Bind("General", "ShowCrestSchema", true,
             "Рисовать схему знака (силуэт и цветные точки слотов) в панели деталей магазина");
-        _crestSchemaScale = Config.Bind("General", "CrestSchemaScale", 3f,
+        _crestSchemaScale = Config.Bind("General", "CrestSchemaScale", 4.5f,
             "Множитель размера схемы знака в панели деталей (схема подтверждения вдвое больше)");
         _crestDotSize = Config.Bind("General", "CrestDotSize", 0.11f,
             "Диаметр точки слота как доля высоты силуэта знака");
+        _crestDotOffsetY = Config.Bind("General", "CrestDotOffsetY", -0.02f,
+            "Смещение точек слотов по вертикали как доля высоты силуэта (минус — вниз)");
         _confirmSchemaScale = Config.Bind("General", "ConfirmSchemaScale", 1f,
             "Размер схемы на экране подтверждения относительно правой панели");
         _confirmText = Config.Bind("General", "ConfirmText", "Вы уверены?",
@@ -110,6 +113,7 @@ public sealed class Plugin : BaseUnityPlugin
         float dotSizeRaw = _crestDotSize.Value;
         ShopCrestSchema.DotSizeRaw = dotSizeRaw;
         ShopCrestSchema.DotSize = dotSizeRaw > 0.5f ? dotSizeRaw * 0.11f : dotSizeRaw;
+        ShopCrestSchema.DotOffsetY = _crestDotOffsetY.Value;
         if (dotSizeRaw > 0.5f)
         {
             Logger.LogWarning($"[SCHEMA] CrestDotSize={dotSizeRaw:F3}" +

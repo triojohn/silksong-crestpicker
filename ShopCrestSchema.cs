@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Reflection;
 using GlobalSettings;
+using TeamCherry.NestedFadeGroup;
 using TMProOld;
 using UnityEngine;
 
@@ -20,10 +21,10 @@ internal static class ShopCrestSchema
     private const float BaseHeight = 1.2f;
 
     /// <summary>Dot diameter factor for a locked slot.</summary>
-    private const float LockedDotFactor = 0.8f;
+    private const float LockedDotFactor = 0.85f;
 
     /// <summary>Dot alpha for a locked slot.</summary>
-    private const float LockedAlpha = 0.5f;
+    private const float LockedAlpha = 0.45f;
 
     /// <summary>Dot fits tried per frame before the next frame takes over.</summary>
     private const int MaxDotAttempts = 3;
@@ -64,6 +65,23 @@ internal static class ShopCrestSchema
     private static Sprite? _dotSprite;
     private static bool _missingLogged;
 
+    /// <summary>Flags for the private fields read off the vanilla crest widgets.</summary>
+    private const BindingFlags PrivateInstance = BindingFlags.Instance | BindingFlags.NonPublic;
+
+    private static readonly FieldInfo? TemplateSlotsField =
+        typeof(InventoryToolCrest).GetField("templateSlots", PrivateInstance);
+
+    private static readonly FieldInfo? SlotTypeSpriteField =
+        typeof(InventoryToolCrestSlot).GetField("slotTypeSprite", PrivateInstance);
+
+    /// <summary>Vanilla slot sprites indexed by <see cref="ToolItemType"/>; read once per session.</summary>
+    private static Sprite?[]? _templateSprites;
+
+    private static bool _templateRead;
+    private static bool _inventoryFound;
+    private static bool _spritesLogged;
+    private static readonly HashSet<string> LoggedReasons = new HashSet<string>();
+
     /// <summary>True to draw the crest schema at all.</summary>
     internal static bool Enabled = true;
 
@@ -72,6 +90,9 @@ internal static class ShopCrestSchema
 
     /// <summary>Multiplier for the slot dot diameter, as a fraction of the schema height.</summary>
     internal static float DotSize = 0.11f;
+
+    /// <summary>Dot drop, as a fraction of the drawn silhouette height, in world units.</summary>
+    internal static float DotOffsetY = -0.02f;
 
     /// <summary>Raw <c>CrestDotSize</c> value from the cfg, before the legacy migration.</summary>
     internal static float DotSizeRaw = 0.11f;
@@ -465,6 +486,17 @@ internal static class ShopCrestSchema
         SpriteRenderer? reference = ReferenceRenderer() ?? BackboardRenderer();
         float targetH = BaseHeight * Scale * sizeFactor;
 
+        bool vanilla = TemplateSprites() != null;
+        if (!vanilla)
+        {
+            Schema? clone = CloneSchema(crest, parent, targetH, label);
+            if (clone != null)
+            {
+                LogSprites("clone");
+                return clone;
+            }
+        }
+
         GameObject container = new GameObject(label);
         // A plain Transform child: layout groups only lay out RectTransform children,
         // so this container keeps its hand-placed position.
@@ -478,6 +510,7 @@ internal static class ShopCrestSchema
         Schema schema = new Schema(label, container, body, targetH);
         AddDots(schema, crest, reference);
         Fit(schema);
+        LogSprites(vanilla ? "vanilla" : "generated");
         return schema;
     }
 
@@ -498,6 +531,8 @@ internal static class ShopCrestSchema
         {
             return;
         }
+
+        Vector3 dotOffset = ApplyDotOffset(schema, h2);
 
         if (!schema.BoundsLogged)
         {
@@ -574,7 +609,31 @@ internal static class ShopCrestSchema
             : "dot0 n/a";
         Plugin.Log.LogInfo($"[SCHEMA] {schema.Label} H2={h2:F3} CrestDotSize={DotSize:F3}" +
             $" dotSizeRaw={DotSizeRaw:F3} dotSizeUsed={DotSize:F3}" +
+            $" dotOffset={dotOffset.y:F4} offsetY={DotOffsetY:F3}" +
             $" desiredDotWorld={wanted:F3} {first} dots={schema.Dots.Count} attempts={attempts}");
+    }
+
+    /// <summary>
+    /// Drops every dot by <see cref="DotOffsetY"/> times the drawn height, once. The shift
+    /// is built in world space so no container orientation can flip the direction.
+    /// </summary>
+    private static Vector3 ApplyDotOffset(Schema schema, float h2)
+    {
+        if (schema.OffsetApplied || schema.BasePositions.Count != schema.Dots.Count)
+        {
+            return schema.Offset;
+        }
+
+        schema.OffsetApplied = true;
+        Vector3 world = new Vector3(0f, DotOffsetY * h2, 0f);
+        Vector3 local = schema.Container.transform.InverseTransformVector(world);
+        schema.Offset = local;
+        for (int i = 0; i < schema.Dots.Count; i++)
+        {
+            schema.Dots[i].transform.localPosition = schema.BasePositions[i] + local;
+        }
+
+        return local;
     }
 
     /// <summary>
@@ -631,6 +690,260 @@ internal static class ShopCrestSchema
     private static float SpriteHeight(Sprite sprite)
     {
         return sprite.rect.height / Mathf.Max(1f, sprite.pixelsPerUnit);
+    }
+
+    /// <summary>
+    /// Vanilla slot sprites read once off the <c>templateSlots</c> of a live crest
+    /// widget, indexed by <see cref="ToolItemType"/>; null when they are out of reach.
+    /// </summary>
+    private static Sprite?[]? TemplateSprites()
+    {
+        if (_templateRead)
+        {
+            return _templateSprites;
+        }
+
+        _templateRead = true;
+        try
+        {
+            InventoryToolCrest? live = LiveCrest();
+            _inventoryFound = live != null;
+            if (live == null)
+            {
+                LogOnce("[SCHEMA] no InventoryToolCrest in scene");
+                return null;
+            }
+
+            if (!(TemplateSlotsField?.GetValue(live) is InventoryToolCrestSlot[] slots) || slots.Length == 0)
+            {
+                LogOnce("[SCHEMA] templateSlots read failed: field missing, null or empty");
+                return null;
+            }
+
+            Sprite?[] sprites = new Sprite?[slots.Length];
+            int found = 0;
+            for (int i = 0; i < slots.Length; i++)
+            {
+                Sprite? sprite = slots[i] != null
+                    ? SlotTypeSpriteField?.GetValue(slots[i]) as Sprite
+                    : null;
+                sprites[i] = sprite;
+                if (sprite != null)
+                {
+                    found++;
+                }
+            }
+
+            _templateSprites = found > 0 ? sprites : null;
+            if (found == 0)
+            {
+                LogOnce("[SCHEMA] templateSlots read failed: no slotTypeSprite");
+            }
+        }
+        catch (Exception ex)
+        {
+            _templateSprites = null;
+            LogOnce($"[SCHEMA] templateSlots read failed: {ex.Message}");
+        }
+
+        return _templateSprites;
+    }
+
+    /// <summary>First crest widget of a loaded scene that is not an asset or a hidden copy.</summary>
+    private static InventoryToolCrest? LiveCrest()
+    {
+        foreach (InventoryToolCrest crest in Resources.FindObjectsOfTypeAll<InventoryToolCrest>())
+        {
+            if (crest == null)
+            {
+                continue;
+            }
+
+            GameObject go = crest.gameObject;
+            if (go.scene.isLoaded && go.hideFlags == HideFlags.None)
+            {
+                return crest;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>Sprite of one slot type: the vanilla template sprite, else the generated circle.</summary>
+    private static Sprite? DotSprite(ToolItemType type)
+    {
+        Sprite?[]? sprites = TemplateSprites();
+        int index = (int)type;
+        if (sprites != null && index >= 0 && index < sprites.Length && sprites[index] != null)
+        {
+            return sprites[index];
+        }
+
+        return DotSprite();
+    }
+
+    /// <summary>
+    /// Copies the vanilla crest card of <paramref name="crest"/> into the schema when the
+    /// template sprites are unavailable. Null when no such crest is in the loaded scene.
+    /// </summary>
+    private static Schema? CloneSchema(ToolCrest crest, Transform parent, float targetH, string label)
+    {
+        try
+        {
+            InventoryToolCrest? source = CrestTemplate(crest);
+            if (source == null)
+            {
+                LogOnce($"[SCHEMA] no clone with CrestData={crest.name}");
+                return null;
+            }
+
+            GameObject clone = UnityEngine.Object.Instantiate(source.gameObject, parent, false);
+            clone.name = label;
+            clone.SetActive(false);
+            clone.transform.localPosition = Vector3.zero;
+            clone.transform.localRotation = Quaternion.identity;
+            clone.transform.localScale = Vector3.one;
+
+            // The vanilla components drive themselves from a manager the clone does not have.
+            InventoryToolCrestSlot[] slots = clone.GetComponentsInChildren<InventoryToolCrestSlot>(true);
+            foreach (InventoryToolCrestSlot slot in slots)
+            {
+                slot.enabled = false;
+            }
+
+            InventoryToolCrest? widget = clone.GetComponent<InventoryToolCrest>();
+            if (widget != null)
+            {
+                widget.enabled = false;
+                UnityEngine.Object.Destroy(widget);
+            }
+
+            clone.SetActive(true);
+            ResetFades(clone);
+            foreach (InventoryToolCrestSlot slot in slots)
+            {
+                slot.ItemFlashAmount = 0f;
+                UnityEngine.Object.Destroy(slot);
+            }
+
+            Renderer? body = LargestRenderer(clone.transform);
+            if (body == null)
+            {
+                Plugin.Log.LogWarning($"[SCHEMA] '{label}' clone has nothing to draw, schema skipped.");
+                UnityEngine.Object.Destroy(clone);
+                return null;
+            }
+
+            Schema schema = new Schema(label, clone, body, targetH);
+            Fit(schema);
+            Plugin.Log.LogInfo($"[SCHEMA] {label} cloned from '{source.name}'" +
+                $" (active={source.gameObject.activeInHierarchy}) slots={slots.Length}");
+            return schema;
+        }
+        catch (Exception ex)
+        {
+            LogOnce($"[SCHEMA] clone failed: {ex.Message}");
+            return null;
+        }
+    }
+
+    /// <summary>Loaded crest widget of <paramref name="crest"/>, inactive one preferred.</summary>
+    private static InventoryToolCrest? CrestTemplate(ToolCrest crest)
+    {
+        InventoryToolCrest? active = null;
+        foreach (InventoryToolCrest candidate in Resources.FindObjectsOfTypeAll<InventoryToolCrest>())
+        {
+            if (candidate == null)
+            {
+                continue;
+            }
+
+            GameObject go = candidate.gameObject;
+            if (!go.scene.isLoaded || go.hideFlags != HideFlags.None || candidate.CrestData != crest)
+            {
+                continue;
+            }
+
+            if (!go.activeInHierarchy)
+            {
+                return candidate;
+            }
+
+            active ??= candidate;
+        }
+
+        return active;
+    }
+
+    /// <summary>Clears the faded look the vanilla widget had in its list.</summary>
+    private static void ResetFades(GameObject clone)
+    {
+        foreach (NestedFadeGroupBase group in clone.GetComponentsInChildren<NestedFadeGroupBase>(true))
+        {
+            if (group != null)
+            {
+                group.AlphaSelf = 1f;
+            }
+        }
+    }
+
+    /// <summary>Biggest renderer of a built object, the one whose height fits the schema.</summary>
+    private static Renderer? LargestRenderer(Transform target)
+    {
+        Renderer? best = null;
+        float height = 0f;
+        foreach (Renderer renderer in target.GetComponentsInChildren<Renderer>(true))
+        {
+            if (renderer == null || (renderer is SpriteRenderer sprite && sprite.sprite == null))
+            {
+                continue;
+            }
+
+            float measured = renderer.bounds.size.y;
+            if (measured > height)
+            {
+                height = measured;
+                best = renderer;
+            }
+        }
+
+        return best;
+    }
+
+    /// <summary>One <c>[SCHEMA] sprites:</c> line per session.</summary>
+    private static void LogSprites(string used)
+    {
+        if (_spritesLogged)
+        {
+            return;
+        }
+
+        _spritesLogged = true;
+        Sprite?[]? sprites = _templateSprites;
+        int count = 0;
+        if (sprites != null)
+        {
+            foreach (Sprite? sprite in sprites)
+            {
+                if (sprite != null)
+                {
+                    count++;
+                }
+            }
+        }
+
+        string templates = sprites != null ? $"{count}/{sprites.Length}" : "n/a";
+        Plugin.Log.LogInfo($"[SCHEMA] sprites: inventory={(_inventoryFound ? "true" : "false")}" +
+            $" templates={templates} used={used}");
+    }
+
+    /// <summary>Logs one reason once per session, however often the path is retried.</summary>
+    private static void LogOnce(string message)
+    {
+        if (LoggedReasons.Add(message))
+        {
+            Plugin.Log.LogWarning(message);
+        }
     }
 
     /// <summary>Parent for the details schema: the details panel's own parent, not the layout group itself.</summary>
@@ -715,25 +1028,27 @@ internal static class ShopCrestSchema
             return;
         }
 
-        Sprite? dot = DotSprite();
-        if (dot == null)
-        {
-            return;
-        }
-
         float lossy = Mathf.Abs(schema.Container.transform.lossyScale.y);
-        float approx = lossy > 0.0001f
-            ? (schema.TargetHeight * DotSize) / (SpriteHeight(dot) * lossy)
-            : 1f;
         for (int i = 0; i < slots.Length; i++)
         {
             ToolCrest.SlotInfo slot = slots[i];
+            Sprite? dot = DotSprite(slot.Type);
+            if (dot == null)
+            {
+                continue;
+            }
+
+            float approx = lossy > 0.0001f
+                ? (schema.TargetHeight * DotSize) / (SpriteHeight(dot) * lossy)
+                : 1f;
             SpriteRenderer renderer = AddRenderer(schema.Container, $"Schema Dot {i}", dot, reference, 1);
             Vector2 position = slot.Position;
-            renderer.transform.localPosition = new Vector3(position.x, position.y, 0f);
+            Vector3 local = new Vector3(position.x, position.y, 0f);
+            renderer.transform.localPosition = local;
             renderer.transform.localScale = new Vector3(approx, approx, 1f);
             renderer.color = TypeColor(slot.Type);
             schema.Dots.Add(renderer);
+            schema.BasePositions.Add(local);
             schema.Locked.Add(IsLocked(crest, i, slot));
             schema.DotDone.Add(false);
         }
@@ -867,7 +1182,7 @@ internal static class ShopCrestSchema
     /// <summary>One built schema instance and its pending fit.</summary>
     private sealed class Schema
     {
-        internal Schema(string label, GameObject container, SpriteRenderer body, float targetHeight)
+        internal Schema(string label, GameObject container, Renderer body, float targetHeight)
         {
             Label = label;
             Container = container;
@@ -879,12 +1194,21 @@ internal static class ShopCrestSchema
 
         internal GameObject Container { get; }
 
-        internal SpriteRenderer Body { get; }
+        internal Renderer Body { get; }
 
         /// <summary>Wanted world height of the silhouette.</summary>
         internal float TargetHeight { get; }
 
         internal List<SpriteRenderer> Dots { get; } = new List<SpriteRenderer>();
+
+        /// <summary>Schema-local dot positions as built, before the offset is applied.</summary>
+        internal List<Vector3> BasePositions { get; } = new List<Vector3>();
+
+        /// <summary>Local shift the dots were moved by, zero for a clone.</summary>
+        internal Vector3 Offset { get; set; }
+
+        /// <summary>True once the dots took the <see cref="DotOffsetY"/> shift.</summary>
+        internal bool OffsetApplied { get; set; }
 
         /// <summary>Locked flag per dot, in creation order.</summary>
         internal List<bool> Locked { get; } = new List<bool>();
