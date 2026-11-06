@@ -26,8 +26,26 @@ internal static class ShopCrestMenu
     /// <summary>Event that takes <c>shop_control</c> from idle to the open chain.</summary>
     private const string OpenEvent = "SHOP UP";
 
-    /// <summary>Event that closes the window again.</summary>
-    private const string CloseEvent = "CLOSE SHOP WINDOW";
+    /// <summary>
+    /// Event that closes the window again: <c>Open -> CLOSE -> In Second Menu? -> Down -> Idle</c>.
+    /// That chain is what fades the prompts and the selector out, so it must be <c>CLOSE</c>.
+    /// </summary>
+    private const string CloseEvent = "CLOSE";
+
+    /// <summary>
+    /// Last-resort event of <c>shop_control</c>, used only when <see cref="CloseEvent"/>
+    /// did not take the window out of its state.
+    /// </summary>
+    private const string EmergencyCloseEvent = "CLOSE SHOP WINDOW";
+
+    /// <summary>State of <c>shop_control</c> that accepts <see cref="CloseEvent"/>.</summary>
+    private const string OpenState = "Open";
+
+    /// <summary>Delay between the purchase message and the close event.</summary>
+    private const float PurchaseCloseDelay = 0.5f;
+
+    /// <summary>How long the window may stay out of <see cref="OpenState"/> before the fallback.</summary>
+    private const float PurchaseWaitOpen = 2f;
 
     /// <summary>Event the window FSM needs to fade its borders and prompts back in.</summary>
     private const string BordesUpEvent = "FLUERS UP";
@@ -106,9 +124,6 @@ internal static class ShopCrestMenu
     /// <summary>Time of the crest purchase; zero while nothing was bought.</summary>
     private static float _purchaseAt;
 
-    /// <summary>True once the fallback <c>CLOSE SHOP WINDOW</c> was sent after a purchase.</summary>
-    private static bool _emergencyClose;
-
     /// <summary>Frame and line counters of the post-purchase FSM trace.</summary>
     private static int _purchaseFrame;
     private static int _purchaseLines;
@@ -116,8 +131,17 @@ internal static class ShopCrestMenu
     /// <summary>True from the moment the close is sent until the full restore finished.</summary>
     private static bool _closing;
 
+    /// <summary>True once the close event was sent after a purchase.</summary>
+    private static bool _closeSent;
+
     /// <summary>True while the live shop window is showing our crests.</summary>
     internal static bool IsOpen { get; set; }
+
+    /// <summary>
+    /// Current fade alpha of the window root. Our schema containers live outside every
+    /// fade group, so they read this every frame and fade along with the window.
+    /// </summary>
+    internal static float FadeAlpha => _fade != null ? SafeAlpha(0f) : 1f;
 
     /// <summary>
     /// True while the live shop window is ours: NPC dialogue must not pop up over it.
@@ -397,22 +421,26 @@ internal static class ShopCrestMenu
     }
 
     /// <summary>
-    /// Starts the post-purchase wait. The vanilla confirm FSM closes the window on its
-    /// own; <see cref="TickPurchase"/> only watches, and steps in when it does not.
+    /// Starts the post-purchase wait. Vanilla never closes the window after a temp entry
+    /// is taken: temp positions are not counted as bought, so <c>StockLeft()</c> stays
+    /// positive and the FSM goes back to <c>Open</c>. <see cref="TickPurchase"/> sends
+    /// the close itself, once the purchase message has been on screen for a moment.
     /// </summary>
     private static void BeginPurchaseWait()
     {
         _purchaseAt = Time.realtimeSinceStartup;
         _purchaseFrame = 0;
         _purchaseLines = 0;
-        _emergencyClose = false;
+        _closeSent = false;
         string state = _control != null ? ActiveState(_control) : "<none>";
-        Plugin.Log.LogInfo($"[SHOP] purchase done, leaving the close to the vanilla FSM (state='{state}')");
+        Plugin.Log.LogInfo($"[SHOP] purchase done, closing in {PurchaseCloseDelay:F1}s from state='{state}'");
     }
 
     /// <summary>
-    /// Watches the window after a purchase: logs the FSM state, and when the vanilla
-    /// confirm chain does not bring it back to idle, closes it and forces the state.
+    /// Closes the window after a purchase. PlayMaker drops an event sent from a state
+    /// that has no such transition, so <c>CLOSE</c> is sent only while the FSM is in
+    /// <c>Open</c>. A window stuck elsewhere waits up to <see cref="PurchaseWaitOpen"/>
+    /// for <c>Open</c>, then gets <c>CLOSE SHOP WINDOW</c> and a forced <c>Idle</c>.
     /// </summary>
     /// <param name="frames">Frames the session has been running, for the trace spacing.</param>
     internal static void TickPurchase(int frames)
@@ -439,18 +467,36 @@ internal static class ShopCrestMenu
             }
 
             float elapsed = Time.realtimeSinceStartup - _purchaseAt;
-            if (!_emergencyClose && elapsed >= 3f)
+            if (_closeSent)
             {
-                _emergencyClose = true;
-                _control.SendEvent(CloseEvent);
-                Plugin.Log.LogWarning($"[SHOP] window still '{state}' 3s after purchase, sent '{CloseEvent}'");
+                if (elapsed >= PurchaseWaitOpen + PurchaseCloseDelay)
+                {
+                    _purchaseAt = 0f;
+                    ForceIdle($"'{state}' {elapsed:F1}s after purchase");
+                }
+
                 return;
             }
 
-            if (_emergencyClose && elapsed >= 5f)
+            if (state == OpenState)
             {
-                _purchaseAt = 0f;
-                ForceIdle($"'{state}' 5s after purchase");
+                if (elapsed < PurchaseCloseDelay)
+                {
+                    return;
+                }
+
+                _closeSent = true;
+                _control.SendEvent(CloseEvent);
+                Plugin.Log.LogInfo($"[SHOP] sent '{CloseEvent}' {elapsed:F2}s after purchase");
+                return;
+            }
+
+            if (elapsed >= PurchaseWaitOpen)
+            {
+                _closeSent = true;
+                _control.SendEvent(CloseEvent);
+                _control.SendEvent(EmergencyCloseEvent);
+                ForceIdle($"'{state}' not '{OpenState}' {elapsed:F1}s after purchase");
             }
         }
         catch (Exception ex)
@@ -495,7 +541,6 @@ internal static class ShopCrestMenu
         _confirmWasActive = _confirmPrompt != null && _confirmPrompt.activeSelf;
         _guardRaised = false;
         _lowAlphaFrames = 0;
-        RestorePrompts();
     }
 
     /// <summary>Reads the root fade alpha, falling back to <paramref name="fallback"/>.</summary>
@@ -583,9 +628,19 @@ internal static class ShopCrestMenu
         return prompts;
     }
 
-    /// <summary>Puts the prompts back to their captured vanilla state; a no-op when they match.</summary>
+    /// <summary>
+    /// Puts the prompts back to their captured vanilla state, only when this session hid
+    /// them. The normal close is the <c>CLOSE</c> chain, whose <c>Down</c> state fades the
+    /// prompts and the selector out itself; re-activating them there leaves the prompts
+    /// on screen after the window is gone.
+    /// </summary>
     private static void RestorePrompts()
     {
+        if (!_promptsHidden)
+        {
+            return;
+        }
+
         try
         {
             if (_cancelPrompt != null && _cancelPrompt.activeSelf != _cancelWasActive)
@@ -598,11 +653,8 @@ internal static class ShopCrestMenu
                 _confirmPrompt.SetActive(_confirmWasActive);
             }
 
-            if (_promptsHidden)
-            {
-                _promptsHidden = false;
-                Plugin.Log.LogInfo($"[SHOP] prompts restored cancel={_cancelWasActive} confirm={_confirmWasActive}");
-            }
+            _promptsHidden = false;
+            Plugin.Log.LogInfo($"[SHOP] prompts restored cancel={_cancelWasActive} confirm={_confirmWasActive}");
         }
         catch (Exception ex)
         {
@@ -887,7 +939,6 @@ internal static class ShopCrestMenu
 
         try
         {
-            Step("cosmetics", ShopCosmetics.End);
             Step("stock", () =>
             {
                 foreach (KeyValuePair<ShopMenuStock, ShopItem[]> pair in Swapped)
@@ -914,6 +965,10 @@ internal static class ShopCrestMenu
                     _root.position = _origPosition;
                 }
             });
+
+            // Last: the window is faded out by now, so the icons and prices it redraws
+            // never flash back on a visible window.
+            Step("cosmetics", ShopCosmetics.End);
 
             Plugin.Log.LogInfo($"[SHOP] live shop restored to vanilla stock and position (reason={reason}).");
         }
@@ -970,7 +1025,7 @@ internal static class ShopCrestMenu
         _lowAlphaFrames = 0;
         _timingLogged = false;
         _purchaseAt = 0f;
-        _emergencyClose = false;
+        _closeSent = false;
         _purchaseFrame = 0;
         _purchaseLines = 0;
         _fade = null;
@@ -1143,7 +1198,7 @@ internal static class ShopCrestMenu
             $" hero={Vec(hero)} camera={Vec(camera)} orig={Vec(_origPosition)}");
     }
 
-    /// <summary>Logs the row fade bounds and item count of the live window.</summary>
+    /// <summary>Logs the row fade bounds and item count of the live window, one line per row.</summary>
     internal static void LogRows()
     {
         try
@@ -1155,21 +1210,40 @@ internal static class ShopCrestMenu
 
             ShopItemStats[] rows = _root.GetComponentsInChildren<ShopItemStats>(true);
             Plugin.Log.LogInfo(
-                $"[SHOP] live rows={rows.Length} stock={_stock.GetItemCount()}" +
-                $" counts={Counts()}");
-            for (int i = 0; i < rows.Length && i < 3; i++)
+                $"[SHOP] live rows={rows.Length} stock={SafeCount()} counts={Counts()}");
+            foreach (ShopItemStats row in rows)
             {
-                ShopItemStats row = rows[i];
+                if (row == null)
+                {
+                    continue;
+                }
+
+                ShopItem? item = row.Item;
+                string itemName = item != null ? item.name : "<none>";
+                int cost = item != null ? item.Cost : -1;
                 Plugin.Log.LogInfo(
-                    $"[SHOP]   row{i} y={row.transform.position.y:F2}" +
+                    $"[SHOP]   row#{row.ItemNumber} y={row.transform.position.y:F2}" +
                     $" top={Float(TopYField, row):F2} bot={Float(BotYField, row):F2}" +
                     $" active={row.gameObject.activeSelf}" +
-                    $" item='{(row.Item != null ? row.Item.name : "<none>")}' cost={row.GetCost()}");
+                    $" item='{itemName}' cost={cost}");
             }
         }
         catch (Exception ex)
         {
-            Plugin.Log.LogWarning($"[SHOP] live row log failed: {ex.Message}");
+            Plugin.Log.LogWarning($"[SHOP] live row log failed: {ex}");
+        }
+    }
+
+    /// <summary>Item count of the window root stock; -1 when it cannot be read.</summary>
+    private static int SafeCount()
+    {
+        try
+        {
+            return _stock != null ? _stock.GetItemCount() : -1;
+        }
+        catch (Exception)
+        {
+            return -1;
         }
     }
 
@@ -1402,6 +1476,20 @@ internal sealed class ShopCrestSession : MonoBehaviour
     private void OnDestroy()
     {
         ShopCrestMenu.Restore("scene unload");
+    }
+}
+
+/// <summary>
+/// Re-writes our crest name right after vanilla sets a row's item. Vanilla writes the
+/// cost in <c>ShopItemStats.SetItem</c>, and that call can land after our per-frame
+/// cosmetic pass, which left the label showing the raw price for the rest of the frame.
+/// </summary>
+[HarmonyPatch(typeof(ShopItemStats), "SetItem")]
+internal static class ShopRowLabelPatch
+{
+    private static void Postfix(ShopItemStats __instance)
+    {
+        ShopCosmetics.OnItemSet(__instance);
     }
 }
 

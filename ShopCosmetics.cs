@@ -1026,6 +1026,36 @@ internal static class ShopCosmetics
         return row != null ? ItemSpriteField?.GetValue(row) as SpriteRenderer : null;
     }
 
+    /// <summary>
+    /// Harmony postfix hook: vanilla writes the price in <c>ShopItemStats.SetItem</c>,
+    /// which may run after our per-frame pass, so the crest name is written back right
+    /// after it. <see cref="ReplacePrice"/> captures the vanilla label state first, so
+    /// <see cref="End"/> still restores the real price.
+    /// </summary>
+    /// <param name="row">Row whose item vanilla just set; may be null.</param>
+    internal static void OnItemSet(ShopItemStats? row)
+    {
+        if (!ShopCrestMenu.IsOpen || row == null)
+        {
+            return;
+        }
+
+        try
+        {
+            ToolCrest? crest = ShopCrestMenu.CrestFor(row.Item);
+            if (crest == null)
+            {
+                return;
+            }
+
+            ReplacePrice(row, crest.DisplayName);
+        }
+        catch (Exception ex)
+        {
+            Plugin.Log.LogWarning($"[SHOPFX] row label postfix failed: {ex.Message}");
+        }
+    }
+
     /// <summary>Writes the crest name where the price was and hides the cost icons.</summary>
     private static void ReplacePrice(ShopItemStats row, string? name)
     {
