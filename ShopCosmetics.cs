@@ -115,6 +115,9 @@ internal static class ShopCosmetics
     /// <summary>True once the fade groups of the first own label have been logged.</summary>
     private static bool _fadeDiagLogged;
 
+    /// <summary>True once the world placement of a pinned label has been logged.</summary>
+    private static bool _pinLogged;
+
     /// <summary>Max label build attempts per row, one per frame, about a second at 60 fps.</summary>
     private const int MaxLabelAttempts = 60;
 
@@ -226,6 +229,7 @@ internal static class ShopCosmetics
             _sourceDiagLogged = false;
             _labelDiagLogged = false;
             _fadeDiagLogged = false;
+            _pinLogged = false;
             LabelFades.Clear();
             LabelAttempts.Clear();
             LabelGivenUp.Clear();
@@ -293,6 +297,7 @@ internal static class ShopCosmetics
 
         try
         {
+            PinLabelTransforms();
             ApplyRowNames();
             ForceLabelAlpha();
             ApplyConfirmButton();
@@ -302,6 +307,67 @@ internal static class ShopCosmetics
         {
             Plugin.Log.LogWarning($"[SHOPFX] confirm button late pass failed: {ex.Message}");
         }
+    }
+
+    /// <summary>
+    /// Puts every own row label exactly on top of the vanilla label it replaces. The clone
+    /// does not follow the window when the window is moved to the hero, so its world
+    /// placement is written absolutely each frame, before the text and the alpha pass.
+    /// </summary>
+    private static void PinLabelTransforms()
+    {
+        foreach (KeyValuePair<TMP_Text, TMP_Text> pair in FallbackLabels)
+        {
+            TMP_Text? vanilla = pair.Key;
+            TMP_Text? label = pair.Value;
+            if (vanilla == null || label == null)
+            {
+                continue;
+            }
+
+            Transform source = vanilla.transform;
+            Transform target = label.transform;
+            target.position = source.position;
+            target.rotation = source.rotation;
+
+            Vector3 parentScale = target.parent != null ? target.parent.lossyScale : Vector3.one;
+            Vector3 worldScale = source.lossyScale;
+            target.localScale = new Vector3(
+                SafeRatio(worldScale.x, parentScale.x),
+                SafeRatio(worldScale.y, parentScale.y),
+                SafeRatio(worldScale.z, parentScale.z));
+
+            if (!_pinLogged)
+            {
+                _pinLogged = true;
+                ShopItemStats? row = vanilla.GetComponentInParent<ShopItemStats>();
+                int index = row != null ? RowIndex(row, vanilla) : vanilla.transform.GetSiblingIndex();
+                float delta = Vector3.Distance(target.position, source.position);
+                Plugin.Log.LogInfo($"[SHOPFX] label pinned row={index}"
+                    + $" ownWorld={Pair(target.position)} vanillaWorld={Pair(source.position)}"
+                    + $" delta={delta:0.###} scale={Pair(target.lossyScale)}");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Converts a wanted world scale into a local scale under a parent of the given world
+    /// scale; a zero axis falls back to one instead of dividing by zero.
+    /// </summary>
+    /// <param name="world">Wanted world size of the axis.</param>
+    /// <param name="parent">World size of the same axis on the parent.</param>
+    /// <returns>Local scale of that axis.</returns>
+    private static float SafeRatio(float world, float parent)
+    {
+        return Mathf.Abs(parent) > 0.00001f ? world / parent : 1f;
+    }
+
+    /// <summary>Formats a vector for the logs with two decimals.</summary>
+    /// <param name="value">Vector to format.</param>
+    /// <returns>Text like <c>(1.23,4.56,7.89)</c>.</returns>
+    private static string Pair(Vector3 value)
+    {
+        return $"({value.x:0.##},{value.y:0.##},{value.z:0.##})";
     }
 
     /// <summary>
@@ -576,6 +642,7 @@ internal static class ShopCosmetics
         SourceLogged.Clear();
         _invisibleLogged = false;
         _sourceDiagLogged = false;
+        _fadeDiagLogged = false;
         LabelAttempts.Clear();
         LabelGivenUp.Clear();
         _readyLogged = 0;
