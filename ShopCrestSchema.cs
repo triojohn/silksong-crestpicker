@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Reflection;
 using CrestPicker.Pure;
 using GlobalSettings;
+using HarmonyLib;
 using HutongGames.PlayMaker;
 using TeamCherry.NestedFadeGroup;
 using TMProOld;
@@ -24,9 +25,9 @@ internal enum SchemaRenderMode
 }
 
 /// <summary>
-/// Cosmetic pass over the shop details panel while our crests are shown: the crest
-/// name label repeats the row label, so it is hidden, and a crest schema takes its
-/// place - the monochrome silhouette plus one coloured dot per slot. Every created
+/// Cosmetic pass over the shop details panel while our crests are shown: the vanilla
+/// name and description labels are kept, and a crest schema takes the place of the item
+/// picture - the monochrome silhouette plus one coloured dot per slot. Every created
 /// object is destroyed and every hidden object restored by <see cref="End"/>.
 /// Never throws.
 /// </summary>
@@ -85,6 +86,7 @@ internal static class ShopCrestSchema
     private static Transform? _schemaRoot;
     private static Transform? _details;
     private static TMP_Text? _nameLabel;
+    private static TMP_Text? _descLabel;
     private static Transform? _confirmGroup;
     private static TMP_Text? _confirmMessage;
 
@@ -107,6 +109,12 @@ internal static class ShopCrestSchema
 
     /// <summary>True from the close start until the next <see cref="Begin"/>; blocks any re-show.</summary>
     private static bool _closed;
+
+    /// <summary>Row index the details FSM last asked <c>ShopMenuStock.GetName</c> about; -1 before.</summary>
+    private static int _selectedIndex = -1;
+
+    /// <summary>True once the first details text correction has been logged for this session.</summary>
+    private static bool _detailsCorrectedLogged;
 
     /// <summary>True once the close-start alpha was logged for this session.</summary>
     private static bool _closeAlphaLogged;
@@ -158,6 +166,7 @@ internal static class ShopCrestSchema
             _root = root;
             _details = null;
             _nameLabel = null;
+            _descLabel = null;
             _confirmGroup = null;
             _confirmMessage = null;
             _builtFor = null;
@@ -165,6 +174,8 @@ internal static class ShopCrestSchema
             _detailsHiddenLogged = false;
             _closed = false;
             _closeAlphaLogged = false;
+            _selectedIndex = -1;
+            _detailsCorrectedLogged = false;
             _confirmGroupActiveLogged = null;
             _detailsBounds = default;
             DestroySchemaRoot();
@@ -243,12 +254,15 @@ internal static class ShopCrestSchema
         _root = null;
         _details = null;
         _nameLabel = null;
+        _descLabel = null;
         _confirmGroup = null;
         _confirmMessage = null;
         _builtFor = null;
         _detailsHiddenLogged = false;
         _confirmGroupActiveLogged = null;
         _detailsBounds = default;
+        _selectedIndex = -1;
+        _detailsCorrectedLogged = false;
         try
         {
             DestroySchema();
@@ -265,7 +279,7 @@ internal static class ShopCrestSchema
         }
     }
 
-    /// <summary>Hides the duplicate name and keeps the schema in step with the selection.</summary>
+    /// <summary>Keeps the schema in step with the selection; the details texts are left to the vanilla FSM.</summary>
     private static void Apply()
     {
         if (_closed)
@@ -278,7 +292,6 @@ internal static class ShopCrestSchema
             return;
         }
 
-        HideName();
         if (!Enabled)
         {
             return;
@@ -633,10 +646,12 @@ internal static class ShopCrestSchema
 
         _details = FindDetails(_root);
         _nameLabel = _details != null ? FindText(_details, "Item name") : null;
+        _descLabel = _details != null ? FindText(_details, "Item desc") : null;
         if (_details == null || _nameLabel == null)
         {
             _details = null;
             _nameLabel = null;
+            _descLabel = null;
             if (!_missingLogged)
             {
                 _missingLogged = true;
@@ -649,32 +664,81 @@ internal static class ShopCrestSchema
         return true;
     }
 
-    /// <summary>Hides the details name label, remembering its vanilla state once.</summary>
-    private static void HideName()
+    /// <summary>Records the row index the details FSM just asked the stock about.</summary>
+    /// <param name="itemNum">Row index passed to <c>ShopMenuStock.GetName</c> or <c>GetDesc</c>.</param>
+    internal static void NoteDetailsIndex(int itemNum)
     {
-        GameObject? go = _nameLabel != null ? _nameLabel.gameObject : null;
-        if (go == null)
+        if (itemNum >= 0)
         {
-            return;
-        }
-
-        if (!ObjectStates.ContainsKey(go))
-        {
-            ObjectStates[go] = go.activeSelf;
-        }
-
-        if (go.activeSelf)
-        {
-            go.SetActive(false);
+            _selectedIndex = itemNum;
         }
     }
 
     /// <summary>
-    /// Crest the details panel currently describes: the selected row's name text is
-    /// compared with every crest shown in the window, description text as a fallback.
+    /// Keeps the details name and description on the selected crest. The vanilla
+    /// <c>Item Name Control</c> FSM writes both from <c>GetName</c>/<c>GetDesc</c> in its
+    /// own Update, so this late pass only corrects a text that differs.
+    /// </summary>
+    internal static void LateTick()
+    {
+        if (_closed || _root == null || !ResolveDetails())
+        {
+            return;
+        }
+
+        try
+        {
+            ToolCrest? crest = SelectedCrest();
+            if (crest == null)
+            {
+                return;
+            }
+
+            string name = (string)crest.DisplayName ?? string.Empty;
+            string desc = (string)crest.Description ?? string.Empty;
+            bool changed = WriteText(_nameLabel, name);
+            changed |= WriteText(_descLabel, desc);
+            if (!changed || _detailsCorrectedLogged)
+            {
+                return;
+            }
+
+            _detailsCorrectedLogged = true;
+            Plugin.Log.LogInfo($"[SHOPFX] details text corrected name='{name}' desc='{desc}'");
+        }
+        catch (Exception ex)
+        {
+            Plugin.Log.LogWarning($"[SHOPFX] details late pass failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>Writes <paramref name="want"/> when the label shows something else.</summary>
+    /// <param name="label">Label to check, may be null.</param>
+    /// <param name="want">Text the label should show.</param>
+    /// <returns>True when the text was rewritten.</returns>
+    private static bool WriteText(TMP_Text? label, string want)
+    {
+        if (label == null || want.Length == 0 || SafeText(label) == want)
+        {
+            return false;
+        }
+
+        label.text = want;
+        return true;
+    }
+
+    /// <summary>
+    /// Crest the details panel currently describes: the row index the FSM asked about,
+    /// then the name text, description text as the last fallback.
     /// </summary>
     private static ToolCrest? SelectedCrest()
     {
+        ToolCrest? byIndex = SelectedCrestByIndex();
+        if (byIndex != null)
+        {
+            return byIndex;
+        }
+
         if (_nameLabel == null || _root == null)
         {
             return null;
@@ -687,8 +751,27 @@ internal static class ShopCrestSchema
             return byName;
         }
 
-        TMP_Text? desc = _details != null ? FindText(_details, "Item desc") : null;
+        TMP_Text? desc = _descLabel ?? (_details != null ? FindText(_details, "Item desc") : null);
         return Match(desc != null ? SafeText(desc) : null, false);
+    }
+
+    /// <summary>Crest of the row the details FSM asked about, null when the index is stale.</summary>
+    private static ToolCrest? SelectedCrestByIndex()
+    {
+        if (_selectedIndex < 0 || _root == null)
+        {
+            return null;
+        }
+
+        foreach (ShopItemStats row in _root.GetComponentsInChildren<ShopItemStats>(true))
+        {
+            if (row != null && row.ItemNumber == _selectedIndex)
+            {
+                return ShopCrestMenu.CrestFor(row.Item);
+            }
+        }
+
+        return null;
     }
 
     /// <summary>Compares one text against every crest of the window.</summary>

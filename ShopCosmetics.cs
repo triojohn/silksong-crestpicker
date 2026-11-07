@@ -71,11 +71,12 @@ internal static class ShopCosmetics
     private const string OwnLabelName = "CrestPicker Row Name";
 
     /// <summary>
-    /// Row label source: <c>Own</c> draws our own TMP label with the localized font,
-    /// <c>Vanilla</c> keeps the game label and its empty-mesh fallback. Read on every
-    /// call, so an edited cfg file takes effect without a restart.
+    /// Row label source: <c>Off</c> draws no row label at all and leaves the vanilla
+    /// <c>Item cost</c> untouched, <c>Own</c> draws our own TMP label with the localized
+    /// font, <c>Vanilla</c> keeps the game label and its empty-mesh fallback. Read on
+    /// every call, so an edited cfg file takes effect without a restart.
     /// </summary>
-    internal static string RowLabelMode = "Own";
+    internal static string RowLabelMode = "Off";
 
     /// <summary>
     /// Diagnostic switch: when true the row label draws an ASCII probe
@@ -302,6 +303,7 @@ internal static class ShopCosmetics
             ForceLabelAlpha();
             ApplyConfirmButton();
             ApplyPurchaseText();
+            ShopCrestSchema.LateTick();
         }
         catch (Exception ex)
         {
@@ -834,7 +836,13 @@ internal static class ShopCosmetics
             }
 
             rows++;
-            HideSprite(ItemSpriteField?.GetValue(row) as SpriteRenderer);
+            HideSprite(CostSpriteField?.GetValue(row) as SpriteRenderer);
+            HideSprite(MaterialIconField?.GetValue(row) as SpriteRenderer);
+            if (LabelOff)
+            {
+                continue;
+            }
+
             ReplacePrice(row, crest.DisplayName);
             CenterName(row);
         }
@@ -1545,16 +1553,13 @@ internal static class ShopCosmetics
         return row != null ? ItemSpriteField?.GetValue(row) as SpriteRenderer : null;
     }
 
-    /// <summary>Writes the crest name where the price was and hides the cost icons.</summary>
+    /// <summary>Writes the crest name where the price was; the cost icons are already hidden.</summary>
     private static void ReplacePrice(ShopItemStats row, string? name)
     {
         if (string.IsNullOrEmpty(name))
         {
             return;
         }
-
-        HideSprite(CostSpriteField?.GetValue(row) as SpriteRenderer);
-        HideSprite(MaterialIconField?.GetValue(row) as SpriteRenderer);
 
         if (!(CostTextField?.GetValue(row) is TMP_Text label) || label == null)
         {
@@ -1593,10 +1598,16 @@ internal static class ShopCosmetics
         return FallbackLabels.TryGetValue(vanilla, out TMP_Text own) && own != null ? own : vanilla;
     }
 
-    /// <summary>True when the row name is drawn by our own label, not the vanilla one.</summary>
+    /// <summary>True when the row name is drawn by our own label.</summary>
     private static bool UsesOwnLabel
     {
-        get { return !string.Equals(RowLabelMode, "Vanilla", StringComparison.OrdinalIgnoreCase); }
+        get { return string.Equals(RowLabelMode, "Own", StringComparison.OrdinalIgnoreCase); }
+    }
+
+    /// <summary>True when no row label is drawn at all and the vanilla cost label stays as is.</summary>
+    private static bool LabelOff
+    {
+        get { return string.Equals(RowLabelMode, "Off", StringComparison.OrdinalIgnoreCase); }
     }
 
     /// <summary>

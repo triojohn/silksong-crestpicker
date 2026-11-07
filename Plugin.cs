@@ -109,10 +109,11 @@ public sealed class Plugin : BaseUnityPlugin
             "Текст сообщения о покупке знака в окне подтверждения");
         _shrinkCrestName = Config.Bind("General", "ShrinkCrestNameToFit", true,
             "Уменьшать шрифт названия знака, чтобы оно влезло в строку");
-        _rowLabelMode = Config.Bind("General", "RowLabelMode", "Own",
-            "Откуда берётся название знака в строке списка: Own — собственная метка с русским шрифтом " +
-            "из Item Details/Item name (значение по умолчанию), Vanilla — прежнее поведение с меткой Item cost " +
-            "и запасной меткой. Ключ нужен только для отката.");
+        _rowLabelMode = Config.Bind("General", "RowLabelMode", "Off",
+            "Откуда берётся название знака в строке списка: Off — без метки строки, только иконки " +
+            "(значение по умолчанию), Own — собственная метка с русским шрифтом " +
+            "из Item Details/Item name, Vanilla — прежнее поведение с меткой Item cost " +
+            "и запасной меткой. Own и Vanilla нужны только для экспериментов.");
         _rowLabelDebugAscii = Config.Bind("General", "RowLabelDebugAscii", false,
             "Диагностика: писать в метку строки 'AAAA <индекс>' латиницей вместо имени знака. " +
             "Отделяет проблему шрифта и глифов от проблемы размещения и рендера.");
