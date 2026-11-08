@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Reflection;
 using BepInEx.Configuration;
 using CrestPicker.Pure;
+using TeamCherry.NestedFadeGroup;
 using TMProOld;
 using UnityEngine;
 
@@ -59,6 +60,9 @@ internal static class ShopCosmetics
 
     /// <summary>Vanilla labels hidden behind a fallback label.</summary>
     private static readonly HashSet<TMP_Text> HiddenLabels = new HashSet<TMP_Text>();
+
+    /// <summary>Rows whose fallback label has been reported hidden.</summary>
+    private static readonly HashSet<TMP_Text> HiddenReported = new HashSet<TMP_Text>();
 
     /// <summary>True once the fallback-label count has been logged for this session.</summary>
     private static bool _fallbackLogged;
@@ -230,6 +234,7 @@ internal static class ShopCosmetics
             LabelAttempts.Clear();
             LabelGivenUp.Clear();
             MissingLabelRows.Clear();
+            HiddenReported.Clear();
             _readyLogged = 0;
             _centreTargetX = null;
             _centreSource = "none";
@@ -354,6 +359,7 @@ internal static class ShopCosmetics
                     + $" rowCentreX={rowCentreX:0.###}"
                     + $" labelX={target.position.x + LabelRectOffsetX(target):0.###}"
                     + $" y={target.position.y:0.###}"
+                    + $" alpha={RowAlpha(row):0.###}"
                     + $" visible={(own != null && own.enabled)}");
             }
         }
@@ -463,8 +469,9 @@ internal static class ShopCosmetics
     /// <summary>
     /// Keeps our own row labels in step with the row they sit on. A label must vanish with
     /// its row when the row scrolls out of the list, so nothing is forced on: the alpha is
-    /// copied from the vanilla price label (the row icon when the label has no colour) and
-    /// the renderer is only enabled while that row is actually drawn.
+    /// read from the row fade group (both the vanilla price label and the row icon are
+    /// hidden by us, so their alpha says nothing) and the renderer is only enabled while
+    /// that row is actually drawn.
     /// </summary>
     private static void SyncLabelVisibility()
     {
@@ -483,11 +490,12 @@ internal static class ShopCosmetics
                 continue;
             }
 
-            SpriteRenderer? icon = RowIcon(vanilla.GetComponentInParent<ShopItemStats>());
-            float alpha = RowAlpha(vanilla, icon);
-            bool rowLive = vanilla.gameObject.activeInHierarchy && (icon == null || icon.enabled);
-            bool visible = rowLive && alpha > 0.01f && RowInsideList(vanilla)
-                && renderer.bounds.size.x > 0.0001f;
+            ShopItemStats? row = vanilla.GetComponentInParent<ShopItemStats>();
+            float alpha = RowAlpha(row);
+            bool rowLive = row != null && row.gameObject.activeInHierarchy;
+            bool inside = RowInsideList(vanilla);
+            bool empty = renderer.bounds.size.x <= 0.0001f;
+            bool visible = rowLive && inside && !empty && alpha > 0.01f;
 
             if (renderer.enabled != visible)
             {
@@ -496,27 +504,51 @@ internal static class ShopCosmetics
 
             if (visible)
             {
+                HiddenReported.Remove(vanilla);
                 Color colour = label.color;
                 if (!Mathf.Approximately(colour.a, alpha))
                 {
                     colour.a = alpha;
                     label.color = colour;
                 }
+
+                continue;
             }
+
+            ReportLabelHidden(vanilla, row, rowLive, inside, !empty);
         }
     }
 
-    /// <summary>Alpha the row is drawn with: the vanilla label's, else the row icon's.</summary>
+    /// <summary>Logs once per row why its fallback label is not drawn.</summary>
     /// <param name="vanilla">Vanilla price label of the row.</param>
-    /// <param name="icon">Row icon renderer, may be null.</param>
-    private static float RowAlpha(TMP_Text vanilla, SpriteRenderer? icon)
+    /// <param name="row">Row view of the shop entry, may be null.</param>
+    /// <param name="rowLive">True while the row object is active.</param>
+    /// <param name="inside">True while the row overlaps the item list.</param>
+    /// <param name="hasMesh">True while the label has a non-empty mesh.</param>
+    private static void ReportLabelHidden(
+        TMP_Text vanilla, ShopItemStats? row, bool rowLive, bool inside, bool hasMesh)
     {
-        if (vanilla != null)
+        if (!HiddenReported.Add(vanilla))
         {
-            return vanilla.color.a;
+            return;
         }
 
-        return icon != null ? icon.color.a : 1f;
+        string why = !rowLive ? "inactive" : !inside ? "outside" : !hasMesh ? "empty" : "alpha";
+        int index = row != null ? RowIndex(row, vanilla) : vanilla.transform.GetSiblingIndex();
+        Plugin.Log.LogInfo($"[SHOPFX] row label hidden row={index} why={why}");
+    }
+
+    /// <summary>Alpha the row is drawn with, taken from its fade group.</summary>
+    /// <param name="row">Row view of the shop entry, may be null.</param>
+    private static float RowAlpha(ShopItemStats? row)
+    {
+        if (row == null)
+        {
+            return 1f;
+        }
+
+        NestedFadeGroupBase? group = row.GetComponentInParent<NestedFadeGroupBase>();
+        return group != null ? group.AlphaTotal : 1f;
     }
 
     /// <summary>
