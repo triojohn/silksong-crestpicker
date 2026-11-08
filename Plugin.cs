@@ -60,7 +60,6 @@ public sealed class Plugin : BaseUnityPlugin
     private ConfigEntry<string> _purchaseText = null!;
     private ConfigEntry<bool> _shrinkCrestName = null!;
     private ConfigEntry<string> _textCentreSource = null!;
-    private ConfigEntry<string> _rowLabelMode = null!;
     private ConfigEntry<bool> _rowLabelDebugAscii = null!;
 
     private bool _loggedAlive;
@@ -109,11 +108,6 @@ public sealed class Plugin : BaseUnityPlugin
             "Текст сообщения о покупке знака в окне подтверждения");
         _shrinkCrestName = Config.Bind("General", "ShrinkCrestNameToFit", true,
             "Уменьшать шрифт названия знака, чтобы оно влезло в строку");
-        _rowLabelMode = Config.Bind("General", "RowLabelMode", "Off",
-            "Откуда берётся название знака в строке списка: Off — без метки строки, только иконки " +
-            "(значение по умолчанию), Own — собственная метка с русским шрифтом " +
-            "из Item Details/Item name, Vanilla — прежнее поведение с меткой Item cost " +
-            "и запасной меткой. Own и Vanilla нужны только для экспериментов.");
         _rowLabelDebugAscii = Config.Bind("General", "RowLabelDebugAscii", false,
             "Диагностика: писать в метку строки 'AAAA <индекс>' латиницей вместо имени знака. " +
             "Отделяет проблему шрифта и глифов от проблемы размещения и рендера.");
@@ -152,7 +146,6 @@ public sealed class Plugin : BaseUnityPlugin
         ShopCosmetics.ConfirmButtonText = _confirmButtonText.Value;
         ShopCosmetics.PurchaseText = _purchaseText.Value;
         ShopCosmetics.ShrinkNameToFit = _shrinkCrestName.Value;
-        ShopCosmetics.RowLabelMode = _rowLabelMode.Value;
         ShopCosmetics.DebugAsciiRowLabel = _rowLabelDebugAscii.Value;
         ShopCosmetics.CentreSourceConfig = _textCentreSource;
         Logger.LogInfo($"[CREST] crest pool mode: {CrestPickerService.PoolMode}" +

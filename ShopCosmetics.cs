@@ -71,12 +71,11 @@ internal static class ShopCosmetics
     private const string OwnLabelName = "CrestPicker Row Name";
 
     /// <summary>
-    /// Row label source: <c>Off</c> draws no row label at all and leaves the vanilla
-    /// <c>Item cost</c> untouched, <c>Own</c> draws our own TMP label with the localized
-    /// font, <c>Vanilla</c> keeps the game label and its empty-mesh fallback. Read on
-    /// every call, so an edited cfg file takes effect without a restart.
+    /// Row label source, fixed at <c>Off</c>: the list draws no names of its own and the
+    /// details panel owns all the text. The old <c>General/RowLabelMode</c> cfg key is gone,
+    /// so a leftover <c>Own</c> or <c>Vanilla</c> value in an existing cfg turns nothing on.
     /// </summary>
-    internal static string RowLabelMode = "Off";
+    private const string RowLabelMode = "Off";
 
     /// <summary>
     /// Diagnostic switch: when true the row label draws an ASCII probe
@@ -298,9 +297,6 @@ internal static class ShopCosmetics
 
         try
         {
-            PinLabelTransforms();
-            ApplyRowNames();
-            ForceLabelAlpha();
             ApplyConfirmButton();
             ApplyPurchaseText();
             ShopCrestSchema.LateTick();
@@ -813,15 +809,13 @@ internal static class ShopCosmetics
         }
     }
 
-    /// <summary>Applies every cosmetic change to the rows and the confirmation prompt.</summary>
+    /// <summary>
+    /// Applies every cosmetic change to the rows and the confirmation prompt. A row keeps
+    /// nothing but the vanilla selection highlight: its icon, cost sprite, material icon and
+    /// the vanilla cost label are all hidden. Every row name lives in the details panel.
+    /// </summary>
     private static void Apply(Transform root)
     {
-        if (UsesOwnLabel)
-        {
-            PruneOwnLabels();
-        }
-
-        int rows = 0;
         foreach (ShopItemStats row in root.GetComponentsInChildren<ShopItemStats>(true))
         {
             if (row == null)
@@ -835,21 +829,10 @@ internal static class ShopCosmetics
                 continue;
             }
 
-            rows++;
+            HideSprite(ItemSpriteField?.GetValue(row) as SpriteRenderer);
             HideSprite(CostSpriteField?.GetValue(row) as SpriteRenderer);
             HideSprite(MaterialIconField?.GetValue(row) as SpriteRenderer);
-            if (LabelOff)
-            {
-                continue;
-            }
-
-            ReplacePrice(row, crest.DisplayName);
-            CenterName(row);
-        }
-
-        if (UsesOwnLabel)
-        {
-            ReportOwnLabels(rows);
+            HideLabel(CostTextField?.GetValue(row) as TMP_Text);
         }
 
         ApplyConfirm(root);
@@ -2194,6 +2177,18 @@ internal static class ShopCosmetics
         {
             go.SetActive(false);
         }
+    }
+
+    /// <summary>Switches one vanilla text off; <see cref="End"/> switches it back on.</summary>
+    private static void HideLabel(TMP_Text? label)
+    {
+        if (label == null || !label.enabled)
+        {
+            return;
+        }
+
+        HiddenLabels.Add(label);
+        label.enabled = false;
     }
 
     /// <summary>Makes the price label wrap and shrink instead of overflowing its row.</summary>
