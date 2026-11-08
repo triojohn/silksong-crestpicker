@@ -143,6 +143,16 @@ internal static class ShopCosmetics
     private static Transform? _details;
     private static Transform? _window;
     private static Transform? _backboard;
+
+    /// <summary>
+    /// Selection bar drawn at the selected row (<c>selector</c> under the list group).
+    /// Re-resolved every <see cref="SelectorSearchInterval"/> frames while null, because the
+    /// window may rebuild it; the row label centres on it horizontally.
+    /// </summary>
+    private static Transform? _selector;
+
+    /// <summary>Frames between two searches for a missing selection bar.</summary>
+    private const int SelectorSearchInterval = 15;
     private static TMP_Text? _confirm;
     private static string? _confirmOriginal;
     private static TMP_Text? _confirmButton;
@@ -229,6 +239,7 @@ internal static class ShopCosmetics
             _details = null;
             _window = null;
             _backboard = null;
+            _selector = null;
             _frames = 0;
             _missingLogged = false;
             _candidatesLogged = false;
@@ -330,6 +341,11 @@ internal static class ShopCosmetics
     /// </summary>
     private static void PinLabelTransforms()
     {
+        if (_selector == null && _frames % SelectorSearchInterval == 0)
+        {
+            _selector = FindSelector();
+        }
+
         foreach (KeyValuePair<TMP_Text, TMP_Text> pair in FallbackLabels)
         {
             TMP_Text? vanilla = pair.Key;
@@ -353,9 +369,15 @@ internal static class ShopCosmetics
             Vector3 position = source.position;
             ShopItemStats? row = vanilla.GetComponentInParent<ShopItemStats>();
             SpriteRenderer? icon = RowIcon(row);
+            float anchorX = _selector != null ? _selector.position.x : (icon != null ? icon.transform.position.x : 0f);
             float targetX;
             float targetY;
-            if (icon != null)
+            if (_selector != null)
+            {
+                targetX = anchorX + (RowLabelOffsetX?.Value ?? 0f);
+                targetY = (icon != null ? icon.transform.position.y : position.y) + (RowLabelOffsetY?.Value ?? 0f);
+            }
+            else if (icon != null)
             {
                 targetX = icon.transform.position.x + (RowLabelOffsetX?.Value ?? 0f);
                 targetY = icon.transform.position.y + (RowLabelOffsetY?.Value ?? 0f);
@@ -380,8 +402,9 @@ internal static class ShopCosmetics
                 Renderer? own = label.GetComponent<Renderer>();
                 Vector3 shift = LabelRectOffset(target);
                 Plugin.Log.LogInfo($"[SHOPFX] row label placed row={index}"
-                    + $" iconX={targetX:0.###}"
-                    + $" iconY={targetY:0.###}"
+                    + $" anchor={(_selector != null ? "selector" : "icon")}"
+                    + $" selectorX={(_selector != null ? _selector.position.x : float.NaN):0.###}"
+                    + $" iconX={(icon != null ? icon.transform.position.x : float.NaN):0.###}"
                     + $" labelX={target.position.x + shift.x:0.###}"
                     + $" labelY={target.position.y + shift.y:0.###}"
                     + $" alpha={RowAlpha(row):0.###}"
@@ -752,6 +775,7 @@ internal static class ShopCosmetics
         _details = null;
         _window = null;
         _backboard = null;
+        _selector = null;
         _candidatesLogged = false;
         _sourceWarned = false;
         _fallbackLogged = false;
@@ -1545,7 +1569,7 @@ internal static class ShopCosmetics
         return true;
     }
 
-    /// <summary>Resolves the list, the list group, the window and its backboard once per session.</summary>
+    /// <summary>Resolves the list, the list group, the window, its backboard and the selection bar once per session.</summary>
     private static void ResolveTargets()
     {
         if (_root == null || _list != null)
@@ -1558,6 +1582,39 @@ internal static class ShopCosmetics
         _details = _root.Find(DetailsPath) ?? FindByName(_root, "Item Details");
         _window = _root.Find("Window") ?? FindByName(_root, "Window");
         _backboard = _root.Find("Window/Shop_Backboard") ?? FindByName(_root, "Shop_Backboard");
+        _selector = FindSelector();
+    }
+
+    /// <summary>
+    /// Selection bar of the list: a <c>selector</c> child of the list group, or of the window
+    /// root when the group itself has none. Matched case-insensitively, since the object is
+    /// named <c>selector</c> in this build.
+    /// </summary>
+    /// <returns>The bar, or null when the window does not have one.</returns>
+    private static Transform? FindSelector()
+    {
+        return FindChildNamed(_listGroup, "selector") ?? FindChildNamed(_root, "selector");
+    }
+
+    /// <summary>Direct or nested child of that exact name, ignoring letter case.</summary>
+    /// <param name="root">Object to search under; null is a miss.</param>
+    /// <param name="name">Wanted object name.</param>
+    private static Transform? FindChildNamed(Transform? root, string name)
+    {
+        if (root == null)
+        {
+            return null;
+        }
+
+        foreach (Transform child in root.GetComponentsInChildren<Transform>(true))
+        {
+            if (child != null && string.Equals(child.name, name, StringComparison.OrdinalIgnoreCase))
+            {
+                return child;
+            }
+        }
+
+        return null;
     }
 
     /// <summary>First descendant with the given name.</summary>
