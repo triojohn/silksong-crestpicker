@@ -22,9 +22,6 @@ internal static class ShopCosmetics
     /// <summary>Frames between two currency-counter sweeps.</summary>
     private const int CounterSweepInterval = 15;
 
-    /// <summary>Fraction of the vanilla font size the name may shrink to.</summary>
-    private const float MinFontSizeFactor = 0.35f;
-
     private static readonly FieldInfo? ItemSpriteField =
         typeof(ShopItemStats).GetField("itemSprite", PrivateInstance);
 
@@ -71,11 +68,11 @@ internal static class ShopCosmetics
     private const string OwnLabelName = "CrestPicker Row Name";
 
     /// <summary>
-    /// Row label source, fixed at <c>Off</c>: the list draws no names of its own and the
-    /// details panel owns all the text. The old <c>General/RowLabelMode</c> cfg key is gone,
-    /// so a leftover <c>Own</c> or <c>Vanilla</c> value in an existing cfg turns nothing on.
+    /// Row label source, fixed at <c>Own</c>: the row name is drawn by our own label, cloned
+    /// from the visible details text and given a fixed size. The old <c>General/RowLabelMode</c>
+    /// cfg key is gone, so a leftover value in an existing cfg changes nothing.
     /// </summary>
-    private const string RowLabelMode = "Off";
+    private const string RowLabelMode = "Own";
 
     /// <summary>
     /// Diagnostic switch: when true the row label draws an ASCII probe
@@ -104,6 +101,12 @@ internal static class ShopCosmetics
 
     /// <summary>Outstanding row labels, logged when the count changes.</summary>
     private static int _readyLogged;
+
+    /// <summary>Rows whose missing label has already been reported, one log line per row.</summary>
+    private static readonly HashSet<int> MissingLabelRows = new HashSet<int>();
+
+    /// <summary>Why the last label build failed, written into the one missing-label log line.</summary>
+    private static string _labelFailure = "unknown";
 
     /// <summary>True once the first own label and its reference have been logged.</summary>
     private static bool _labelDiagLogged;
@@ -233,6 +236,7 @@ internal static class ShopCosmetics
             LabelFades.Clear();
             LabelAttempts.Clear();
             LabelGivenUp.Clear();
+            MissingLabelRows.Clear();
             _readyLogged = 0;
             _centreTargetX = null;
             _centreSource = "none";
@@ -297,6 +301,9 @@ internal static class ShopCosmetics
 
         try
         {
+            PinLabelTransforms();
+            ApplyRowNames();
+            ForceLabelAlpha();
             ApplyConfirmButton();
             ApplyPurchaseText();
             ShopCrestSchema.LateTick();
@@ -810,12 +817,18 @@ internal static class ShopCosmetics
     }
 
     /// <summary>
-    /// Applies every cosmetic change to the rows and the confirmation prompt. A row keeps
-    /// nothing but the vanilla selection highlight: its icon, cost sprite, material icon and
-    /// the vanilla cost label are all hidden. Every row name lives in the details panel.
+    /// Applies every cosmetic change to the rows and the confirmation prompt. A row keeps the
+    /// vanilla selection highlight and our own fixed-size name label; its icon, cost sprite,
+    /// material icon and the vanilla cost label are all hidden.
     /// </summary>
     private static void Apply(Transform root)
     {
+        if (UsesOwnLabel)
+        {
+            PruneOwnLabels();
+        }
+
+        int rows = 0;
         foreach (ShopItemStats row in root.GetComponentsInChildren<ShopItemStats>(true))
         {
             if (row == null)
@@ -829,10 +842,16 @@ internal static class ShopCosmetics
                 continue;
             }
 
+            rows++;
             HideSprite(ItemSpriteField?.GetValue(row) as SpriteRenderer);
             HideSprite(CostSpriteField?.GetValue(row) as SpriteRenderer);
             HideSprite(MaterialIconField?.GetValue(row) as SpriteRenderer);
-            HideLabel(CostTextField?.GetValue(row) as TMP_Text);
+            ReplacePrice(row, crest.DisplayName);
+        }
+
+        if (UsesOwnLabel)
+        {
+            ReportOwnLabels(rows);
         }
 
         ApplyConfirm(root);
@@ -1536,7 +1555,10 @@ internal static class ShopCosmetics
         return row != null ? ItemSpriteField?.GetValue(row) as SpriteRenderer : null;
     }
 
-    /// <summary>Writes the crest name where the price was; the cost icons are already hidden.</summary>
+    /// <summary>
+    /// Writes the crest name into our own fixed-size label on the row; the cost icons and the
+    /// vanilla <c>Item cost</c> label are already hidden.
+    /// </summary>
     private static void ReplacePrice(ShopItemStats row, string? name)
     {
         if (string.IsNullOrEmpty(name))
@@ -1549,20 +1571,25 @@ internal static class ShopCosmetics
             return;
         }
 
-        if (!UsesOwnLabel)
+        string text = DrawnLabel(row, label, name!);
+        if (EnsureOwnLabel(row, label, text) == null)
         {
-            string vanillaText = DrawnLabel(row, label, name!);
-            FitLabel(label);
-            if (label.text != vanillaText)
-            {
-                label.text = vanillaText;
-            }
+            LogMissingLabel(row, label);
+        }
+    }
 
-            RowNames[label] = vanillaText;
+    /// <summary>Reports a row whose label could not be built, once per row.</summary>
+    /// <param name="row">Row that has no label.</param>
+    /// <param name="vanilla">Vanilla label of that row.</param>
+    private static void LogMissingLabel(ShopItemStats row, TMP_Text vanilla)
+    {
+        int index = RowIndex(row, vanilla);
+        if (!MissingLabelRows.Add(index))
+        {
             return;
         }
 
-        EnsureOwnLabel(row, label, DrawnLabel(row, label, name!));
+        Plugin.Log.LogWarning($"[SHOPFX] row label missing row={index} reason={_labelFailure}");
     }
 
     /// <summary>Text the row label should draw: the crest name, or the ASCII probe.</summary>
@@ -1631,6 +1658,7 @@ internal static class ShopCosmetics
         {
             LabelAttempts.Remove(vanilla);
             LabelGivenUp.Add(vanilla);
+            _labelFailure = $"gave up after {MaxLabelAttempts} attempts";
             Plugin.Log.LogWarning($"[SHOPFX] row label giving up after {MaxLabelAttempts} attempts"
                 + $" row={RowIndex(row, vanilla)}");
             return null;
@@ -1641,6 +1669,7 @@ internal static class ShopCosmetics
         TMP_Text? source = VisibleLabelSource();
         if (source == null || source.font == null || source.fontSharedMaterial == null)
         {
+            _labelFailure = "no visible TMP text in 'Item Details'";
             if (attempt == 1)
             {
                 Plugin.Log.LogWarning(
@@ -2094,6 +2123,7 @@ internal static class ShopCosmetics
         }
         catch (Exception ex)
         {
+            _labelFailure = $"step {step}: {ex.Message}";
             if (attempt <= 1)
             {
                 Plugin.Log.LogWarning($"[SHOPFX] row label failed step={step}: {ex.Message}");
@@ -2108,14 +2138,20 @@ internal static class ShopCosmetics
         }
     }
 
-    /// <summary>Text settings of our own row label: plain white, no wrap, no auto-size.</summary>
+    /// <summary>
+    /// Text settings of our own row label: plain white, no wrap, no auto-size, and the exact
+    /// font size of the vanilla <c>Item cost</c> label — no shrink factor, no fitter.
+    /// </summary>
     private static void StyleOwnLabel(TMP_Text text, TMP_Text vanilla)
     {
+        float size = vanilla.fontSize;
         text.color = new Color(1f, 1f, 1f, 1f);
         text.enableAutoSizing = false;
         text.enableWordWrapping = false;
         text.OverflowMode = TextOverflowModes.Overflow;
-        text.fontSize = vanilla.fontSize;
+        text.fontSize = size;
+        text.fontSizeMin = size;
+        text.fontSizeMax = size;
         text.alignment = TextAlignmentOptions.Center;
     }
 
@@ -2189,35 +2225,6 @@ internal static class ShopCosmetics
 
         HiddenLabels.Add(label);
         label.enabled = false;
-    }
-
-    /// <summary>Makes the price label wrap and shrink instead of overflowing its row.</summary>
-    private static void FitLabel(TMP_Text label)
-    {
-        if (TextStates.ContainsKey(label))
-        {
-            return;
-        }
-
-        TextState state = TextState.Capture(label);
-        TextStates[label] = state;
-        if (!ShrinkNameToFit)
-        {
-            return;
-        }
-
-        try
-        {
-            label.enableAutoSizing = false;
-            label.fontSizeMax = Mathf.Max(1f, state.FontSize);
-            label.fontSizeMin = Mathf.Max(1f, state.FontSize * MinFontSizeFactor);
-            label.enableWordWrapping = true;
-            label.enableAutoSizing = true;
-        }
-        catch (Exception ex)
-        {
-            Plugin.Log.LogWarning($"[SHOPFX] label fit failed on '{label.name}': {ex.Message}");
-        }
     }
 
     /// <summary>Puts one price label back to its vanilla text and settings.</summary>
