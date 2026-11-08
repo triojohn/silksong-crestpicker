@@ -190,6 +190,15 @@ internal static class ShopCosmetics
     /// </summary>
     internal static ConfigEntry<string>? CentreSourceConfig;
 
+    /// <summary>
+    /// World offset added to the row icon position before the label is placed there.
+    /// Read on every call, so an edited cfg file takes effect without a restart.
+    /// </summary>
+    internal static ConfigEntry<float>? RowLabelOffsetX;
+
+    /// <summary>World vertical offset added to the row icon position for the label.</summary>
+    internal static ConfigEntry<float>? RowLabelOffsetY;
+
     /// <summary>Source names <see cref="CrestPicker.Pure.CentreSource"/> accepts.</summary>
     private static readonly string[] CentreSourceNames =
     {
@@ -313,11 +322,11 @@ internal static class ShopCosmetics
     }
 
     /// <summary>
-    /// Puts every own row label in the middle of its row. Y and Z, rotation and scale come
-    /// from the vanilla price label; X is written so the centre of the drawn text lands on
-    /// the centre of the row rect, not on the price spot at the right edge. The clone does
-    /// not follow the window when the window is moved to the hero, so the world placement
-    /// is written absolutely each frame, before the text and the visibility pass.
+    /// Puts every own row label onto the icon of its row plus the configured offset. The
+    /// world point is corrected by the label rect centre, so the drawn text is centred on
+    /// the icon; Z comes from the vanilla price label, rotation and scale too. The clone
+    /// does not follow the window when the window is moved to the hero, so the world
+    /// placement is written absolutely each frame, before the text and the visibility pass.
     /// </summary>
     private static void PinLabelTransforms()
     {
@@ -342,8 +351,23 @@ internal static class ShopCosmetics
                 SafeRatio(worldScale.z, parentScale.z));
 
             Vector3 position = source.position;
-            float rowCentreX = RowCentreX(vanilla, position.x);
-            position.x = rowCentreX - LabelRectOffsetX(target);
+            ShopItemStats? row = vanilla.GetComponentInParent<ShopItemStats>();
+            SpriteRenderer? icon = RowIcon(row);
+            float targetX;
+            float targetY;
+            if (icon != null)
+            {
+                targetX = icon.transform.position.x + (RowLabelOffsetX?.Value ?? 0f);
+                targetY = icon.transform.position.y + (RowLabelOffsetY?.Value ?? 0f);
+            }
+            else
+            {
+                targetX = RowCentreX(vanilla, position.x);
+                targetY = position.y;
+            }
+
+            position.x = targetX - LabelRectOffset(target).x;
+            position.y = targetY - LabelRectOffset(target).y;
             if (Vector3.Distance(position, target.position) > 0.0001f)
             {
                 target.position = position;
@@ -352,13 +376,14 @@ internal static class ShopCosmetics
             if (!_pinLogged)
             {
                 _pinLogged = true;
-                ShopItemStats? row = vanilla.GetComponentInParent<ShopItemStats>();
                 int index = row != null ? RowIndex(row, vanilla) : vanilla.transform.GetSiblingIndex();
                 Renderer? own = label.GetComponent<Renderer>();
+                Vector3 shift = LabelRectOffset(target);
                 Plugin.Log.LogInfo($"[SHOPFX] row label placed row={index}"
-                    + $" rowCentreX={rowCentreX:0.###}"
-                    + $" labelX={target.position.x + LabelRectOffsetX(target):0.###}"
-                    + $" y={target.position.y:0.###}"
+                    + $" iconX={targetX:0.###}"
+                    + $" iconY={targetY:0.###}"
+                    + $" labelX={target.position.x + shift.x:0.###}"
+                    + $" labelY={target.position.y + shift.y:0.###}"
                     + $" alpha={RowAlpha(row):0.###}"
                     + $" visible={(own != null && own.enabled)}");
             }
@@ -380,18 +405,18 @@ internal static class ShopCosmetics
     }
 
     /// <summary>
-    /// World X distance from the label transform to the centre of its own rect. The clone
+    /// World offset from the label transform to the centre of its own rect. The clone
     /// keeps the price pivot, so the drawn text is not centred on the transform itself.
     /// </summary>
     /// <param name="label">Transform of our row label.</param>
-    private static float LabelRectOffsetX(Transform label)
+    private static Vector3 LabelRectOffset(Transform label)
     {
         if (!(label is RectTransform rect))
         {
-            return 0f;
+            return Vector3.zero;
         }
 
-        return rect.TransformPoint(rect.rect.center).x - label.position.x;
+        return rect.TransformPoint(rect.rect.center) - label.position;
     }
 
     /// <summary>

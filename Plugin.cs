@@ -61,6 +61,8 @@ public sealed class Plugin : BaseUnityPlugin
     private ConfigEntry<bool> _shrinkCrestName = null!;
     private ConfigEntry<string> _textCentreSource = null!;
     private ConfigEntry<bool> _rowLabelDebugAscii = null!;
+    private ConfigEntry<float> _rowLabelOffsetX = null!;
+    private ConfigEntry<float> _rowLabelOffsetY = null!;
 
     private bool _loggedAlive;
 
@@ -111,6 +113,12 @@ public sealed class Plugin : BaseUnityPlugin
         _rowLabelDebugAscii = Config.Bind("General", "RowLabelDebugAscii", false,
             "Диагностика: писать в метку строки 'AAAA <индекс>' латиницей вместо имени знака. " +
             "Отделяет проблему шрифта и глифов от проблемы размещения и рендера.");
+        _rowLabelOffsetX = Config.Bind("General", "RowLabelOffsetX", 0f,
+            "Смещение названия знака по X от иконки строки, в мировых единицах. " +
+            "Читается каждый кадр.");
+        _rowLabelOffsetY = Config.Bind("General", "RowLabelOffsetY", 0f,
+            "Смещение названия знака по Y от иконки строки, в мировых единицах (минус — вниз). " +
+            "Читается каждый кадр.");
         _textCentreSource = Config.Bind("General", "TextCentreSource", "columns",
             "Источник цели для центрирования названия знака: columns (середина между левым краем " +
             "Window/Shop_Backboard и левым краем Item Details), column (середина между левым краем " +
@@ -147,6 +155,8 @@ public sealed class Plugin : BaseUnityPlugin
         ShopCosmetics.PurchaseText = _purchaseText.Value;
         ShopCosmetics.ShrinkNameToFit = _shrinkCrestName.Value;
         ShopCosmetics.DebugAsciiRowLabel = _rowLabelDebugAscii.Value;
+        ShopCosmetics.RowLabelOffsetX = _rowLabelOffsetX;
+        ShopCosmetics.RowLabelOffsetY = _rowLabelOffsetY;
         ShopCosmetics.CentreSourceConfig = _textCentreSource;
         Logger.LogInfo($"[CREST] crest pool mode: {CrestPickerService.PoolMode}" +
             $" (GrantAllCrests={_grantAllCrests.Value}, CrestPool={_crestPool.Value}).");
