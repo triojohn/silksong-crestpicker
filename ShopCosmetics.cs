@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.Reflection;
 using BepInEx.Configuration;
 using CrestPicker.Pure;
-using TeamCherry.NestedFadeGroup;
 using TMProOld;
 using UnityEngine;
 
@@ -111,15 +110,11 @@ internal static class ShopCosmetics
     /// <summary>True once the first own label and its reference have been logged.</summary>
     private static bool _labelDiagLogged;
 
-    /// <summary>Fade groups of every own label, collected once when the label is built.</summary>
-    private static readonly Dictionary<TMP_Text, NestedFadeGroupBase[]> LabelFades =
-        new Dictionary<TMP_Text, NestedFadeGroupBase[]>();
-
-    /// <summary>True once the fade groups of the first own label have been logged.</summary>
-    private static bool _fadeDiagLogged;
-
     /// <summary>True once the world placement of a pinned label has been logged.</summary>
     private static bool _pinLogged;
+
+    /// <summary>Shared corner buffer for the row-versus-list overlap test.</summary>
+    private static readonly Vector3[] Corners = new Vector3[4];
 
     /// <summary>Max label build attempts per row, one per frame, about a second at 60 fps.</summary>
     private const int MaxLabelAttempts = 60;
@@ -231,9 +226,7 @@ internal static class ShopCosmetics
             _invisibleLogged = false;
             _sourceDiagLogged = false;
             _labelDiagLogged = false;
-            _fadeDiagLogged = false;
             _pinLogged = false;
-            LabelFades.Clear();
             LabelAttempts.Clear();
             LabelGivenUp.Clear();
             MissingLabelRows.Clear();
@@ -303,7 +296,7 @@ internal static class ShopCosmetics
         {
             PinLabelTransforms();
             ApplyRowNames();
-            ForceLabelAlpha();
+            SyncLabelVisibility();
             ApplyConfirmButton();
             ApplyPurchaseText();
             ShopCrestSchema.LateTick();
@@ -315,9 +308,11 @@ internal static class ShopCosmetics
     }
 
     /// <summary>
-    /// Puts every own row label exactly on top of the vanilla label it replaces. The clone
-    /// does not follow the window when the window is moved to the hero, so its world
-    /// placement is written absolutely each frame, before the text and the alpha pass.
+    /// Puts every own row label in the middle of its row. Y and Z, rotation and scale come
+    /// from the vanilla price label; X is written so the centre of the drawn text lands on
+    /// the centre of the row rect, not on the price spot at the right edge. The clone does
+    /// not follow the window when the window is moved to the hero, so the world placement
+    /// is written absolutely each frame, before the text and the visibility pass.
     /// </summary>
     private static void PinLabelTransforms()
     {
@@ -332,7 +327,6 @@ internal static class ShopCosmetics
 
             Transform source = vanilla.transform;
             Transform target = label.transform;
-            target.position = source.position;
             target.rotation = source.rotation;
 
             Vector3 parentScale = target.parent != null ? target.parent.lossyScale : Vector3.one;
@@ -342,17 +336,56 @@ internal static class ShopCosmetics
                 SafeRatio(worldScale.y, parentScale.y),
                 SafeRatio(worldScale.z, parentScale.z));
 
+            Vector3 position = source.position;
+            float rowCentreX = RowCentreX(vanilla, position.x);
+            position.x = rowCentreX - LabelRectOffsetX(target);
+            if (Vector3.Distance(position, target.position) > 0.0001f)
+            {
+                target.position = position;
+            }
+
             if (!_pinLogged)
             {
                 _pinLogged = true;
                 ShopItemStats? row = vanilla.GetComponentInParent<ShopItemStats>();
                 int index = row != null ? RowIndex(row, vanilla) : vanilla.transform.GetSiblingIndex();
-                float delta = Vector3.Distance(target.position, source.position);
-                Plugin.Log.LogInfo($"[SHOPFX] label pinned row={index}"
-                    + $" ownWorld={Pair(target.position)} vanillaWorld={Pair(source.position)}"
-                    + $" delta={delta:0.###} scale={Pair(target.lossyScale)}");
+                Renderer? own = label.GetComponent<Renderer>();
+                Plugin.Log.LogInfo($"[SHOPFX] row label placed row={index}"
+                    + $" rowCentreX={rowCentreX:0.###}"
+                    + $" labelX={target.position.x + LabelRectOffsetX(target):0.###}"
+                    + $" y={target.position.y:0.###}"
+                    + $" visible={(own != null && own.enabled)}");
             }
         }
+    }
+
+    /// <summary>World X of the centre of the row rect; the price label X when the row has no rect.</summary>
+    /// <param name="vanilla">Vanilla price label inside the row.</param>
+    /// <param name="fallback">Value returned when the row rect is not available.</param>
+    private static float RowCentreX(TMP_Text vanilla, float fallback)
+    {
+        ShopItemStats? row = vanilla.GetComponentInParent<ShopItemStats>();
+        if (row == null || !(row.transform is RectTransform rowRect))
+        {
+            return fallback;
+        }
+
+        return rowRect.TransformPoint(rowRect.rect.center).x;
+    }
+
+    /// <summary>
+    /// World X distance from the label transform to the centre of its own rect. The clone
+    /// keeps the price pivot, so the drawn text is not centred on the transform itself.
+    /// </summary>
+    /// <param name="label">Transform of our row label.</param>
+    private static float LabelRectOffsetX(Transform label)
+    {
+        if (!(label is RectTransform rect))
+        {
+            return 0f;
+        }
+
+        return rect.TransformPoint(rect.rect.center).x - label.position.x;
     }
 
     /// <summary>
@@ -365,14 +398,6 @@ internal static class ShopCosmetics
     private static float SafeRatio(float world, float parent)
     {
         return Mathf.Abs(parent) > 0.00001f ? world / parent : 1f;
-    }
-
-    /// <summary>Formats a vector for the logs with two decimals.</summary>
-    /// <param name="value">Vector to format.</param>
-    /// <returns>Text like <c>(1.23,4.56,7.89)</c>.</returns>
-    private static string Pair(Vector3 value)
-    {
-        return $"({value.x:0.##},{value.y:0.##},{value.z:0.##})";
     }
 
     /// <summary>
@@ -436,72 +461,102 @@ internal static class ShopCosmetics
     }
 
     /// <summary>
-    /// Keeps our own row labels drawn. A cloned <c>NestedFadeGroup*</c> writes the text
-    /// colour and the renderer state from its own <c>AlphaSelf</c> every frame, so a clone
-    /// whose fade group starts at zero stays invisible no matter what we set once. The
-    /// values are forced back in the late pass, after the fade groups had their Update.
+    /// Keeps our own row labels in step with the row they sit on. A label must vanish with
+    /// its row when the row scrolls out of the list, so nothing is forced on: the alpha is
+    /// copied from the vanilla price label (the row icon when the label has no colour) and
+    /// the renderer is only enabled while that row is actually drawn.
     /// </summary>
-    private static void ForceLabelAlpha()
+    private static void SyncLabelVisibility()
     {
         foreach (KeyValuePair<TMP_Text, TMP_Text> pair in FallbackLabels)
         {
+            TMP_Text? vanilla = pair.Key;
             TMP_Text? label = pair.Value;
-            if (label == null)
+            if (vanilla == null || label == null)
             {
                 continue;
             }
 
-            if (!LabelFades.TryGetValue(label, out NestedFadeGroupBase[] groups))
-            {
-                groups = label.GetComponentsInChildren<NestedFadeGroupBase>(true);
-                LabelFades[label] = groups;
-            }
-
-            string? before = _fadeDiagLogged ? null : FadeLine(label, groups);
-            foreach (NestedFadeGroupBase group in groups)
-            {
-                if (group != null)
-                {
-                    group.AlphaSelf = 1f;
-                }
-            }
-
-            if (label.color != Color.white)
-            {
-                label.color = Color.white;
-            }
-
             Renderer? renderer = label.GetComponent<Renderer>();
-            if (renderer != null && !renderer.enabled)
+            if (renderer == null)
             {
-                renderer.enabled = true;
+                continue;
             }
 
-            if (before != null)
+            SpriteRenderer? icon = RowIcon(vanilla.GetComponentInParent<ShopItemStats>());
+            float alpha = RowAlpha(vanilla, icon);
+            bool rowLive = vanilla.gameObject.activeInHierarchy && (icon == null || icon.enabled);
+            bool visible = rowLive && alpha > 0.01f && RowInsideList(vanilla)
+                && renderer.bounds.size.x > 0.0001f;
+
+            if (renderer.enabled != visible)
             {
-                _fadeDiagLogged = true;
-                Plugin.Log.LogInfo("[SHOPFX] label fades: before " + before);
-                Plugin.Log.LogInfo("[SHOPFX] label fades: after " + FadeLine(label, groups));
+                renderer.enabled = visible;
+            }
+
+            if (visible)
+            {
+                Color colour = label.color;
+                if (!Mathf.Approximately(colour.a, alpha))
+                {
+                    colour.a = alpha;
+                    label.color = colour;
+                }
             }
         }
     }
 
-    /// <summary>Fade state of one label as a single log line.</summary>
-    /// <param name="label">Label whose state is read.</param>
-    /// <param name="groups">Fade groups found on that label.</param>
-    /// <returns>Line naming every fade group and the text alpha.</returns>
-    private static string FadeLine(TMP_Text label, NestedFadeGroupBase[] groups)
+    /// <summary>Alpha the row is drawn with: the vanilla label's, else the row icon's.</summary>
+    /// <param name="vanilla">Vanilla price label of the row.</param>
+    /// <param name="icon">Row icon renderer, may be null.</param>
+    private static float RowAlpha(TMP_Text vanilla, SpriteRenderer? icon)
     {
-        List<string> items = new List<string>(groups.Length);
-        foreach (NestedFadeGroupBase group in groups)
+        if (vanilla != null)
         {
-            if (group != null)
-            {
-                items.Add($"{group.name}={group.AlphaSelf:F2}/{group.AlphaTotal:F2}");
-            }
+            return vanilla.color.a;
         }
 
-        return $"count={items.Count} [{string.Join(", ", items)}] textAlpha={label.color.a:F2}";
+        return icon != null ? icon.color.a : 1f;
+    }
+
+    /// <summary>
+    /// True while the row overlaps the item list. Our label is cloned from the details panel
+    /// and so carries no list stencil, which lets a scrolled-out row draw under the window;
+    /// the row rect is checked against the list rect to hide those rows.
+    /// </summary>
+    /// <param name="vanilla">Vanilla price label of the row.</param>
+    private static bool RowInsideList(TMP_Text vanilla)
+    {
+        if (!(_list is RectTransform list))
+        {
+            return true;
+        }
+
+        ShopItemStats? row = vanilla.GetComponentInParent<ShopItemStats>();
+        if (row == null || !(row.transform is RectTransform rowRect))
+        {
+            return true;
+        }
+
+        if (!WorldYBand(rowRect, out float rowMin, out float rowMax)
+            || !WorldYBand(list, out float listMin, out float listMax))
+        {
+            return true;
+        }
+
+        return rowMax > listMin && rowMin < listMax;
+    }
+
+    /// <summary>World Y range covered by a rect, false when it has no geometry.</summary>
+    /// <param name="rect">Rect to measure.</param>
+    /// <param name="min">Lower world Y of the rect.</param>
+    /// <param name="max">Upper world Y of the rect.</param>
+    private static bool WorldYBand(RectTransform rect, out float min, out float max)
+    {
+        rect.GetWorldCorners(Corners);
+        min = Mathf.Min(Corners[0].y, Corners[2].y);
+        max = Mathf.Max(Corners[0].y, Corners[2].y);
+        return max - min > 0.0001f;
     }
 
     /// <summary>
@@ -647,7 +702,6 @@ internal static class ShopCosmetics
         SourceLogged.Clear();
         _invisibleLogged = false;
         _sourceDiagLogged = false;
-        _fadeDiagLogged = false;
         LabelAttempts.Clear();
         LabelGivenUp.Clear();
         _readyLogged = 0;
@@ -727,7 +781,6 @@ internal static class ShopCosmetics
             TextStates.Clear();
             RowNames.Clear();
             FallbackLabels.Clear();
-            LabelFades.Clear();
             MeshChecked.Clear();
             HiddenLabels.Clear();
             BaselineCentres.Clear();
