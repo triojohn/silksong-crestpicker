@@ -754,12 +754,10 @@ internal static class ShopCrestMenu
     /// Switches off the two action prompts and the whole item list group at the close
     /// start: the vanilla fade never reaches the selector, the rows or the vanilla prompt
     /// text, so they would outlive the window. Their vanilla active state is recorded and
-    /// written back by <see cref="BeginTeardown"/> on the next open.
+    /// written back by <see cref="RestoreLeftovers"/> once the fade is done.
     /// </summary>
-    private static void HideLeftovers(bool closeStart = false)
+    private static void HideLeftovers()
     {
-        bool repeat = _leftoversHidden;
-        _leftoversHidden = true;
         int prompts = 0;
         if (HideLeftover(_cancelPrompt))
         {
@@ -772,16 +770,8 @@ internal static class ShopCrestMenu
         }
 
         bool listGroup = HideLeftover(ListGroup()?.gameObject);
-        if (repeat)
-        {
-            Plugin.Log.LogInfo($"[SHOP] leftovers already hidden listGroup={listGroup} prompts={prompts}");
-        }
-        else
-        {
-            Plugin.Log.LogInfo(closeStart
-                ? $"[SHOP] leftovers hidden at close start listGroup={listGroup} prompts={prompts}"
-                : $"[SHOP] leftovers hidden prompts={prompts} listGroup={listGroup}");
-        }
+        _leftoversHidden = prompts > 0 || listGroup;
+        Plugin.Log.LogInfo($"[SHOP] leftovers hidden at close start listGroup={listGroup} prompts={prompts}");
     }
 
     /// <summary>Turns one object off and records its vanilla active state; false when absent.</summary>
@@ -825,6 +815,30 @@ internal static class ShopCrestMenu
 
         LeftoverStates.Clear();
         _leftoversHidden = false;
+    }
+
+    /// <summary>
+    /// Puts the nodes the close start switched off back as soon as the window is fully
+    /// faded out. The vanilla shop reuses this same window, so leaving them off until the
+    /// next open of ours left a vanilla trader with an empty frame.
+    /// </summary>
+    internal static void RestoreLeftoversAfterFade()
+    {
+        if (!_leftoversHidden)
+        {
+            return;
+        }
+
+        float alpha = SafeAlpha(1f);
+        bool faded = alpha < 0.01f;
+        bool idle = _control != null && ActiveState(_control) == IdleState && alpha < 0.05f;
+        if (!faded && !idle)
+        {
+            return;
+        }
+
+        RestoreLeftovers();
+        Plugin.Log.LogInfo($"[SHOP] leftovers restored after fade alpha={alpha:F2}");
     }
 
     /// <summary>Asks the window FSM to fade its borders out; false when it has no such event.</summary>
@@ -1048,7 +1062,7 @@ internal static class ShopCrestMenu
 
         _schemaCloseLogged = true;
         ShopCrestSchema.Hide();
-        HideLeftovers(true);
+        HideLeftovers();
         Plugin.Log.LogInfo($"[SHOP] schema hidden at close start state='{state}'");
     }
 
@@ -1178,7 +1192,11 @@ internal static class ShopCrestMenu
 
         _closing = true;
         ShopCrestSchema.Hide();
-        Step("leftovers", () => HideLeftovers());
+
+        // The session is over: the window goes back to the vanilla shop, which needs the
+        // nodes the close start switched off. Hiding them here again is what left the
+        // vanilla trader with an empty frame until the next open of ours.
+        Step("leftovers", RestoreLeftovers);
         ShopInputLock.Unblock(reason);
         if (_stock == null)
         {
@@ -1704,6 +1722,8 @@ internal sealed class ShopCrestSession : MonoBehaviour
             {
                 ShopCrestMenu.HideSchemaAtCloseStart();
             }
+
+            ShopCrestMenu.RestoreLeftoversAfterFade();
 
             if (ShopCrestMenu.ClosedByFsm())
             {
