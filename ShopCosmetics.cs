@@ -542,8 +542,9 @@ internal static class ShopCosmetics
             float alpha = RowAlpha(row);
             bool rowLive = row != null && row.gameObject.activeInHierarchy;
             bool inside = RowInsideList(vanilla);
-            bool empty = renderer.bounds.size.x <= 0.0001f;
-            bool visible = rowLive && inside && !empty && alpha > 0.01f;
+            LabelHiddenReason reason = LabelVisibility.Evaluate(
+                rowLive, inside, renderer.bounds.size.x, alpha);
+            bool visible = reason == LabelHiddenReason.Visible;
 
             if (renderer.enabled != visible)
             {
@@ -563,25 +564,29 @@ internal static class ShopCosmetics
                 continue;
             }
 
-            ReportLabelHidden(vanilla, row, rowLive, inside, !empty);
+            ReportLabelHidden(vanilla, row, reason);
         }
     }
 
     /// <summary>Logs once per row why its fallback label is not drawn.</summary>
     /// <param name="vanilla">Vanilla price label of the row.</param>
     /// <param name="row">Row view of the shop entry, may be null.</param>
-    /// <param name="rowLive">True while the row object is active.</param>
-    /// <param name="inside">True while the row overlaps the item list.</param>
-    /// <param name="hasMesh">True while the label has a non-empty mesh.</param>
+    /// <param name="reason">Hidden reason from <see cref="LabelVisibility.Evaluate"/>.</param>
     private static void ReportLabelHidden(
-        TMP_Text vanilla, ShopItemStats? row, bool rowLive, bool inside, bool hasMesh)
+        TMP_Text vanilla, ShopItemStats? row, LabelHiddenReason reason)
     {
         if (!HiddenReported.Add(vanilla))
         {
             return;
         }
 
-        string why = !rowLive ? "inactive" : !inside ? "outside" : !hasMesh ? "empty" : "alpha";
+        string why = reason switch
+        {
+            LabelHiddenReason.Inactive => "inactive",
+            LabelHiddenReason.Outside => "outside",
+            LabelHiddenReason.Empty => "empty",
+            _ => "alpha",
+        };
         int index = row != null ? RowIndex(row, vanilla) : vanilla.transform.GetSiblingIndex();
         Plugin.Log.LogInfo($"[SHOPFX] row label hidden row={index} why={why}");
     }
