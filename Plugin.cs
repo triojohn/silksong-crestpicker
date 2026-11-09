@@ -153,7 +153,7 @@ public sealed class Plugin : BaseUnityPlugin
         ShopCrestSchema.Scale = ConfigRules.NormalizeSchemaScale(_crestSchemaScale.Value);
         float dotSizeRaw = _crestDotSize.Value;
         ShopCrestSchema.DotSize = ConfigRules.NormalizeDotSize(dotSizeRaw);
-        ShopCrestSchema.LockedDotSize = _crestLockedDotSize.Value;
+        ShopCrestSchema.LockedDotSize = ConfigRules.NormalizeLockedDotSize(_crestLockedDotSize.Value);
         ShopCrestSchema.DotOffsetY = _crestDotOffsetY.Value;
         if (ShopCrestSchema.DotSize != dotSizeRaw)
         {

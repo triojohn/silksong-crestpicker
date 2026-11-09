@@ -15,13 +15,25 @@ internal static class ConfigRules
     }
 
     /// <summary>
-    /// Dot size stays as configured. Values above 0.5 are the legacy height
-    /// multiplier, so they are converted to the current fraction of row height.
+    /// Dot size stays as configured when it is a plausible fraction of the row
+    /// height. Anything outside 0.15..0.5 is a legacy value (an old absolute
+    /// multiplier or the old 0.11 fraction) and falls back to the current default.
     /// </summary>
     /// <param name="dotSize">Raw <c>CrestDotSize</c> value.</param>
     /// <returns>Dot size to use.</returns>
     internal static float NormalizeDotSize(float dotSize)
     {
-        return dotSize > 0.5f ? dotSize * 0.11f : dotSize;
+        return (dotSize < 0.15f || dotSize >= 0.5f) ? 0.373f : dotSize;
+    }
+
+    /// <summary>
+    /// Locked dot size follows the same rule as <see cref="NormalizeDotSize"/>
+    /// but falls back to its own default.
+    /// </summary>
+    /// <param name="value">Raw <c>CrestLockedDotSize</c> value.</param>
+    /// <returns>Locked dot size to use.</returns>
+    internal static float NormalizeLockedDotSize(float value)
+    {
+        return (value < 0.15f || value >= 0.5f) ? 0.174f : value;
     }
 }
