@@ -93,6 +93,9 @@ internal static class ShopCrestMenu
     private static readonly Dictionary<GameObject, bool> LeftoverStates =
         new Dictionary<GameObject, bool>();
 
+    /// <summary>True once the close switched the leftovers off, so a later restore does not repeat it.</summary>
+    private static bool _leftoversHidden;
+
     /// <summary>Teardown targets and their vanilla state, captured when the window opens.</summary>
     private static NestedFadeGroupBase? _fade;
     private static PlayMakerFSM? _windowFsm;
@@ -753,8 +756,10 @@ internal static class ShopCrestMenu
     /// text, so they would outlive the window. Their vanilla active state is recorded and
     /// written back by <see cref="BeginTeardown"/> on the next open.
     /// </summary>
-    private static void HideLeftovers()
+    private static void HideLeftovers(bool closeStart = false)
     {
+        bool repeat = _leftoversHidden;
+        _leftoversHidden = true;
         int prompts = 0;
         if (HideLeftover(_cancelPrompt))
         {
@@ -767,7 +772,16 @@ internal static class ShopCrestMenu
         }
 
         bool listGroup = HideLeftover(ListGroup()?.gameObject);
-        Plugin.Log.LogInfo($"[SHOP] leftovers hidden prompts={prompts} listGroup={listGroup}");
+        if (repeat)
+        {
+            Plugin.Log.LogInfo($"[SHOP] leftovers already hidden listGroup={listGroup} prompts={prompts}");
+        }
+        else
+        {
+            Plugin.Log.LogInfo(closeStart
+                ? $"[SHOP] leftovers hidden at close start listGroup={listGroup} prompts={prompts}"
+                : $"[SHOP] leftovers hidden prompts={prompts} listGroup={listGroup}");
+        }
     }
 
     /// <summary>Turns one object off and records its vanilla active state; false when absent.</summary>
@@ -810,6 +824,7 @@ internal static class ShopCrestMenu
         }
 
         LeftoverStates.Clear();
+        _leftoversHidden = false;
     }
 
     /// <summary>Asks the window FSM to fade its borders out; false when it has no such event.</summary>
@@ -1033,6 +1048,7 @@ internal static class ShopCrestMenu
 
         _schemaCloseLogged = true;
         ShopCrestSchema.Hide();
+        HideLeftovers(true);
         Plugin.Log.LogInfo($"[SHOP] schema hidden at close start state='{state}'");
     }
 
@@ -1162,7 +1178,7 @@ internal static class ShopCrestMenu
 
         _closing = true;
         ShopCrestSchema.Hide();
-        Step("leftovers", HideLeftovers);
+        Step("leftovers", () => HideLeftovers());
         ShopInputLock.Unblock(reason);
         if (_stock == null)
         {
