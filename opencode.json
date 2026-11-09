@@ -1,0 +1,151 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "permissions": [
+    { "action": "read", "resource": "*", "effect": "allow" }
+  ],
+  "agents": {
+    "plan": { "disabled": true },
+    "build": { "disabled": true },
+    "oscar": {
+      "description": "Orchestrator - coordinates, delegates, synthesizes",
+      "mode": "primary",
+      "model": "deepseek/deepseek-flash",
+      "steps": 15,
+      "request": { "body": { "temperature": 0.2 } },
+      "system": "{file:C:/aaz_vault/10-projects/opencode-orchestrator/package/agent/oscar.md}",
+      "permissions": [
+        { "action": "read", "resource": "*", "effect": "deny" },
+        { "action": "edit", "resource": "*", "effect": "deny" },
+        { "action": "shell", "resource": "*", "effect": "deny" },
+        { "action": "subagent", "resource": "*", "effect": "deny" },
+        { "action": "subagent", "resource": "scout", "effect": "allow" },
+        { "action": "subagent", "resource": "ivan", "effect": "allow" },
+        { "action": "subagent", "resource": "tester", "effect": "allow" },
+        { "action": "subagent", "resource": "jester", "effect": "allow" }
+      ]
+    },
+    "scout": {
+      "description": "Researcher + Planner - deep analysis, actionable plans",
+      "mode": "subagent",
+      "model": "deepseek/deepseek-flash",
+      "steps": 30,
+      "request": { "body": { "temperature": 0.5 } },
+      "system": "{file:C:/aaz_vault/10-projects/opencode-orchestrator/package/agent/scout.md}",
+      "permissions": [
+        { "action": "read", "resource": "*", "effect": "allow" },
+        { "action": "edit", "resource": "*", "effect": "deny" },
+        { "action": "edit", "resource": "plans/*", "effect": "allow" },
+        { "action": "edit", "resource": "*/plans/*", "effect": "allow" },
+        { "action": "edit", "resource": "docs/plans/*", "effect": "allow" },
+        { "action": "edit", "resource": "*/docs/plans/*", "effect": "allow" },
+        { "action": "edit", "resource": ".opencode/plans/*", "effect": "allow" },
+        { "action": "shell", "resource": "*", "effect": "deny" },
+        { "action": "shell", "resource": "*git log *", "effect": "allow" },
+        { "action": "shell", "resource": "*git diff *", "effect": "allow" },
+        { "action": "shell", "resource": "*git show *", "effect": "allow" },
+        { "action": "shell", "resource": "*git status *", "effect": "allow" },
+        { "action": "shell", "resource": "*git -C *", "effect": "allow" },
+        { "action": "shell", "resource": "*uv run *", "effect": "allow" },
+        { "action": "shell", "resource": "*dotnet build *", "effect": "allow" },
+        { "action": "shell", "resource": "*dotnet test *", "effect": "allow" },
+        { "action": "subagent", "resource": "*", "effect": "deny" }
+      ]
+    },
+    "ivan": {
+      "description": "Implementor - writes code, runs tests, git operations",
+      "mode": "subagent",
+      "model": "deepseek/deepseek-flash",
+      "steps": 25,
+      "request": { "body": { "temperature": 0.2 } },
+      "system": "{file:C:/aaz_vault/10-projects/opencode-orchestrator/package/agent/ivan.md}",
+      "permissions": [
+        { "action": "edit", "resource": "*", "effect": "allow" },
+        { "action": "edit", "resource": "tests/*", "effect": "deny" },
+        { "action": "edit", "resource": "*/tests/*", "effect": "deny" },
+        { "action": "edit", "resource": "test/*", "effect": "deny" },
+        { "action": "edit", "resource": "*/test/*", "effect": "deny" },
+        { "action": "edit", "resource": "*_test.*", "effect": "deny" },
+        { "action": "edit", "resource": "*.test.*", "effect": "deny" },
+        { "action": "edit", "resource": "*_spec.*", "effect": "deny" },
+        { "action": "edit", "resource": "*.spec.*", "effect": "deny" },
+        { "action": "edit", "resource": "conftest.py", "effect": "deny" },
+        { "action": "edit", "resource": "*/conftest.py", "effect": "deny" },
+        { "action": "edit", "resource": "*Tests.cs", "effect": "deny" },
+        { "action": "edit", "resource": "*Tests/*", "effect": "deny" },
+        { "action": "shell", "resource": "*", "effect": "allow" },
+        { "action": "subagent", "resource": "*", "effect": "deny" }
+      ]
+    },
+    "tester": {
+      "description": "Tester - verifies changes, hunts regressions, demands evidence",
+      "mode": "subagent",
+      "model": "deepseek/deepseek-flash",
+      "steps": 18,
+      "request": { "body": { "temperature": 0.1 } },
+      "system": "{file:C:/aaz_vault/10-projects/opencode-orchestrator/package/agent/tester.md}",
+      "permissions": [
+        { "action": "edit", "resource": "*", "effect": "deny" },
+        { "action": "edit", "resource": "tests/*", "effect": "allow" },
+        { "action": "edit", "resource": "*/tests/*", "effect": "allow" },
+        { "action": "edit", "resource": "test/*", "effect": "allow" },
+        { "action": "edit", "resource": "*/test/*", "effect": "allow" },
+        { "action": "edit", "resource": "*_test.*", "effect": "allow" },
+        { "action": "edit", "resource": "*.test.*", "effect": "allow" },
+        { "action": "edit", "resource": "*_spec.*", "effect": "allow" },
+        { "action": "edit", "resource": "*.spec.*", "effect": "allow" },
+        { "action": "edit", "resource": "conftest.py", "effect": "allow" },
+        { "action": "edit", "resource": "*/conftest.py", "effect": "allow" },
+        { "action": "edit", "resource": "*Tests.cs", "effect": "allow" },
+        { "action": "edit", "resource": "*Tests/*", "effect": "allow" },
+        { "action": "shell", "resource": "*", "effect": "deny" },
+        { "action": "shell", "resource": "*uv run *", "effect": "allow" },
+        { "action": "shell", "resource": "*dotnet test *", "effect": "allow" },
+        { "action": "shell", "resource": "*dotnet build *", "effect": "allow" },
+        { "action": "shell", "resource": "*npm test *", "effect": "allow" },
+        { "action": "shell", "resource": "*npx vitest *", "effect": "allow" },
+        { "action": "shell", "resource": "*pytest *", "effect": "allow" },
+        { "action": "shell", "resource": "*python -m pytest *", "effect": "allow" },
+        { "action": "shell", "resource": "*git diff *", "effect": "allow" },
+        { "action": "shell", "resource": "*git status *", "effect": "allow" },
+        { "action": "shell", "resource": "*git log *", "effect": "allow" },
+        { "action": "shell", "resource": "*git show *", "effect": "allow" },
+        { "action": "shell", "resource": "*git -C *", "effect": "allow" },
+        { "action": "subagent", "resource": "*", "effect": "deny" }
+      ]
+    },
+    "jester": {
+      "description": "Truth-Teller - challenges assumptions, finds risks",
+      "mode": "subagent",
+      "model": "deepseek/deepseek-v4-pro",
+      "steps": 10,
+      "request": { "body": { "temperature": 0.8 } },
+      "system": "{file:C:/aaz_vault/10-projects/opencode-orchestrator/package/agent/jester.md}",
+      "permissions": [
+        { "action": "read", "resource": "*", "effect": "allow" },
+        { "action": "edit", "resource": "*", "effect": "deny" },
+        { "action": "shell", "resource": "*", "effect": "deny" },
+        { "action": "shell", "resource": "*git log *", "effect": "allow" },
+        { "action": "shell", "resource": "*git diff *", "effect": "allow" },
+        { "action": "shell", "resource": "*git show *", "effect": "allow" },
+        { "action": "shell", "resource": "*git status *", "effect": "allow" },
+        { "action": "shell", "resource": "*rg *", "effect": "allow" },
+        { "action": "shell", "resource": "*cat *", "effect": "allow" },
+        { "action": "subagent", "resource": "*", "effect": "deny" }
+      ]
+    },
+    "writer": {
+      "description": "Writer - drafts and edits prose for the target platform and audience",
+      "mode": "subagent",
+      "model": "deepseek/deepseek-flash",
+      "request": { "body": { "temperature": 0.85 } },
+      "system": "{file:C:/aaz_vault/10-projects/opencode-orchestrator/package/agent/writer.md}",
+      "permissions": [
+        { "action": "read", "resource": "*", "effect": "allow" },
+        { "action": "edit", "resource": "*", "effect": "allow" },
+        { "action": "webfetch", "resource": "*", "effect": "allow" },
+        { "action": "shell", "resource": "*", "effect": "deny" },
+        { "action": "subagent", "resource": "*", "effect": "deny" }
+      ]
+    }
+  }
+}

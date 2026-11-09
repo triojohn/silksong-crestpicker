@@ -38,6 +38,9 @@ public sealed class Plugin : BaseUnityPlugin
     /// </summary>
     internal static bool UseLiveShop;
 
+    /// <summary>When true, the picker offers every normal crest regardless of save state.</summary>
+    internal static ConfigEntry<bool> IgnoreUnlockState = null!;
+
     /// <summary>Seconds to wait for a playable state before dropping an offer.</summary>
     private const float OfferGrace = 2f;
 
@@ -79,6 +82,9 @@ public sealed class Plugin : BaseUnityPlugin
             "Устаревший ключ: true трактуется как CrestPool=All");
         _crestPool = Config.Bind("General", "CrestPool", CrestPoolMode.All,
             "Пул знаков для выбора: All — все 7 нормальных, Unlocked — только открытые в сейве");
+        IgnoreUnlockState = Config.Bind("General", "IgnoreUnlockState", true,
+            "Временно показывать все нормальные знаки независимо от сейва. " +
+            "false — снова фильтровать по CrestPool/IsUnlocked. Читается на лету.");
         _enableSnailChoice = Config.Bind("General", "EnableSnailChoice", true,
             "Предлагать выбор знака после диалога с прислужницей капеллы");
         _testHotkey = Config.Bind("General", "TestHotkey", new KeyboardShortcut(KeyCode.F9),

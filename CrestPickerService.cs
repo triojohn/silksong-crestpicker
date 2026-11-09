@@ -18,8 +18,9 @@ internal static class CrestPickerService
     internal static CrestPoolMode PoolMode = CrestPoolMode.All;
 
     /// <summary>
-    /// Returns the crests the player may pick: base versions that are not hidden,
-    /// limited to <see cref="CrestPoolMode.Unlocked"/> only when that mode is set.
+    /// Returns the crests the player may pick: base versions that are not hidden.
+    /// Unlock state is ignored while <c>IgnoreUnlockState</c> is true; otherwise
+    /// <see cref="CrestPoolMode.Unlocked"/> limits the pool to unlocked crests.
     /// The currently equipped crest is always excluded.
     /// </summary>
     /// <returns>Selectable crests in crest-list order; empty on failure.</returns>
@@ -27,14 +28,18 @@ internal static class CrestPickerService
     {
         try
         {
+            bool ignoreUnlock = Plugin.IgnoreUnlockState.Value;
+            CrestPoolMode mode = ignoreUnlock ? CrestPoolMode.All : PoolMode;
             List<ToolCrest> pool = ToolItemManager.GetAllCrests()
                 .Where(crest => crest != null &&
-                    CrestPoolRules.IsSelectable(crest.IsBaseVersion, crest.IsHidden, crest.IsUnlocked, PoolMode))
+                    CrestPoolRules.IsSelectable(crest.IsBaseVersion, crest.IsHidden, crest.IsUnlocked, mode))
                 .ToList();
 
             int excluded = pool.RemoveAll(crest => CrestPoolRules.IsEquippedExcluded(SafeIsEquipped(crest)));
             Plugin.Log.LogInfo(
-                $"[CREST] crest pool ({PoolMode}): {pool.Count} selectable, {excluded} equipped excluded.");
+                $"[CREST] pool={pool.Count} ignoreUnlock={ignoreUnlock}" +
+                $" names={string.Join(",", pool.Select(crest => crest.name))}" +
+                $" (mode={mode}, equipped excluded={excluded}).");
             return pool;
         }
         catch (Exception ex)
