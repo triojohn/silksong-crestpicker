@@ -33,7 +33,7 @@ internal enum SchemaRenderMode
 /// </summary>
 internal static class ShopCrestSchema
 {
-    /// <summary>Schema height in world units before <see cref="Scale"/> is applied.</summary>
+    /// <summary>Panel height in world units used when the details panel cannot be measured.</summary>
     private const float BaseHeight = 1.2f;
 
     /// <summary>Fraction of the details panel the details schema fills.</summary>
@@ -41,12 +41,6 @@ internal static class ShopCrestSchema
 
     /// <summary>Dot scale of a locked slot, as in the vanilla slot widget.</summary>
     private const float LockedSlotScale = 0.8f;
-
-    /// <summary>Dot fits tried per frame before the next frame takes over.</summary>
-    private const int MaxDotAttempts = 3;
-
-    /// <summary>Relative error a dot fit accepts as done.</summary>
-    private const float DotTolerance = 0.05f;
 
     /// <summary>Path of the details panel inside the shop window.</summary>
     private const string DetailsPath = "Item List Group/Item Details";
@@ -92,6 +86,10 @@ internal static class ShopCrestSchema
     private static Schema? _confirmSchema;
     private static ToolCrest? _builtFor;
     private static Sprite? _dotSprite;
+
+    /// <summary>Native silhouette height of the tallest crest, world units; zero until measured.</summary>
+    private static float _referenceHeight;
+
     private static bool _missingLogged;
     private static bool _confirmOrderLogged;
 
@@ -169,14 +167,11 @@ internal static class ShopCrestSchema
     /// <summary>Multiplier applied to the schema size.</summary>
     internal static float Scale = 1f;
 
-    /// <summary>Multiplier for the slot dot diameter, as a fraction of the schema height.</summary>
+    /// <summary>Multiplier for the slot dot diameter, as a fraction of the reference height.</summary>
     internal static float DotSize = 0.11f;
 
     /// <summary>Dot drop, as a fraction of the drawn silhouette height, in world units.</summary>
     internal static float DotOffsetY = -0.02f;
-
-    /// <summary>Raw <c>CrestDotSize</c> value from the cfg, before the legacy migration.</summary>
-    internal static float DotSizeRaw = 0.11f;
 
     /// <summary>Confirm-screen schema size relative to the details schema.</summary>
     internal static float ConfirmScale = 1f;
@@ -1002,11 +997,16 @@ internal static class ShopCrestSchema
         LogSpriteMetrics(crest, silhouette);
         LogSlots(crest);
 
+        float reference = ReferenceHeight();
+        float panel = TryPanelSize(out Vector2 panelSize) ? PanelFill * panelSize.y : BaseHeight;
+        float scale = reference > 0.0001f ? panel * Scale / reference : Scale;
+        Plugin.Log.LogInfo($"[SCHEMA] scale={scale:F4} (reference={reference:F3} panel={panel:F3})");
+
         Color bodyColor = equipped && crest.CrestSprite != null && silhouette == crest.CrestSprite
             ? Color.white
             : InventoryToolCrest.DeselectedColor;
-        _detailsSchema = BuildSchema(crest, silhouette, bodyColor, 1f, true, "Crest Schema");
-        _confirmSchema = BuildSchema(crest, silhouette, bodyColor, ConfirmScale, false,
+        _detailsSchema = BuildSchema(crest, silhouette, bodyColor, scale, true, "Crest Schema");
+        _confirmSchema = BuildSchema(crest, silhouette, bodyColor, scale, false,
             "Confirm Crest Schema");
         int slots = crest.Slots?.Length ?? 0;
         bool dotsTemplate = _detailsSchema == null || _detailsSchema.DotsTemplate;
@@ -1119,14 +1119,13 @@ internal static class ShopCrestSchema
     }
 
     /// <summary>
-    /// Creates one schema instance at container scale 1 and fits it to the details
-    /// panel (when <paramref name="fitPanel"/>) or to <see cref="BaseHeight"/> times
-    /// <paramref name="sizeFactor"/> world units from the size actually drawn, so no
-    /// assumption about the parent scale chain is made. The container lives under the
-    /// neutral schema root and is placed by the caller.
+    /// Creates one schema instance with the uniform <paramref name="scale"/>: every crest
+    /// is drawn at the same world units per native sprite unit, so a taller silhouette
+    /// simply draws taller instead of being fitted per crest. The container stays at
+    /// scale 1 and the content carries the scale divided by the inherited one.
     /// </summary>
     private static Schema? BuildSchema(ToolCrest crest, Sprite silhouette, Color bodyColor,
-        float sizeFactor, bool fitPanel, string label)
+        float scale, bool fitDetails, string label)
     {
         Transform? host = SchemaHost();
         if (host == null)
@@ -1141,14 +1140,6 @@ internal static class ShopCrestSchema
         }
 
         SpriteRenderer? reference = ReferenceRenderer() ?? BackboardRenderer();
-        float targetH = BaseHeight * Scale * sizeFactor;
-        float targetW = 0f;
-        Vector2 panel = Vector2.zero;
-        if (fitPanel && TryPanelSize(out panel))
-        {
-            targetH = PanelFill * panel.y * Scale;
-            targetW = PanelFill * panel.x * Scale;
-        }
 
         GameObject container = new GameObject(label);
         container.transform.SetParent(host, false);
@@ -1156,15 +1147,17 @@ internal static class ShopCrestSchema
 
         GameObject content = new GameObject(ContentName);
         content.transform.SetParent(container.transform, false);
-        content.transform.localScale = Vector3.one;
+        float inherited = Mathf.Abs(container.transform.lossyScale.y);
+        float local = inherited > 0.0001f ? scale / inherited : scale;
+        content.transform.localScale = new Vector3(local, local, 1f);
         LogContainer(container.transform);
 
         if (Render == SchemaRenderMode.Clone)
         {
-            Schema? clone = CloneSchema(crest, container, content, targetH, targetW, panel, label);
+            Schema? clone = CloneSchema(crest, container, content, label);
             if (clone != null)
             {
-                LiftConfirm(clone, fitPanel);
+                LiftConfirm(clone, fitDetails);
                 LogSprites("clone");
                 return clone;
             }
@@ -1174,38 +1167,29 @@ internal static class ShopCrestSchema
         SpriteRenderer body = AddRenderer(content, "Schema Silhouette", silhouette, reference, 0);
         body.color = bodyColor;
 
-        Schema schema = new Schema(label, container, content, body, targetH)
-        {
-            TargetWidth = targetW,
-            PanelSize = panel,
-        };
+        Schema schema = new Schema(label, container, content, body);
         AddDots(schema, crest, reference);
         schema.DotsTemplate = DotsFromTemplate(crest);
         Fit(schema);
-        LiftConfirm(schema, fitPanel);
+        LiftConfirm(schema, fitDetails);
         LogSprites(vanilla ? "vanilla" : "generated");
         return schema;
     }
 
     /// <summary>
-    /// Scales the container once to <see cref="Schema.TargetHeight"/> from the height
-    /// actually drawn, then fits every dot to a fraction of the height the silhouette
-    /// draws *after* that scale, up to a few attempts per frame.
+    /// Applies the dot drop once the silhouette draws a real height. The dot diameter and
+    /// the container scale are fixed at build time, so nothing here is measured against
+    /// the selected crest and every crest keeps the same scale.
     /// </summary>
     private static void Fit(Schema schema)
     {
-        if (!FitContainer(schema))
-        {
-            return;
-        }
-
         float h2 = WorldHeight(schema.Body);
         if (h2 <= 0.0001f)
         {
             return;
         }
 
-        Vector3 dotOffset = ApplyDotOffset(schema, h2);
+        ApplyDotOffset(schema, h2);
 
         if (!schema.BoundsLogged)
         {
@@ -1214,132 +1198,29 @@ internal static class ShopCrestSchema
             Transform content = schema.Content.transform;
             Plugin.Log.LogInfo($"[SCHEMA] {schema.Label} silhouette" +
                 $" bounds={bounds.size.x:F3}x{bounds.size.y:F3}x{bounds.size.z:F3}" +
-                $" h2={h2:F3} targetH={schema.TargetHeight:F3}" +
-                $" lossyScale={content.lossyScale.y:F3} contentScale={content.localScale.x:F3}");
+                $" h2={h2:F3} lossyScale={content.lossyScale.y:F3}" +
+                $" contentScale={content.localScale.x:F3}");
         }
-
-        float wanted = h2 * DotSize;
-        float firstBefore = schema.Dots.Count > 0 ? WorldHeight(schema.Dots[0]) : 0f;
-        Vector3 firstScaleBefore = schema.Dots.Count > 0
-            ? schema.Dots[0].transform.localScale
-            : Vector3.zero;
-        int attempts = 0;
-        bool exhausted = false;
-
-        for (int i = 0; i < schema.Dots.Count; i++)
-        {
-            if (schema.DotDone[i])
-            {
-                continue;
-            }
-
-            SpriteRenderer dot = schema.Dots[i];
-            Transform scale = dot.transform;
-            float target = wanted * (schema.Locked[i] ? LockedSlotScale : 1f);
-
-            for (int attempt = 0; attempt < MaxDotAttempts; attempt++)
-            {
-                float measured = WorldHeight(dot);
-                if (measured <= 0.0001f)
-                {
-                    break;
-                }
-
-                if (Mathf.Abs(measured - target) <= target * DotTolerance)
-                {
-                    schema.DotDone[i] = true;
-                    break;
-                }
-
-                attempts++;
-                float factor = target / measured;
-                Vector3 current = scale.localScale;
-                scale.localScale = new Vector3(current.x * factor, current.y * factor, 1f);
-            }
-
-            if (schema.DotDone[i] || IsClose(WorldHeight(dot), target))
-            {
-                schema.DotDone[i] = true;
-            }
-            else if (attempts >= MaxDotAttempts)
-            {
-                exhausted = true;
-            }
-        }
-
-        if (schema.Logged || (!schema.AllDone && !exhausted))
-        {
-            return;
-        }
-
-        schema.Logged = true;
-        string first = schema.Dots.Count > 0
-            ? $"dot0 measuredBefore={firstBefore:F3} measuredAfter={WorldHeight(schema.Dots[0]):F3}" +
-                $" localScaleBefore={firstScaleBefore.x:F3} localScaleAfter={schema.Dots[0].transform.localScale.x:F3}"
-            : "dot0 n/a";
-        Plugin.Log.LogInfo($"[SCHEMA] {schema.Label} H2={h2:F3} CrestDotSize={DotSize:F3}" +
-            $" dotSizeRaw={DotSizeRaw:F3} dotSizeUsed={DotSize:F3}" +
-            $" dotOffset={dotOffset.y:F4} offsetY={DotOffsetY:F3}" +
-            $" desiredDotWorld={wanted:F3} {first} dots={schema.Dots.Count} attempts={attempts}");
     }
 
     /// <summary>
     /// Drops every dot by <see cref="DotOffsetY"/> times the drawn height, once. The shift
     /// is built in world space so no container orientation can flip the direction.
     /// </summary>
-    private static Vector3 ApplyDotOffset(Schema schema, float h2)
+    private static void ApplyDotOffset(Schema schema, float h2)
     {
         if (schema.OffsetApplied || schema.BasePositions.Count != schema.Dots.Count)
         {
-            return schema.Offset;
+            return;
         }
 
         schema.OffsetApplied = true;
         Vector3 world = new Vector3(0f, DotOffsetY * h2, 0f);
         Vector3 local = schema.Content.transform.InverseTransformVector(world);
-        schema.Offset = local;
         for (int i = 0; i < schema.Dots.Count; i++)
         {
             schema.Dots[i].transform.localPosition = schema.BasePositions[i] + local;
         }
-
-        return local;
-    }
-
-    /// <summary>
-    /// Scales the container to the wanted height and width once, when it reports a
-    /// real size, and logs the numbers the dot fit depends on.
-    /// </summary>
-    private static bool FitContainer(Schema schema)
-    {
-        if (schema.ContainerFitted)
-        {
-            return true;
-        }
-
-        Bounds bounds = schema.Body.bounds;
-        float measuredH = WorldHeight(schema.Body);
-        if (measuredH <= 0.0001f)
-        {
-            return false;
-        }
-
-        float scaleApplied = schema.TargetHeight / measuredH;
-        if (schema.TargetWidth > 0.0001f && bounds.size.x > 0.0001f)
-        {
-            scaleApplied = Mathf.Min(scaleApplied, schema.TargetWidth / bounds.size.x);
-        }
-
-        Transform transform = schema.Content.transform;
-        transform.localScale *= scaleApplied;
-        schema.ContainerFitted = true;
-        if (schema.PanelSize.x > 0f && schema.PanelSize.y > 0f)
-        {
-            Plugin.Log.LogInfo($"[SCHEMA] fit panel=({schema.PanelSize.x:F3} x {schema.PanelSize.y:F3})" +
-                $" silhouette=({bounds.size.x:F3} x {bounds.size.y:F3}) scale={scaleApplied:F4}");
-        }
-
-        return true;
     }
 
     /// <summary>World bounds of everything drawn under a root; a zero-size bounds when nothing is.</summary>
@@ -1393,12 +1274,6 @@ internal static class ShopCrestSchema
         return true;
     }
 
-    /// <summary>True when the measured height is within the dot tolerance of the wanted one.</summary>
-    private static bool IsClose(float measured, float target)
-    {
-        return measured > 0.0001f && Mathf.Abs(measured - target) <= target * DotTolerance;
-    }
-
     /// <summary>World height the renderer actually draws; sprite size when bounds are empty.</summary>
     private static float WorldHeight(Renderer? renderer)
     {
@@ -1417,6 +1292,63 @@ internal static class ShopCrestSchema
         return sprite != null && sprite.sprite != null
             ? SpriteHeight(sprite.sprite) * Mathf.Abs(renderer.transform.lossyScale.y)
             : 0f;
+    }
+
+    /// <summary>
+    /// Tallest native silhouette among every crest, measured once per plugin session:
+    /// the single reference the uniform schema scale and the dot diameter derive from.
+    /// </summary>
+    private static float ReferenceHeight()
+    {
+        if (_referenceHeight > 0.0001f)
+        {
+            return _referenceHeight;
+        }
+
+        float best = 0f;
+        string name = string.Empty;
+        try
+        {
+            foreach (ToolCrest crest in ToolItemManager.GetAllCrests())
+            {
+                if (crest == null)
+                {
+                    continue;
+                }
+
+                float height = NativeHeight(crest.CrestSilhouette);
+                if (height > best)
+                {
+                    best = height;
+                    name = crest.name ?? string.Empty;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Plugin.Log.LogWarning($"[SCHEMA] reference height failed: {ex.Message}");
+        }
+
+        if (best <= 0.0001f)
+        {
+            return 0f;
+        }
+
+        _referenceHeight = best;
+        Plugin.Log.LogInfo($"[SCHEMA] reference height={best:F3} from '{name}'");
+        return best;
+    }
+
+    /// <summary>World height a sprite draws at scale 1; <c>rect/ppu</c> when bounds are empty.</summary>
+    private static float NativeHeight(Sprite? sprite)
+    {
+        if (sprite == null)
+        {
+            return 0f;
+        }
+
+        float bounds = sprite.bounds.size.y;
+        return bounds > 0.0001f ? bounds : SpriteHeight(sprite);
     }
 
     /// <summary>Native world height of one sprite at scale 1.</summary>
@@ -1556,7 +1488,7 @@ internal static class ShopCrestSchema
     /// template sprites are unavailable. Null when no such crest is in the loaded scene.
     /// </summary>
     private static Schema? CloneSchema(ToolCrest crest, GameObject container, GameObject content,
-        float targetH, float targetW, Vector2 panel, string label)
+        string label)
     {
         try
         {
@@ -1604,16 +1536,12 @@ internal static class ShopCrestSchema
                 return null;
             }
 
-            Schema schema = new Schema(label, container, content, body, targetH)
-            {
-                TargetWidth = targetW,
-                PanelSize = panel,
-            };
+            Schema schema = new Schema(label, container, content, body);
             Fit(schema);
             float whole = ContainerHeight(clone.transform);
             Plugin.Log.LogWarning($"[SCHEMA] clone mode from '{source.name}'" +
                 $" (does not guarantee crest match, active={source.gameObject.activeInHierarchy})" +
-                $" slots={slots.Length} wholeH={whole:F3} targetH={targetH:F3}");
+                $" slots={slots.Length} wholeH={whole:F3} lossyScale={content.transform.lossyScale.y:F3}");
             return schema;
         }
         catch (Exception ex)
@@ -1916,7 +1844,8 @@ internal static class ShopCrestSchema
 
     /// <summary>
     /// Adds one dot per slot as a child of the schema container. Slot positions are
-    /// silhouette-local units and need no factor; the diameter is fitted afterwards.
+    /// silhouette-local units and stay as they are; the diameter is one fraction of the
+    /// reference height in world units, converted to local scale once.
     /// </summary>
     private static void AddDots(Schema schema, ToolCrest crest, SpriteRenderer? reference)
     {
@@ -1928,6 +1857,8 @@ internal static class ShopCrestSchema
         }
 
         float lossy = Mathf.Abs(schema.Content.transform.lossyScale.y);
+        float world = DotSize * (_referenceHeight > 0.0001f ? _referenceHeight : 1f);
+        Plugin.Log.LogInfo($"[SCHEMA] dot diameter={world:F3} world");
         for (int i = 0; i < slots.Length; i++)
         {
             ToolCrest.SlotInfo slot = slots[i];
@@ -1939,8 +1870,10 @@ internal static class ShopCrestSchema
 
             bool locked = IsLocked(crest, slot);
             Color typeColor = TypeColor(slot.Type);
-            float approx = lossy > 0.0001f
-                ? (schema.TargetHeight * DotSize) / (SpriteHeight(dot) * lossy)
+            float diameter = locked ? world * LockedSlotScale : world;
+            float native = SpriteHeight(dot);
+            float approx = native > 0.0001f && lossy > 0.0001f
+                ? diameter / (native * lossy)
                 : 1f;
             SpriteRenderer renderer = AddRenderer(schema.Content, $"Schema Dot {i}", dot, reference, 1);
             Vector2 position = slot.Position;
@@ -1950,8 +1883,6 @@ internal static class ShopCrestSchema
             renderer.color = locked ? LockedColor(typeColor) : typeColor;
             schema.Dots.Add(renderer);
             schema.BasePositions.Add(local);
-            schema.Locked.Add(locked);
-            schema.DotDone.Add(false);
         }
     }
 
@@ -2124,33 +2055,22 @@ internal static class ShopCrestSchema
     /// <summary>One built schema instance and its pending fit.</summary>
     private sealed class Schema
     {
-        internal Schema(string label, GameObject container, GameObject content, Renderer body,
-            float targetHeight)
+        internal Schema(string label, GameObject container, GameObject content, Renderer body)
         {
             Label = label;
             Container = container;
             Content = content;
             Body = body;
-            TargetHeight = targetHeight;
         }
 
         internal string Label { get; }
 
         internal GameObject Container { get; }
 
-        /// <summary>Child that carries the fit scale; the container itself stays at scale 1.</summary>
+        /// <summary>Child that carries the uniform scale; the container itself stays at scale 1.</summary>
         internal GameObject Content { get; }
 
         internal Renderer Body { get; }
-
-        /// <summary>Wanted world height of the silhouette.</summary>
-        internal float TargetHeight { get; }
-
-        /// <summary>Wanted maximum world width; zero means height only.</summary>
-        internal float TargetWidth { get; set; }
-
-        /// <summary>World size of the panel the schema was fitted to; zero when not fitted to one.</summary>
-        internal Vector2 PanelSize { get; set; }
 
         /// <summary>True once the confirm placement numbers were logged.</summary>
         internal bool PlacedLogged { get; set; }
@@ -2160,46 +2080,14 @@ internal static class ShopCrestSchema
         /// <summary>Schema-local dot positions as built, before the offset is applied.</summary>
         internal List<Vector3> BasePositions { get; } = new List<Vector3>();
 
-        /// <summary>Local shift the dots were moved by, zero for a clone.</summary>
-        internal Vector3 Offset { get; set; }
-
         /// <summary>True once the dots took the <see cref="DotOffsetY"/> shift.</summary>
         internal bool OffsetApplied { get; set; }
-
-        /// <summary>Locked flag per dot, in creation order.</summary>
-        internal List<bool> Locked { get; } = new List<bool>();
-
-        /// <summary>Fit-done flag per dot, in creation order.</summary>
-        internal List<bool> DotDone { get; } = new List<bool>();
 
         /// <summary>True when every dot used the vanilla template sprite.</summary>
         internal bool DotsTemplate { get; set; } = true;
 
-        /// <summary>True once the container reached its wanted height.</summary>
-        internal bool ContainerFitted { get; set; }
-
-        /// <summary>True once the fit numbers were logged for this schema.</summary>
-        internal bool Logged { get; set; }
-
         /// <summary>True once the silhouette bounds were logged for this schema.</summary>
         internal bool BoundsLogged { get; set; }
-
-        /// <summary>True when every dot reached its wanted diameter.</summary>
-        internal bool AllDone
-        {
-            get
-            {
-                foreach (bool done in DotDone)
-                {
-                    if (!done)
-                    {
-                        return false;
-                    }
-                }
-
-                return true;
-            }
-        }
     }
 
     /// <summary>
