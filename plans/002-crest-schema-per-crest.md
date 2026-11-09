@@ -249,5 +249,7 @@ ShopCrestSchema.SelectedCrest() (ShopCrestSchema.cs:734)
 | T4 | not_run | — |
 | T5 | not_run | — |
 | T6 | not_run | — |
+| fix `9bd31a8` (details hidden only on real confirm) | inconclusive | `dotnet build -c Release` → 0 errors, 0 warnings; `dotnet test CrestPicker.Tests` → 52 passed, 0 failed; код-проверка флага выполнена, поведение в игре — чек-лист `TESTING.md` §2 |
+| `CrestCardLook` (0543776, вид карточки: 1.0 / 0.7 / силуэт) | inconclusive | `dotnet test CrestPicker.Tests` → 56 passed, 0 failed; 4 теста `CrestCardLookTests`, контракт `Pure/CrestCardLook.cs` совпадает с планом; падение до фикса не показано: фикс уже в `0543776`, откат продуктового кода вне прав `tester`; связка 0.7 × 0.8 = 0.56 — чек-лист `TESTING.md` §2 |
 
 Статус из enum: `passed | failed | not_run | inconclusive`. Заполняется по выводу команд и логу игры, не по утверждению.
