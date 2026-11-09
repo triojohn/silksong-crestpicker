@@ -57,6 +57,9 @@ internal static class ShopCrestSchema
     /// <summary>Slot scale of an unselected vanilla crest card (<c>_slotScaleOther</c>).</summary>
     private const float CloneSlotScale = 0.7f;
 
+    /// <summary>Vanilla local scale of the silhouette child inside a crest card.</summary>
+    private const float SilhouetteScale = 2f;
+
     /// <summary>Fallback colours when the game's tool type palette is unavailable.</summary>
     private static readonly Dictionary<ToolItemType, Color> FallbackColors =
         new Dictionary<ToolItemType, Color>
@@ -1000,11 +1003,15 @@ internal static class ShopCrestSchema
         float reference = ReferenceHeight();
         float panel = TryPanelSize(out Vector2 panelSize) ? PanelFill * panelSize.y : BaseHeight;
         float scale = reference > 0.0001f ? panel * Scale / reference : Scale;
-        Plugin.Log.LogInfo($"[SCHEMA] scale={scale:F4} (reference={reference:F3} panel={panel:F3})");
+        float body = ReferenceBody();
+        float cardScale = body > 0.0001f ? panel * Scale / body : Scale;
+        Plugin.Log.LogInfo($"[SCHEMA] scale={scale:F4} (reference={reference:F3} panel={panel:F3})" +
+            $" cardScale={cardScale:F4} (body={body:F3})");
 
         Color bodyColor = InventoryToolCrest.DeselectedColor;
-        _detailsSchema = BuildSchema(crest, silhouette, bodyColor, scale, true, "Crest Schema");
-        _confirmSchema = BuildSchema(crest, silhouette, bodyColor, scale, false,
+        _detailsSchema = BuildSchema(crest, silhouette, bodyColor, scale, cardScale, true,
+            "Crest Schema");
+        _confirmSchema = BuildSchema(crest, silhouette, bodyColor, scale, cardScale, false,
             "Confirm Crest Schema");
         int slots = crest.Slots?.Length ?? 0;
         Plugin.Log.LogInfo($"[SCHEMA] built '{crest.name}' slots={slots}" +
@@ -1116,13 +1123,14 @@ internal static class ShopCrestSchema
     }
 
     /// <summary>
-    /// Creates one schema instance with the uniform <paramref name="scale"/>: every crest
-    /// is drawn at the same world units per native sprite unit, so a taller silhouette
-    /// simply draws taller instead of being fitted per crest. The container stays at
-    /// scale 1 and the content carries the scale divided by the inherited one.
+    /// Creates one schema instance: the sprite fallback is drawn at <paramref name="scale"/>,
+    /// the cloned vanilla card at the constant <paramref name="cardScale"/>, which already
+    /// covers the silhouette child scale. Neither depends on the selected crest, so a taller
+    /// silhouette simply draws taller instead of being fitted per crest. The container stays
+    /// at scale 1 and the content carries the scale divided by the inherited one.
     /// </summary>
     private static Schema? BuildSchema(ToolCrest crest, Sprite silhouette, Color bodyColor,
-        float scale, bool fitDetails, string label)
+        float scale, float cardScale, bool fitDetails, string label)
     {
         Transform? host = SchemaHost();
         if (host == null)
@@ -1151,13 +1159,20 @@ internal static class ShopCrestSchema
 
         if (Render == SchemaRenderMode.Clone)
         {
-            Schema? clone = CloneSchema(crest, container, content, label);
+            // The copied card draws the vanilla silhouette child at SilhouetteScale;
+            // the card scale is the same for every crest, so only the body differs.
+            float cardLocal = inherited > 0.0001f ? cardScale / inherited : cardScale;
+            content.transform.localScale = new Vector3(cardLocal, cardLocal, 1f);
+            Schema? clone = CloneSchema(crest, container, content, label, cardScale, fitDetails);
             if (clone != null)
             {
                 LiftConfirm(clone, fitDetails);
                 LogSprites("clone");
                 return clone;
             }
+
+            // The sprite fallback still draws at the silhouette scale.
+            content.transform.localScale = new Vector3(local, local, 1f);
         }
 
         bool vanilla = Render != SchemaRenderMode.Generated && TemplateSprites() != null;
@@ -1286,8 +1301,8 @@ internal static class ShopCrestSchema
     }
 
     /// <summary>
-    /// Tallest native silhouette among every crest, measured once per plugin session:
-    /// the single reference the uniform schema scale and the dot diameter derive from.
+    /// Native silhouette height of the tallest crest, measured once per plugin session:
+    /// the reference the sprite-fallback scale and the dot diameter derive from.
     /// </summary>
     private static float ReferenceHeight()
     {
@@ -1328,6 +1343,16 @@ internal static class ShopCrestSchema
         _referenceHeight = best;
         Plugin.Log.LogInfo($"[SCHEMA] reference height={best:F3} from '{name}'");
         return best;
+    }
+
+    /// <summary>
+    /// Body height of the tallest crest as a cloned card draws it: its native silhouette at
+    /// the vanilla <see cref="SilhouetteScale"/>. One reference for every clone, so the card
+    /// scale never depends on the selected crest.
+    /// </summary>
+    private static float ReferenceBody()
+    {
+        return ReferenceHeight() * SilhouetteScale;
     }
 
     /// <summary>World height a sprite draws at scale 1; <c>rect/ppu</c> when bounds are empty.</summary>
@@ -1477,10 +1502,11 @@ internal static class ShopCrestSchema
     /// <summary>
     /// Copies the vanilla crest card of <paramref name="crest"/>, forced into the look of an
     /// unselected card: hidden crest sprite, shown silhouette and shrunk slot icons. The
-    /// clone is fitted by its own silhouette bounds. Null when no crest card is in the scene.
+    /// clone is drawn at the constant <paramref name="cardScale"/> like every other crest.
+    /// Null when no crest card is in the scene.
     /// </summary>
     private static Schema? CloneSchema(ToolCrest crest, GameObject container, GameObject content,
-        string label)
+        string label, float cardScale, bool logMetrics)
     {
         try
         {
@@ -1517,6 +1543,7 @@ internal static class ShopCrestSchema
 
             clone.SetActive(true);
             ResetFades(clone);
+            float slotWorld = SlotWorld(slots);
             foreach (InventoryToolCrestSlot slot in slots)
             {
                 slot.ItemFlashAmount = 0f;
@@ -1531,12 +1558,18 @@ internal static class ShopCrestSchema
                 return null;
             }
 
-            float fit = FitClone(body, content);
             Schema schema = new Schema(label, container, content, body);
             Fit(schema);
+            if (logMetrics)
+            {
+                Plugin.Log.LogInfo($"[SCHEMA] clone '{crest.name}' bodyH={WorldHeight(body):F3}" +
+                    $" slotWorld={slotWorld:F3} cardScale={cardScale:F3}" +
+                    $" reference={ReferenceBody():F3}");
+            }
+
             Plugin.Log.LogInfo($"[SCHEMA] cloned '{crest.name}' template='{PathOf(source.transform)}'" +
                 $" slots={slots.Length} spriteAlpha=0 silhouetteAlpha=1" +
-                $" slotScale={CloneSlotScale:F2} fit={fit:F3}");
+                $" slotScale={CloneSlotScale:F2}");
             return schema;
         }
         catch (Exception ex)
@@ -1604,23 +1637,19 @@ internal static class ShopCrestSchema
         }
     }
 
-    /// <summary>
-    /// Scales the clone so its silhouette draws <see cref="PanelFill"/> of the details
-    /// panel. Measured on the clone itself, no reference height is used.
-    /// </summary>
-    private static float FitClone(Renderer body, GameObject content)
+    /// <summary>World height of the first slot icon of a cloned card; zero when it has none.</summary>
+    private static float SlotWorld(InventoryToolCrestSlot[] slots)
     {
-        float drawn = WorldHeight(body);
-        if (drawn <= 0.0001f)
+        foreach (InventoryToolCrestSlot slot in slots)
         {
-            return 1f;
+            Renderer? renderer = slot != null ? slot.GetComponentInChildren<Renderer>(true) : null;
+            if (renderer != null && renderer.bounds.size.y > 0.0001f)
+            {
+                return renderer.bounds.size.y;
+            }
         }
 
-        float panel = TryPanelSize(out Vector2 panelSize) ? panelSize.y : BaseHeight;
-        float fit = PanelFill * panel * Scale / drawn;
-        Vector3 scale = content.transform.localScale;
-        content.transform.localScale = new Vector3(scale.x * fit, scale.y * fit, scale.z);
-        return fit;
+        return 0f;
     }
 
     /// <summary>Card of <paramref name="crest"/>; any card of the scene as a logged fallback.</summary>
