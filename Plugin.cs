@@ -55,6 +55,7 @@ public sealed class Plugin : BaseUnityPlugin
     private ConfigEntry<bool> _useLiveShop = null!;
     private ConfigEntry<KeyboardShortcut> _testHotkey = null!;
     private ConfigEntry<KeyboardShortcut> _shopDumpHotkey = null!;
+    private ConfigEntry<KeyboardShortcut> _spriteDumpHotkey = null!;
     private ConfigEntry<bool> _showCrestSchema = null!;
     private ConfigEntry<SchemaRenderMode> _schemaRender = null!;
     private ConfigEntry<float> _crestSchemaScale = null!;
@@ -98,6 +99,8 @@ public sealed class Plugin : BaseUnityPlugin
             "Клавиша тестового выбора знака");
         _shopDumpHotkey = Config.Bind("General", "ShopDumpHotkey", new KeyboardShortcut(KeyCode.F8),
             "Клавиша дампа живого магазина (объекты, FSM, строки)");
+        _spriteDumpHotkey = Config.Bind("General", "SpriteDumpHotkey", new KeyboardShortcut(KeyCode.F10),
+            "Клавиша дампа спрайтов гребней в PNG (C:\\Users\\trioj\\Downloads\\silksong_sprites)");
         _useLiveShop = Config.Bind("General", "UseLiveShop", true,
             "Показывать выбор знака в настоящем окне магазина (сток и позиция восстанавливаются)");
         _showCrestSchema = Config.Bind("General", "ShowCrestSchema", true,
@@ -199,6 +202,12 @@ public sealed class Plugin : BaseUnityPlugin
             ShopDiag.DumpLiveShop();
             ShopTrace.Begin("hotkey");
             ShopRenderDiag.Capture("hotkey", null);
+        }
+
+        if (_spriteDumpHotkey.Value.IsDown())
+        {
+            Log.LogInfo($"[DUMP] Hotkey {_spriteDumpHotkey.Value} pressed: crest sprite dump.");
+            SpriteDump.DumpAll();
         }
 
         if (!IsInGame() || CrestSelectMenu.IsOpen)
