@@ -191,6 +191,7 @@ public sealed class Plugin : BaseUnityPlugin
             Log.LogInfo($"[CREST] Update alive (gameState={DescribeGameState()}).");
         }
 
+        InventoryDiag.Poll();
         UpdatePendingOffer();
 
         if (_shopDumpHotkey.Value.IsDown())
