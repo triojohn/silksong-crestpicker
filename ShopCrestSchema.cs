@@ -152,6 +152,12 @@ internal static class ShopCrestSchema
     private static bool _templateRead;
     private static bool _inventoryFound;
     private static bool _spritesLogged;
+
+    /// <summary>Crests whose slots were already written to the log.</summary>
+    private static readonly HashSet<string> SlotLogged = new HashSet<string>();
+
+    /// <summary>True once every crest of the game was dumped for this session.</summary>
+    private static bool _crestDumpLogged;
     private static readonly HashSet<string> LoggedReasons = new HashSet<string>();
 
     /// <summary>True to draw the crest schema at all.</summary>
@@ -203,6 +209,7 @@ internal static class ShopCrestSchema
             _confirmGroupActiveLogged = null;
             _detailsBounds = default;
             DestroySchemaRoot();
+            DumpAllCrests();
             Apply();
         }
         catch (Exception ex)
@@ -992,6 +999,9 @@ internal static class ShopCrestSchema
             return;
         }
 
+        LogSpriteMetrics(crest, silhouette);
+        LogSlots(crest);
+
         Color bodyColor = equipped && crest.CrestSprite != null && silhouette == crest.CrestSprite
             ? Color.white
             : InventoryToolCrest.DeselectedColor;
@@ -1002,6 +1012,110 @@ internal static class ShopCrestSchema
         bool dotsTemplate = _detailsSchema == null || _detailsSchema.DotsTemplate;
         Plugin.Log.LogInfo($"[SCHEMA] built '{crest.name}' silhouette={source} slots={slots}" +
             $" dots={(dotsTemplate ? "template" : "generated")} live={LiveContainers()}");
+    }
+
+    /// <summary>Logs the raw metrics of the silhouette and of <c>CrestSprite</c>, once per build.</summary>
+    private static void LogSpriteMetrics(ToolCrest crest, Sprite? silhouette)
+    {
+        Plugin.Log.LogInfo($"[SCHEMA] sprite '{crest.name}' sil={SpriteMetrics(silhouette)}" +
+            $" | spr={SpriteMetrics(crest.CrestSprite)}");
+    }
+
+    /// <summary>Name, pixel rect, PPU, unit bounds and texture rect of one sprite.</summary>
+    private static string SpriteMetrics(Sprite? sprite)
+    {
+        if (sprite == null)
+        {
+            return "none";
+        }
+
+        Bounds bounds = sprite.bounds;
+        return $"{sprite.name} rect=({sprite.rect.width:F0},{sprite.rect.height:F0})" +
+            $" ppu={sprite.pixelsPerUnit:F2}" +
+            $" bounds=({bounds.size.x:F3},{bounds.size.y:F3})" +
+            $" spriteBounds=({sprite.textureRect.width:F0},{sprite.textureRect.height:F0})";
+    }
+
+    /// <summary>Logs every slot of a crest once, with the prefab parent its widget sits under.</summary>
+    private static void LogSlots(ToolCrest crest)
+    {
+        if (!SlotLogged.Add(crest.name ?? string.Empty))
+        {
+            return;
+        }
+
+        try
+        {
+            ToolCrest.SlotInfo[]? slots = crest.Slots;
+            if (slots == null || slots.Length == 0)
+            {
+                Plugin.Log.LogInfo($"[SCHEMA] slot crest='{crest.name}' none");
+                return;
+            }
+
+            InventoryToolCrestSlot[] widgets = TemplateSlots(crest);
+            for (int i = 0; i < slots.Length; i++)
+            {
+                ToolCrest.SlotInfo slot = slots[i];
+                Vector2 position = slot.Position;
+                Transform? parent = i < widgets.Length && widgets[i] != null
+                    ? widgets[i].transform.parent
+                    : null;
+                Plugin.Log.LogInfo($"[SCHEMA] slot i={i} type={slot.Type}" +
+                    $" pos=({position.x:F2},{position.y:F2}) locked={IsLocked(crest, slot)}" +
+                    $" parent='{(parent != null ? PathOf(parent) : "none")}'");
+            }
+        }
+        catch (Exception ex)
+        {
+            Plugin.Log.LogWarning($"[SCHEMA] slot log failed for '{crest.name}': {ex.Message}");
+        }
+    }
+
+    /// <summary>Vanilla slot widgets of a crest's card, empty when no card of it is loaded.</summary>
+    private static InventoryToolCrestSlot[] TemplateSlots(ToolCrest crest)
+    {
+        InventoryToolCrest? template = CrestTemplate(crest);
+        return template != null && TemplateSlotsField?.GetValue(template) is InventoryToolCrestSlot[] slots
+            ? slots
+            : Array.Empty<InventoryToolCrestSlot>();
+    }
+
+    /// <summary>One line per crest of the game, once per session: the sprites the schema compares.</summary>
+    private static void DumpAllCrests()
+    {
+        if (_crestDumpLogged)
+        {
+            return;
+        }
+
+        _crestDumpLogged = true;
+        try
+        {
+            foreach (ToolCrest crest in ToolItemManager.GetAllCrests())
+            {
+                if (crest == null)
+                {
+                    continue;
+                }
+
+                int slots = crest.Slots?.Length ?? 0;
+                Plugin.Log.LogInfo($"[SCHEMA] crest '{crest.name}' sil={RectPpu(crest.CrestSilhouette)}" +
+                    $" spr={RectPpu(crest.CrestSprite)} slots={slots}");
+            }
+        }
+        catch (Exception ex)
+        {
+            Plugin.Log.LogWarning($"[SCHEMA] crest dump failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>Pixel rect and PPU of one sprite, <c>none</c> when it is absent.</summary>
+    private static string RectPpu(Sprite? sprite)
+    {
+        return sprite == null
+            ? "none"
+            : $"({sprite.rect.width:F0},{sprite.rect.height:F0})ppu={sprite.pixelsPerUnit:F2}";
     }
 
     /// <summary>
