@@ -18,10 +18,13 @@ internal enum SchemaRenderMode
     Clone,
 
     /// <summary>Draw the silhouette and the vanilla <c>templateSlots</c> icons.</summary>
-    VanillaSprites,
+    Sprite = 1,
+
+    /// <summary>Old name of <see cref="Sprite"/>; kept so an existing config still parses.</summary>
+    VanillaSprites = Sprite,
 
     /// <summary>Draw the silhouette and generated circle dots.</summary>
-    Generated,
+    Generated = 2,
 }
 
 /// <summary>
@@ -50,6 +53,9 @@ internal static class ShopCrestSchema
 
     /// <summary>Silhouette renderer inside the vanilla crest card the clone is fitted by.</summary>
     private const string SilhouetteName = "crestSilhouette";
+
+    /// <summary>Slot scale of an unselected vanilla crest card (<c>_slotScaleOther</c>).</summary>
+    private const float CloneSlotScale = 0.7f;
 
     /// <summary>Fallback colours when the game's tool type palette is unavailable.</summary>
     private static readonly Dictionary<ToolItemType, Color> FallbackColors =
@@ -138,6 +144,15 @@ internal static class ShopCrestSchema
     private static readonly FieldInfo? SlotTypeSpriteField =
         typeof(InventoryToolCrestSlot).GetField("slotTypeSprite", PrivateInstance);
 
+    private static readonly FieldInfo? CrestSpriteField =
+        typeof(InventoryToolCrest).GetField("crestSprite", PrivateInstance);
+
+    private static readonly FieldInfo? CrestSilhouetteField =
+        typeof(InventoryToolCrest).GetField("crestSilhouette", PrivateInstance);
+
+    private static readonly FieldInfo? NewItemOrbField =
+        typeof(InventoryToolCrest).GetField("newItemOrb", PrivateInstance);
+
     /// <summary>Vanilla slot sprites indexed by <see cref="ToolItemType"/>; read once per session.</summary>
     private static Sprite?[]? _templateSprites;
 
@@ -161,8 +176,8 @@ internal static class ShopCrestSchema
     /// <summary>True to draw the crest schema at all.</summary>
     internal static bool Enabled = true;
 
-    /// <summary>How the schema body is drawn; vanilla sprites are built from the crest data.</summary>
-    internal static SchemaRenderMode Render = SchemaRenderMode.VanillaSprites;
+    /// <summary>How the schema body is drawn; the default clones the unselected vanilla card.</summary>
+    internal static SchemaRenderMode Render = SchemaRenderMode.Clone;
 
     /// <summary>Multiplier applied to the schema size.</summary>
     internal static float Scale = 1f;
@@ -992,7 +1007,7 @@ internal static class ShopCrestSchema
         _confirmSchema = BuildSchema(crest, silhouette, bodyColor, scale, false,
             "Confirm Crest Schema");
         int slots = crest.Slots?.Length ?? 0;
-        Plugin.Log.LogInfo($"[SCHEMA] built '{crest.name}' body=silhouette slots={slots}" +
+        Plugin.Log.LogInfo($"[SCHEMA] built '{crest.name}' slots={slots}" +
             $" slotScale={CrestCardLook.SlotScale(false):F2}");
     }
 
@@ -1232,12 +1247,6 @@ internal static class ShopCrestSchema
         return any ? bounds : new Bounds(target.position, Vector3.zero);
     }
 
-    /// <summary>World height of everything drawn under a root, used to fit a whole clone.</summary>
-    private static float ContainerHeight(Transform target)
-    {
-        return ContainerBounds(target).size.y;
-    }
-
     /// <summary>World width and height of the details panel; false when it draws nothing.</summary>
     private static bool TryPanelSize(out Vector2 size)
     {
@@ -1466,15 +1475,16 @@ internal static class ShopCrestSchema
     }
 
     /// <summary>
-    /// Copies the vanilla crest card of <paramref name="crest"/> into the schema when the
-    /// template sprites are unavailable. Null when no such crest is in the loaded scene.
+    /// Copies the vanilla crest card of <paramref name="crest"/>, forced into the look of an
+    /// unselected card: hidden crest sprite, shown silhouette and shrunk slot icons. The
+    /// clone is fitted by its own silhouette bounds. Null when no crest card is in the scene.
     /// </summary>
     private static Schema? CloneSchema(ToolCrest crest, GameObject container, GameObject content,
         string label)
     {
         try
         {
-            InventoryToolCrest? source = CrestTemplate(crest);
+            InventoryToolCrest? source = CloneTemplate(crest);
             if (source == null)
             {
                 LogOnce($"[SCHEMA] no clone with CrestData={crest.name}");
@@ -1493,11 +1503,14 @@ internal static class ShopCrestSchema
             foreach (InventoryToolCrestSlot slot in slots)
             {
                 slot.enabled = false;
+                slot.transform.localScale = new Vector3(CloneSlotScale, CloneSlotScale, 1f);
             }
 
             InventoryToolCrest? widget = clone.GetComponent<InventoryToolCrest>();
             if (widget != null)
             {
+                Unselect(widget);
+                RemoveNewItem(clone, widget);
                 widget.enabled = false;
                 UnityEngine.Object.Destroy(widget);
             }
@@ -1518,19 +1531,114 @@ internal static class ShopCrestSchema
                 return null;
             }
 
+            float fit = FitClone(body, content);
             Schema schema = new Schema(label, container, content, body);
             Fit(schema);
-            float whole = ContainerHeight(clone.transform);
-            Plugin.Log.LogWarning($"[SCHEMA] clone mode from '{source.name}'" +
-                $" (does not guarantee crest match, active={source.gameObject.activeInHierarchy})" +
-                $" slots={slots.Length} wholeH={whole:F3} lossyScale={content.transform.lossyScale.y:F3}");
+            Plugin.Log.LogInfo($"[SCHEMA] cloned '{crest.name}' template='{PathOf(source.transform)}'" +
+                $" slots={slots.Length} spriteAlpha=0 silhouetteAlpha=1" +
+                $" slotScale={CloneSlotScale:F2} fit={fit:F3}");
             return schema;
         }
         catch (Exception ex)
         {
-            LogOnce($"[SCHEMA] clone failed: {ex.Message}");
+            LogOnce($"[SCHEMA] clone failed: {ex.Message}, sprite fallback");
             return null;
         }
+    }
+
+    /// <summary>
+    /// Forced unselected view of a vanilla crest card: the crest sprite disappears, the
+    /// silhouette is shown (<c>AlphaSelf = 1</c>).
+    /// </summary>
+    private static void Unselect(InventoryToolCrest widget)
+    {
+        if (CrestSpriteField == null)
+        {
+            LogOnce("[SCHEMA] crestSprite field missing, clone sprite stays visible");
+        }
+        else if (CrestSpriteField.GetValue(widget) is SpriteRenderer sprite)
+        {
+            Color color = sprite.color;
+            sprite.color = new Color(color.r, color.g, color.b, 0f);
+        }
+
+        if (CrestSilhouetteField == null)
+        {
+            LogOnce("[SCHEMA] crestSilhouette field missing, clone silhouette unchanged");
+        }
+
+        object? silhouette = CrestSilhouetteField?.GetValue(widget);
+        PropertyInfo? alpha = silhouette?
+            .GetType()
+            .GetProperty("AlphaSelf", BindingFlags.Instance | BindingFlags.Public);
+        if (alpha != null)
+        {
+            alpha.SetValue(silhouette, 1f);
+        }
+        else if (silhouette is SpriteRenderer renderer)
+        {
+            Color color = renderer.color;
+            renderer.color = new Color(color.r, color.g, color.b, 1f);
+        }
+    }
+
+    /// <summary>Removes the "new item" orb the vanilla card shows for an unseen crest.</summary>
+    private static void RemoveNewItem(GameObject clone, InventoryToolCrest widget)
+    {
+        object? orb = NewItemOrbField?.GetValue(widget);
+        if (orb is GameObject go)
+        {
+            UnityEngine.Object.Destroy(go);
+        }
+        else if (orb is Component part)
+        {
+            UnityEngine.Object.Destroy(part.gameObject);
+        }
+
+        foreach (Transform child in clone.GetComponentsInChildren<Transform>(true))
+        {
+            if (child.name.IndexOf("newitem", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                UnityEngine.Object.Destroy(child.gameObject);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Scales the clone so its silhouette draws <see cref="PanelFill"/> of the details
+    /// panel. Measured on the clone itself, no reference height is used.
+    /// </summary>
+    private static float FitClone(Renderer body, GameObject content)
+    {
+        float drawn = WorldHeight(body);
+        if (drawn <= 0.0001f)
+        {
+            return 1f;
+        }
+
+        float panel = TryPanelSize(out Vector2 panelSize) ? panelSize.y : BaseHeight;
+        float fit = PanelFill * panel * Scale / drawn;
+        Vector3 scale = content.transform.localScale;
+        content.transform.localScale = new Vector3(scale.x * fit, scale.y * fit, scale.z);
+        return fit;
+    }
+
+    /// <summary>Card of <paramref name="crest"/>; any card of the scene as a logged fallback.</summary>
+    private static InventoryToolCrest? CloneTemplate(ToolCrest crest)
+    {
+        InventoryToolCrest? exact = CrestTemplate(crest);
+        if (exact != null)
+        {
+            return exact;
+        }
+
+        InventoryToolCrest? any = LiveCrest();
+        if (any != null)
+        {
+            LogOnce($"[SCHEMA] clone template fallback '{any.name}' for '{crest.name}'");
+        }
+
+        return any;
     }
 
     /// <summary>Loaded crest widget of <paramref name="crest"/>, inactive one preferred.</summary>
@@ -1545,7 +1653,8 @@ internal static class ShopCrestSchema
             }
 
             GameObject go = candidate.gameObject;
-            if (!go.scene.isLoaded || go.hideFlags != HideFlags.None || candidate.CrestData != crest)
+            if (!go.scene.isLoaded || go.hideFlags != HideFlags.None ||
+                (candidate.CrestData != crest && candidate.name != crest.name))
             {
                 continue;
             }
