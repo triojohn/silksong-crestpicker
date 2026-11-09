@@ -1577,6 +1577,20 @@ internal static class ShopCrestSchema
             clone.transform.localRotation = Quaternion.identity;
             clone.transform.localScale = Vector3.one;
 
+            InventoryToolCrest? widget = clone.GetComponent<InventoryToolCrest>();
+            Transform? silhouette = widget != null &&
+                CrestSilhouetteField?.GetValue(widget) is NestedFadeGroupSpriteRenderer silhouettePart
+                ? silhouettePart.transform
+                : null;
+            List<GameObject> disabled = new List<GameObject>();
+            StripEffects(clone.transform, clone.transform, silhouette, disabled);
+            int extras = disabled.Count;
+            if (extras > 0)
+            {
+                List<string> names = disabled.ConvertAll(part => part.name);
+                LogOnce($"[SCHEMA] clone '{clone.name}' disabled extras='{string.Join(", ", names)}'");
+            }
+
             // The vanilla components drive themselves from a manager the clone does not have.
             InventoryToolCrestSlot[] slots = clone.GetComponentsInChildren<InventoryToolCrestSlot>(true);
             foreach (InventoryToolCrestSlot slot in slots)
@@ -1585,13 +1599,11 @@ internal static class ShopCrestSchema
                 slot.transform.localScale = new Vector3(CloneSlotScale, CloneSlotScale, 1f);
             }
 
-            InventoryToolCrest? widget = clone.GetComponent<InventoryToolCrest>();
-            int extras = 0;
             string silhouetteName = "none";
             string crestSpriteName = "none";
             if (widget != null)
             {
-                extras += Unselect(widget);
+                Unselect(widget);
                 silhouetteName = PartName(CrestSilhouetteField?.GetValue(widget));
                 crestSpriteName = PartName(CrestSpriteField?.GetValue(widget));
                 RemoveNewItem(clone, widget);
@@ -1631,10 +1643,9 @@ internal static class ShopCrestSchema
     /// <summary>
     /// Forced unselected view of a vanilla crest card: the crest sprite object is switched
     /// off, because its fade group rewrites the sprite alpha every frame and alpha alone
-    /// let the detailed sprite reappear. The silhouette is switched on at full alpha, and
-    /// every leftover renderer is switched off. Returns the number of switched-off objects.
+    /// let the detailed sprite reappear. The silhouette is switched on at full alpha.
     /// </summary>
-    private static int Unselect(InventoryToolCrest widget)
+    private static void Unselect(InventoryToolCrest widget)
     {
         if (CrestSpriteField?.GetValue(widget) is NestedFadeGroupSpriteRenderer sprite)
         {
@@ -1656,60 +1667,35 @@ internal static class ShopCrestSchema
         {
             LogOnce("[SCHEMA] crestSilhouette field missing, clone silhouette unchanged");
         }
-
-        return DisableExtras(widget);
     }
 
     /// <summary>
-    /// Switches off every effect renderer of the clone, decided by
+    /// Switches off the effect nodes of a cloned card, decided by
     /// <see cref="CloneFilter.Evaluate"/>: the glow and the white flash draw over the
     /// silhouette, and only the vanilla fade kept them invisible. The silhouette subtree
-    /// and the slot widgets always stay. Returns the number of switched-off objects.
+    /// and the slot widgets always stay. Each switched-off object is added to
+    /// <paramref name="disabled"/>.
     /// </summary>
-    private static int DisableExtras(InventoryToolCrest widget)
+    /// <param name="parent">Subtree being walked.</param>
+    /// <param name="clone">Root of the clone, the boundary of the rule.</param>
+    /// <param name="silhouette">Silhouette node of the clone, when it has one.</param>
+    /// <param name="disabled">Objects switched off by this pass.</param>
+    private static void StripEffects(Transform parent, Transform clone, Transform? silhouette,
+        List<GameObject> disabled)
     {
-        Transform clone = widget.transform;
-        if (CrestSilhouetteField?.GetValue(widget) is not NestedFadeGroupSpriteRenderer silhouette)
+        foreach (Transform child in parent)
         {
-            return 0;
-        }
-
-        List<GameObject> disabled = new List<GameObject>();
-        foreach (Renderer renderer in clone.GetComponentsInChildren<Renderer>(true))
-        {
-            Transform part = renderer.transform;
-            bool isSilhouette = part == silhouette.transform || part.IsChildOf(silhouette.transform);
-            if (HiddenInClone(part, clone) || disabled.Contains(renderer.gameObject) ||
-                CloneFilter.Evaluate(part.name, isSilhouette, InSlot(part, clone)) == CloneNode.Keep)
+            bool isSilhouette = silhouette != null &&
+                (child == silhouette || child.IsChildOf(silhouette));
+            if (CloneFilter.Evaluate(child.name, isSilhouette, InSlot(child, clone)) == CloneNode.Disable)
             {
+                child.gameObject.SetActive(false);
+                disabled.Add(child.gameObject);
                 continue;
             }
 
-            renderer.gameObject.SetActive(false);
-            disabled.Add(renderer.gameObject);
+            StripEffects(child, clone, silhouette, disabled);
         }
-
-        if (disabled.Count > 0)
-        {
-            List<string> names = disabled.ConvertAll(part => part.name);
-            LogOnce($"[SCHEMA] clone '{clone.name}' disabled extras='{string.Join(", ", names)}'");
-        }
-
-        return disabled.Count;
-    }
-
-    /// <summary>True when <paramref name="part"/> or an ancestor inside the clone is off.</summary>
-    private static bool HiddenInClone(Transform part, Transform clone)
-    {
-        for (Transform? current = part; current != null && current != clone; current = current.parent)
-        {
-            if (!current.gameObject.activeSelf)
-            {
-                return true;
-            }
-        }
-
-        return false;
     }
 
     /// <summary>True when <paramref name="part"/> belongs to a slot of the card.</summary>
