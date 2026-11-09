@@ -21,7 +21,8 @@ internal static class CrestPickerService
     /// Returns the crests the player may pick: base versions that are not hidden.
     /// Unlock state is ignored while <c>IgnoreUnlockState</c> is true; otherwise
     /// <see cref="CrestPoolMode.Unlocked"/> limits the pool to unlocked crests.
-    /// The currently equipped crest is always excluded.
+    /// The currently equipped crest is excluded only while <c>IncludeEquippedCrest</c>
+    /// is false.
     /// </summary>
     /// <returns>Selectable crests in crest-list order; empty on failure.</returns>
     internal static List<ToolCrest> GetSelectableCrests()
@@ -29,17 +30,30 @@ internal static class CrestPickerService
         try
         {
             bool ignoreUnlock = Plugin.IgnoreUnlockState.Value;
+            bool includeEquipped = Plugin.IncludeEquippedCrest.Value;
             CrestPoolMode mode = ignoreUnlock ? CrestPoolMode.All : PoolMode;
-            List<ToolCrest> pool = ToolItemManager.GetAllCrests()
+            List<ToolCrest> all = ToolItemManager.GetAllCrests();
+            List<ToolCrest> pool = all
                 .Where(crest => crest != null &&
                     CrestPoolRules.IsSelectable(crest.IsBaseVersion, crest.IsHidden, crest.IsUnlocked, mode))
                 .ToList();
 
-            int excluded = pool.RemoveAll(crest => CrestPoolRules.IsEquippedExcluded(SafeIsEquipped(crest)));
+            int excluded = includeEquipped
+                ? 0
+                : pool.RemoveAll(crest => CrestPoolRules.IsEquippedExcluded(SafeIsEquipped(crest)));
             Plugin.Log.LogInfo(
-                $"[CREST] pool={pool.Count} ignoreUnlock={ignoreUnlock}" +
+                $"[CREST] pool={pool.Count} ignoreUnlock={ignoreUnlock} includeEquipped={includeEquipped}" +
+                $" all={all.Count}" +
                 $" names={string.Join(",", pool.Select(crest => crest.name))}" +
                 $" (mode={mode}, equipped excluded={excluded}).");
+            foreach (ToolCrest? crest in all)
+            {
+                Plugin.Log.LogInfo(crest == null
+                    ? "[CREST]   <null>"
+                    : $"[CREST]   {crest.name} base={crest.IsBaseVersion}" +
+                        $" hidden={crest.IsHidden} unlocked={crest.IsUnlocked}");
+            }
+
             return pool;
         }
         catch (Exception ex)

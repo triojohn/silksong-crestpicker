@@ -41,6 +41,9 @@ public sealed class Plugin : BaseUnityPlugin
     /// <summary>When true, the picker offers every normal crest regardless of save state.</summary>
     internal static ConfigEntry<bool> IgnoreUnlockState = null!;
 
+    /// <summary>When true, the currently equipped crest stays in the picker list.</summary>
+    internal static ConfigEntry<bool> IncludeEquippedCrest = null!;
+
     /// <summary>Seconds to wait for a playable state before dropping an offer.</summary>
     private const float OfferGrace = 2f;
 
@@ -85,6 +88,9 @@ public sealed class Plugin : BaseUnityPlugin
         IgnoreUnlockState = Config.Bind("General", "IgnoreUnlockState", true,
             "Временно показывать все нормальные знаки независимо от сейва. " +
             "false — снова фильтровать по CrestPool/IsUnlocked. Читается на лету.");
+        IncludeEquippedCrest = Config.Bind("General", "IncludeEquippedCrest", true,
+            "Оставлять надетый знак в списке выбора. true — знак не вырезается, " +
+            "false — прежнее поведение (надетый знак исключён). Читается на лету.");
         _enableSnailChoice = Config.Bind("General", "EnableSnailChoice", true,
             "Предлагать выбор знака после диалога с прислужницей капеллы");
         _testHotkey = Config.Bind("General", "TestHotkey", new KeyboardShortcut(KeyCode.F9),
