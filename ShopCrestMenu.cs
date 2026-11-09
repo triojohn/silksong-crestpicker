@@ -83,8 +83,11 @@ internal static class ShopCrestMenu
     /// <summary>True once reaching the resting open state was logged for this session.</summary>
     private static bool _openReachedLogged;
 
-    /// <summary>True once the schema hide at the close start was logged for this session.</summary>
-    private static bool _schemaCloseLogged;
+    /// <summary>True once this session started hiding the schema and the rows, whatever triggered it.</summary>
+    private static bool _hideStarted;
+
+    /// <summary>True once the root alpha reached 1 in this session, so a later drop means the close fade.</summary>
+    private static bool _windowSeenOpen;
 
     /// <summary>True once the return to idle was logged for this session.</summary>
     private static bool _closeDetectedLogged;
@@ -247,6 +250,7 @@ internal static class ShopCrestMenu
             ReviveTeardown();
             control.SendEvent(OpenEvent);
             _shopUp = Time.realtimeSinceStartup;
+            RaiseRootAlpha();
             int count = stock.GetItemCount();
 
             ShopCosmetics.Begin(root.transform);
@@ -751,12 +755,14 @@ internal static class ShopCrestMenu
     }
 
     /// <summary>
-    /// Switches off the two action prompts and the whole item list group at the close
-    /// start: the vanilla fade never reaches the selector, the rows or the vanilla prompt
-    /// text, so they would outlive the window. Their vanilla active state is recorded and
-    /// written back by <see cref="RestoreLeftovers"/> once the fade is done.
+    /// Switches off the two action prompts and the whole item list group once the close
+    /// starts or the window begins to fade: the vanilla fade never reaches the selector,
+    /// the rows or the vanilla prompt text, so they would outlive the window. Their vanilla
+    /// active state is recorded and written back by <see cref="RestoreLeftovers"/> once the
+    /// fade is done.
     /// </summary>
-    private static void HideLeftovers()
+    /// <param name="duringFade">True when the close fade itself asked for the hide, false at the FSM close start.</param>
+    private static void HideLeftovers(bool duringFade = false)
     {
         int prompts = 0;
         if (HideLeftover(_cancelPrompt))
@@ -771,7 +777,9 @@ internal static class ShopCrestMenu
 
         bool listGroup = HideLeftover(ListGroup()?.gameObject);
         _leftoversHidden = prompts > 0 || listGroup;
-        Plugin.Log.LogInfo($"[SHOP] leftovers hidden at close start listGroup={listGroup} prompts={prompts}");
+        Plugin.Log.LogInfo(duringFade
+            ? $"[SHOP] leftovers hidden at fade listGroup={listGroup} prompts={prompts}"
+            : $"[SHOP] leftovers hidden at close start listGroup={listGroup} prompts={prompts}");
     }
 
     /// <summary>Turns one object off and records its vanilla active state; false when absent.</summary>
@@ -906,14 +914,24 @@ internal static class ShopCrestMenu
 
     /// <summary>
     /// Session safety net: the vanilla chain sometimes leaves a reused window faded out
-    /// while the FSM says it is open. After 60 such frames the root alpha is raised once,
-    /// and only once per session, and only while the window is open and not closing;
-    /// <see cref="RestoreAlpha"/> clears the guard raise on close.
+    /// while the FSM rests in <see cref="OpenState"/>. After 60 such frames the root alpha
+    /// is raised once, and only once per session, and only while the window is open, not
+    /// closing and not already hiding for a close; <see cref="RestoreAlpha"/> clears the
+    /// guard raise on close.
     /// </summary>
     internal static void GuardTeardown()
     {
-        if (_closing || !IsOpen || !_teardownCaptured || _fade == null)
+        if (_closing || _hideStarted || !IsOpen || !_teardownCaptured || _fade == null)
         {
+            return;
+        }
+
+        // IsOpen stays true through the close fade, so the state decides: only the resting
+        // open state wants a visible window. A raised alpha during the fade brought the rows
+        // and the prompts back right after they were hidden.
+        if (_control == null || ActiveState(_control) != OpenState)
+        {
+            _lowAlphaFrames = 0;
             return;
         }
 
@@ -943,6 +961,30 @@ internal static class ShopCrestMenu
         catch (Exception ex)
         {
             Plugin.Log.LogWarning($"[SHOP] guard alpha raise failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Raises the root alpha once when the window opens. Every row, the selector and both
+    /// prompts hang off this group, and a reused window can start the session at zero; the
+    /// vanilla open chain keeps tweening the value afterwards.
+    /// </summary>
+    private static void RaiseRootAlpha()
+    {
+        try
+        {
+            if (_fade == null || _fade.gameObject == null)
+            {
+                return;
+            }
+
+            float before = SafeAlpha(0f);
+            _fade.AlphaSelf = 1f;
+            Plugin.Log.LogInfo($"[SHOP] root alpha raised at open was={before:F2}");
+        }
+        catch (Exception ex)
+        {
+            Plugin.Log.LogWarning($"[SHOP] root alpha raise failed: {ex.Message}");
         }
     }
 
@@ -1042,13 +1084,13 @@ internal static class ShopCrestMenu
     /// <summary>
     /// Hides both schemas when the FSM reaches a terminal close state.
     /// The schema lives outside the fade hierarchy, so the vanilla close fade never
-    /// reaches it; an alpha threshold only catches it once the window is nearly gone.
+    /// reaches it; the fade alpha is the earlier trigger, see <see cref="HideSchemaOnFade"/>.
     /// The open chain passes through several states before it rests, so a state that
     /// merely differs from the state at the open event is not a close.
     /// </summary>
     internal static void HideSchemaAtCloseStart()
     {
-        if (!IsOpen || !_sawOpenState || _control == null || _schemaCloseLogged)
+        if (!IsOpen || !_sawOpenState || _control == null || _hideStarted)
         {
             return;
         }
@@ -1060,10 +1102,41 @@ internal static class ShopCrestMenu
             return;
         }
 
-        _schemaCloseLogged = true;
+        _hideStarted = true;
         ShopCrestSchema.Hide();
         HideLeftovers();
         Plugin.Log.LogInfo($"[SHOP] schema hidden at close start state='{state}'");
+    }
+
+    /// <summary>
+    /// Hides the schema as soon as the window starts fading, whatever the FSM says: the
+    /// schema lives outside the fade hierarchy and the window is gone before the FSM reaches
+    /// a terminal state. The rows follow for the same reason. Needs a fully shown window in
+    /// this session first, so the fade-in itself is not taken for a close.
+    /// </summary>
+    internal static void HideSchemaOnFade()
+    {
+        if (_hideStarted || !IsOpen || !_teardownCaptured)
+        {
+            return;
+        }
+
+        float alpha = SafeAlpha(1f);
+        if (alpha >= 0.99f)
+        {
+            _windowSeenOpen = true;
+            return;
+        }
+
+        if (!_windowSeenOpen || alpha >= 0.5f)
+        {
+            return;
+        }
+
+        _hideStarted = true;
+        ShopCrestSchema.Hide();
+        HideLeftovers(true);
+        Plugin.Log.LogInfo($"[SHOP] window fading, hiding schema and rows alpha={alpha:F2}");
     }
 
     /// <summary>
@@ -1284,7 +1357,8 @@ internal static class ShopCrestMenu
         _fromDialogue = false;
         _sawOpenState = false;
         _openReachedLogged = false;
-        _schemaCloseLogged = false;
+        _hideStarted = false;
+        _windowSeenOpen = false;
         _closeDetectedLogged = false;
         SuppressDialogue = false;
         _teardownCaptured = false;
@@ -1713,6 +1787,7 @@ internal sealed class ShopCrestSession : MonoBehaviour
 
             ShopCrestMenu.ReassertStock();
             ShopCosmetics.Tick();
+            ShopCrestMenu.HideSchemaOnFade();
             ShopCrestMenu.GuardTeardown();
             ShopCrestMenu.TraceRootAlpha(_frames);
             ShopCrestMenu.CheckOpenTiming(_frames);
