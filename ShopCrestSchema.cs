@@ -1163,7 +1163,7 @@ internal static class ShopCrestSchema
             // the card scale is the same for every crest, so only the body differs.
             float cardLocal = inherited > 0.0001f ? cardScale / inherited : cardScale;
             content.transform.localScale = new Vector3(cardLocal, cardLocal, 1f);
-            Schema? clone = CloneSchema(crest, container, content, label, cardScale, fitDetails);
+            Schema? clone = CloneSchema(crest, container, content, label);
             if (clone != null)
             {
                 LiftConfirm(clone, fitDetails);
@@ -1501,12 +1501,11 @@ internal static class ShopCrestSchema
 
     /// <summary>
     /// Copies the vanilla crest card of <paramref name="crest"/>, forced into the look of an
-    /// unselected card: hidden crest sprite, shown silhouette and shrunk slot icons. The
-    /// clone is drawn at the constant <paramref name="cardScale"/> like every other crest.
+    /// unselected card: hidden crest sprite, shown silhouette and shrunk slot icons.
     /// Null when no crest card is in the scene.
     /// </summary>
     private static Schema? CloneSchema(ToolCrest crest, GameObject container, GameObject content,
-        string label, float cardScale, bool logMetrics)
+        string label)
     {
         try
         {
@@ -1533,9 +1532,13 @@ internal static class ShopCrestSchema
             }
 
             InventoryToolCrest? widget = clone.GetComponent<InventoryToolCrest>();
+            string silhouetteName = "none";
+            string crestSpriteName = "none";
             if (widget != null)
             {
                 Unselect(widget);
+                silhouetteName = PartName(CrestSilhouetteField?.GetValue(widget));
+                crestSpriteName = PartName(CrestSpriteField?.GetValue(widget));
                 RemoveNewItem(clone, widget);
                 widget.enabled = false;
                 UnityEngine.Object.Destroy(widget);
@@ -1560,16 +1563,9 @@ internal static class ShopCrestSchema
 
             Schema schema = new Schema(label, container, content, body);
             Fit(schema);
-            if (logMetrics)
-            {
-                Plugin.Log.LogInfo($"[SCHEMA] clone '{crest.name}' bodyH={WorldHeight(body):F3}" +
-                    $" slotWorld={slotWorld:F3} cardScale={cardScale:F3}" +
-                    $" reference={ReferenceBody():F3}");
-            }
-
-            Plugin.Log.LogInfo($"[SCHEMA] cloned '{crest.name}' template='{PathOf(source.transform)}'" +
-                $" slots={slots.Length} spriteAlpha=0 silhouetteAlpha=1" +
-                $" slotScale={CloneSlotScale:F2}");
+            Plugin.Log.LogInfo($"[SCHEMA] clone '{crest.name}' silhouette='{silhouetteName}'" +
+                $" crestSprite='{crestSpriteName}' slots={slots.Length}" +
+                $" slotWorld={slotWorld:F3} bodyH={WorldHeight(body):F3}");
             return schema;
         }
         catch (Exception ex)
@@ -1580,39 +1576,51 @@ internal static class ShopCrestSchema
     }
 
     /// <summary>
-    /// Forced unselected view of a vanilla crest card: the crest sprite disappears, the
-    /// silhouette is shown (<c>AlphaSelf = 1</c>).
+    /// Forced unselected view of a vanilla crest card: the crest sprite object is switched
+    /// off, because its fade group rewrites the sprite alpha every frame and alpha alone
+    /// let the detailed sprite reappear. The silhouette is switched on at full alpha.
     /// </summary>
     private static void Unselect(InventoryToolCrest widget)
     {
-        if (CrestSpriteField == null)
+        if (CrestSpriteField?.GetValue(widget) is NestedFadeGroupSpriteRenderer sprite)
+        {
+            sprite.gameObject.SetActive(false);
+        }
+        else
         {
             LogOnce("[SCHEMA] crestSprite field missing, clone sprite stays visible");
         }
-        else if (CrestSpriteField.GetValue(widget) is SpriteRenderer sprite)
-        {
-            Color color = sprite.color;
-            sprite.color = new Color(color.r, color.g, color.b, 0f);
-        }
 
-        if (CrestSilhouetteField == null)
+        if (CrestSilhouetteField?.GetValue(widget) is NestedFadeGroupSpriteRenderer silhouette)
+        {
+            silhouette.gameObject.SetActive(true);
+            silhouette.AlphaSelf = 1f;
+            Color color = silhouette.Color;
+            silhouette.Color = new Color(color.r, color.g, color.b, 1f);
+        }
+        else
         {
             LogOnce("[SCHEMA] crestSilhouette field missing, clone silhouette unchanged");
         }
+    }
 
-        object? silhouette = CrestSilhouetteField?.GetValue(widget);
-        PropertyInfo? alpha = silhouette?
-            .GetType()
-            .GetProperty("AlphaSelf", BindingFlags.Instance | BindingFlags.Public);
-        if (alpha != null)
+    /// <summary>
+    /// Sprite name of a crest card part for the clone log: <c>off</c> when the part was
+    /// switched off, <c>none</c> when the field or the sprite is missing.
+    /// </summary>
+    private static string PartName(object? part)
+    {
+        if (part is not NestedFadeGroupSpriteRenderer renderer)
         {
-            alpha.SetValue(silhouette, 1f);
+            return "none";
         }
-        else if (silhouette is SpriteRenderer renderer)
+
+        if (!renderer.gameObject.activeSelf)
         {
-            Color color = renderer.color;
-            renderer.color = new Color(color.r, color.g, color.b, 1f);
+            return "off";
         }
+
+        return renderer.Sprite != null ? renderer.Sprite.name : "none";
     }
 
     /// <summary>Removes the "new item" orb the vanilla card shows for an unseen crest.</summary>
