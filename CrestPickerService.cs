@@ -31,21 +31,31 @@ internal static class CrestPickerService
         {
             bool ignoreUnlock = Plugin.IgnoreUnlockState.Value;
             bool includeEquipped = Plugin.IncludeEquippedCrest.Value;
-            CrestPoolMode mode = ignoreUnlock ? CrestPoolMode.All : PoolMode;
             List<ToolCrest> all = ToolItemManager.GetAllCrests();
-            List<ToolCrest> pool = all
-                .Where(crest => crest != null &&
-                    CrestPoolRules.IsSelectable(crest.IsBaseVersion, crest.IsHidden, crest.IsUnlocked, mode))
-                .ToList();
+            var byName = new Dictionary<string, ToolCrest>();
+            var facts = new List<CrestFacts>();
+            foreach (ToolCrest? crest in all)
+            {
+                if (crest == null)
+                {
+                    continue;
+                }
 
+                byName[crest.name] = crest;
+                facts.Add(new CrestFacts(
+                    crest.name, crest.IsBaseVersion, crest.IsHidden, crest.IsUnlocked, SafeIsEquipped(crest)));
+            }
+
+            List<CrestFacts> selected = CrestPoolRules.Select(facts, PoolMode, ignoreUnlock, includeEquipped);
+            List<ToolCrest> pool = selected.Select(fact => byName[fact.Name]).ToList();
             int excluded = includeEquipped
                 ? 0
-                : pool.RemoveAll(crest => CrestPoolRules.IsEquippedExcluded(SafeIsEquipped(crest)));
+                : CrestPoolRules.Select(facts, PoolMode, ignoreUnlock, includeEquipped: true).Count - pool.Count;
             Plugin.Log.LogInfo(
                 $"[CREST] pool={pool.Count} ignoreUnlock={ignoreUnlock} includeEquipped={includeEquipped}" +
                 $" all={all.Count}" +
                 $" names={string.Join(",", pool.Select(crest => crest.name))}" +
-                $" (mode={mode}, equipped excluded={excluded}).");
+                $" (mode={PoolMode}, equipped excluded={excluded}).");
             foreach (ToolCrest? crest in all)
             {
                 Plugin.Log.LogInfo(crest == null

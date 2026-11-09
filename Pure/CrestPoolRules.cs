@@ -1,4 +1,14 @@
+using System.Collections.Generic;
+
 namespace CrestPicker.Pure;
+
+/// <summary>One crest's flags, independent of any game types.</summary>
+internal readonly record struct CrestFacts(
+    string Name,
+    bool IsBase,
+    bool IsHidden,
+    bool IsUnlocked,
+    bool IsEquipped);
 
 /// <summary>Which crests the picker offers.</summary>
 internal enum CrestPoolMode
@@ -38,5 +48,41 @@ internal static class CrestPoolRules
     internal static bool IsEquippedExcluded(bool equipped)
     {
         return equipped;
+    }
+
+    /// <summary>
+    /// Composes the selectable crest list: drops non-base and hidden crests, honours
+    /// unlock state unless <paramref name="ignoreUnlock"/> is set, and drops the
+    /// equipped crest only when <paramref name="includeEquipped"/> is false.
+    /// </summary>
+    /// <param name="all">Crests in crest-list order.</param>
+    /// <param name="mode">Configured pool source, ignored when <paramref name="ignoreUnlock"/> is true.</param>
+    /// <param name="ignoreUnlock">Offer crests regardless of unlock state.</param>
+    /// <param name="includeEquipped">Keep the currently equipped crest in the pool.</param>
+    /// <returns>Selectable crests in input order.</returns>
+    internal static List<CrestFacts> Select(
+        IEnumerable<CrestFacts> all,
+        CrestPoolMode mode,
+        bool ignoreUnlock,
+        bool includeEquipped)
+    {
+        CrestPoolMode effectiveMode = ignoreUnlock ? CrestPoolMode.All : mode;
+        var selected = new List<CrestFacts>();
+        foreach (CrestFacts crest in all)
+        {
+            if (!IsSelectable(crest.IsBase, crest.IsHidden, crest.IsUnlocked, effectiveMode))
+            {
+                continue;
+            }
+
+            if (!includeEquipped && IsEquippedExcluded(crest.IsEquipped))
+            {
+                continue;
+            }
+
+            selected.Add(crest);
+        }
+
+        return selected;
     }
 }
