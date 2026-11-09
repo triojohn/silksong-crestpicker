@@ -128,6 +128,9 @@ internal static class ShopCrestMenu
     /// <summary>Current session number, captured by every live <see cref="ShopCrestSession"/>.</summary>
     internal static int Session => _session;
 
+    /// <summary>Frame counter of the last diagnostic tick line; zero before the first session frame.</summary>
+    private static int _diagFrames;
+
     /// <summary>Monotonic times of the open steps, for the one timing line.</summary>
     private static float _openStart;
     private static float _stockReady;
@@ -251,6 +254,7 @@ internal static class ShopCrestMenu
             control.SendEvent(OpenEvent);
             _shopUp = Time.realtimeSinceStartup;
             RaiseRootAlpha();
+            LogOpenDiag(owner, control);
             int count = stock.GetItemCount();
 
             ShopCosmetics.Begin(root.transform);
@@ -764,6 +768,7 @@ internal static class ShopCrestMenu
     /// <param name="duringFade">True when the close fade itself asked for the hide, false at the FSM close start.</param>
     private static void HideLeftovers(bool duringFade = false)
     {
+        LogCloseStart();
         int prompts = 0;
         if (HideLeftover(_cancelPrompt))
         {
@@ -813,6 +818,7 @@ internal static class ShopCrestMenu
     /// <summary>Puts every object switched off for a close back to the state it had before it.</summary>
     private static void RestoreLeftovers()
     {
+        LogRestoreDiag();
         foreach (KeyValuePair<GameObject, bool> pair in LeftoverStates)
         {
             if (pair.Key != null && pair.Key.activeSelf != pair.Value)
@@ -1035,6 +1041,147 @@ internal static class ShopCrestMenu
         {
             Plugin.Log.LogWarning($"[SHOP] root alpha trace failed: {ex.Message}");
         }
+    }
+
+    /// <summary>One line per open: who owns the stock and what the reused window starts as.</summary>
+    /// <param name="owner">Live owner whose window is being reused.</param>
+    /// <param name="control">FSM that drives the window.</param>
+    private static void LogOpenDiag(ShopOwnerBase owner, PlayMakerFSM control)
+    {
+        try
+        {
+            Transform? listGroup = ListGroup();
+            Plugin.Log.LogInfo(
+                $"[SHOPDIAG] open rootAlpha={AlphaOf(_root):F2} listGroupActive={ActiveOf(listGroup)}" +
+                $" listGroupAlpha={AlphaOf(listGroup):F2} prompts={PromptFlags()}" +
+                $" listChildren={ListChildren()} stockOwner='{owner.name}' state='{ActiveState(control)}'");
+        }
+        catch (Exception ex)
+        {
+            Plugin.Log.LogWarning($"[SHOPDIAG] open diag failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>One line per hide: the flags that decide whether the restore ever runs.</summary>
+    private static void LogCloseStart()
+    {
+        try
+        {
+            Transform? listGroup = ListGroup();
+            Plugin.Log.LogInfo(
+                $"[SHOPDIAG] closeStart flags(hide={_hideStarted} leftovers={_leftoversHidden}" +
+                $" leftStates={LeftoverStates.Count} seenOpen={_windowSeenOpen})" +
+                $" rootAlpha={AlphaOf(_root):F2} listGroupActive={ActiveOf(listGroup)}" +
+                $" listGroupAlpha={AlphaOf(listGroup):F2} listChildren={ListChildren()}");
+        }
+        catch (Exception ex)
+        {
+            Plugin.Log.LogWarning($"[SHOPDIAG] close diag failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>One line per restore: what is put back and what the window looks like now.</summary>
+    private static void LogRestoreDiag()
+    {
+        try
+        {
+            Transform? listGroup = ListGroup();
+            Plugin.Log.LogInfo(
+                $"[SHOPDIAG] restore flags(leftovers={_leftoversHidden}" +
+                $" leftStates={LeftoverStates.Count}) listGroupActive={ActiveOf(listGroup)}" +
+                $" listGroupAlpha={AlphaOf(listGroup):F2} prompts={PromptFlags()}" +
+                $" rootAlpha={AlphaOf(_root):F2}");
+        }
+        catch (Exception ex)
+        {
+            Plugin.Log.LogWarning($"[SHOPDIAG] restore diag failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>One line per session reset: the flags that must not leak into the next session.</summary>
+    private static void LogResetDiag()
+    {
+        try
+        {
+            Plugin.Log.LogInfo(
+                $"[SHOPDIAG] resetSession hide={_hideStarted} leftovers={_leftoversHidden}" +
+                $" seenOpen={_windowSeenOpen} teardown={_teardownCaptured}");
+        }
+        catch (Exception ex)
+        {
+            Plugin.Log.LogWarning($"[SHOPDIAG] reset diag failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// One tick line every 30 frames while the window is ours, plus the first frame and
+    /// the close: it shows which code path writes the root and the list group alpha.
+    /// </summary>
+    /// <param name="frames">Frames the session has been running.</param>
+    internal static void TraceDiagTick(int frames)
+    {
+        if (!IsOpen)
+        {
+            return;
+        }
+
+        _diagFrames = frames;
+        if (frames != 1 && frames % 30 != 0)
+        {
+            return;
+        }
+
+        LogTickDiag(frames);
+    }
+
+    private static void LogTickDiag(int frames)
+    {
+        try
+        {
+            Transform? listGroup = ListGroup();
+            string state = _control != null ? ActiveState(_control) : "<none>";
+            Plugin.Log.LogInfo(
+                $"[SHOPDIAG] tick frames={frames} rootAlpha={AlphaOf(_root):F2}" +
+                $" listGroupAlpha={AlphaOf(listGroup):F2} listGroupActive={ActiveOf(listGroup)}" +
+                $" state='{state}'");
+        }
+        catch (Exception ex)
+        {
+            Plugin.Log.LogWarning($"[SHOPDIAG] tick diag failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>Effective alpha of the fade group on a node; -1 when the node has none.</summary>
+    private static float AlphaOf(Transform? node)
+    {
+        if (node == null)
+        {
+            return -1f;
+        }
+
+        NestedFadeGroupBase? group = node.GetComponent<NestedFadeGroupBase>();
+        return group != null ? group.AlphaTotal : -1f;
+    }
+
+    /// <summary>True when the node exists and is switched on.</summary>
+    private static bool ActiveOf(Transform? node)
+    {
+        return node != null && node.gameObject.activeSelf;
+    }
+
+    /// <summary>Active state of the action prompts as cancel/confirm.</summary>
+    private static string PromptFlags()
+    {
+        bool cancel = _cancelPrompt != null && _cancelPrompt.activeSelf;
+        bool confirm = _confirmPrompt != null && _confirmPrompt.activeSelf;
+        return $"{cancel}/{confirm}";
+    }
+
+    /// <summary>Child count of the row container; -1 when it is absent.</summary>
+    private static int ListChildren()
+    {
+        Transform? list = _root != null ? FindChild(_root, "Item List") : null;
+        return list != null ? list.childCount : -1;
     }
 
     /// <summary>First child with this name anywhere under the root, inactive ones included.</summary>
@@ -1264,6 +1411,7 @@ internal static class ShopCrestMenu
         }
 
         _closing = true;
+        LogTickDiag(_diagFrames);
         ShopCrestSchema.Hide();
 
         // The session is over: the window goes back to the vanilla shop, which needs the
@@ -1345,6 +1493,7 @@ internal static class ShopCrestMenu
     /// <summary>Clears per-session state before a window is prepared and after it is restored.</summary>
     internal static void ResetSession()
     {
+        LogResetDiag();
         TempItems.Clear();
         DestroyTempItems();
         Swapped.Clear();
@@ -1369,6 +1518,7 @@ internal static class ShopCrestMenu
         _promptsHidden = false;
         _lowAlphaFrames = 0;
         _timingLogged = false;
+        _diagFrames = 0;
         _purchaseAt = 0f;
         _emergencyClose = false;
         _purchaseFrame = 0;
@@ -1790,6 +1940,7 @@ internal sealed class ShopCrestSession : MonoBehaviour
             ShopCrestMenu.HideSchemaOnFade();
             ShopCrestMenu.GuardTeardown();
             ShopCrestMenu.TraceRootAlpha(_frames);
+            ShopCrestMenu.TraceDiagTick(_frames);
             ShopCrestMenu.CheckOpenTiming(_frames);
             ShopCrestMenu.TickPurchase(_frames);
 
