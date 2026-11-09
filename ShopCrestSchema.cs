@@ -135,8 +135,8 @@ internal static class ShopCrestSchema
     /// <summary>True once the first details text correction has been logged for this session.</summary>
     private static bool _detailsCorrectedLogged;
 
-    /// <summary>True once the close-start alpha was logged for this session.</summary>
-    private static bool _closeAlphaLogged;
+    /// <summary>True once the hide at the close start was logged for this session.</summary>
+    private static bool _closeHiddenLogged;
 
     /// <summary>True once the schema y offset was logged for this window.</summary>
     private static bool _offsetLogged;
@@ -225,7 +225,7 @@ internal static class ShopCrestSchema
             _strayLogged = false;
             ConfirmActive = false;
             _closed = false;
-            _closeAlphaLogged = false;
+            _closeHiddenLogged = false;
             _selectedIndex = -1;
             _pickSource = string.Empty;
             _pickIndex = -1;
@@ -268,8 +268,7 @@ internal static class ShopCrestSchema
     /// outside the fade hierarchy, so the vanilla fade cannot reach them: without this
     /// they stay opaque while the window already goes dark.
     /// </summary>
-    /// <param name="alpha">Window fade alpha at the close start; negative when unknown.</param>
-    internal static void Hide(float alpha = -1f)
+    internal static void Hide()
     {
         _closed = true;
         try
@@ -277,10 +276,10 @@ internal static class ShopCrestSchema
             bool changed = false;
             changed |= HideContainer(_detailsSchema);
             changed |= HideContainer(_confirmSchema);
-            if (!_closeAlphaLogged)
+            if (!_closeHiddenLogged)
             {
-                _closeAlphaLogged = true;
-                Plugin.Log.LogInfo($"[SCHEMA] hidden at close start alpha={(alpha < 0f ? 1f : alpha):F3}");
+                _closeHiddenLogged = true;
+                Plugin.Log.LogInfo("[SCHEMA] hidden at close start");
             }
             else if (changed)
             {
@@ -308,7 +307,7 @@ internal static class ShopCrestSchema
     /// <summary>Destroys the schema objects and clears the restore records.</summary>
     internal static void End()
     {
-        _closeAlphaLogged = false;
+        _closeHiddenLogged = false;
         _root = null;
         _details = null;
         _nameLabel = null;

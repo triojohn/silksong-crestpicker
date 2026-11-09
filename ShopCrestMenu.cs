@@ -74,6 +74,19 @@ internal static class ShopCrestMenu
     private static bool _fromDialogue;
     private static bool _sawOpenState;
 
+    /// <summary>FSM state the window was opened in; empty until it is known.</summary>
+    private static string _openState = string.Empty;
+
+    /// <summary>True once the schema hide at the close start was logged for this session.</summary>
+    private static bool _schemaCloseLogged;
+
+    /// <summary>True once the return to idle was logged for this session.</summary>
+    private static bool _closeDetectedLogged;
+
+    /// <summary>Vanilla active state of every object switched off for a close; restored on the next open.</summary>
+    private static readonly Dictionary<GameObject, bool> LeftoverStates =
+        new Dictionary<GameObject, bool>();
+
     /// <summary>Teardown targets and their vanilla state, captured when the window opens.</summary>
     private static NestedFadeGroupBase? _fade;
     private static PlayMakerFSM? _windowFsm;
@@ -109,8 +122,6 @@ internal static class ShopCrestMenu
     private static float _shopUp;
     private static bool _timingLogged;
 
-    /// <summary>True once the open chain finished fading the window in.</summary>
-    internal static bool TimingLogged => _timingLogged;
     /// <summary>Time of the crest purchase; zero while nothing was bought.</summary>
     private static float _purchaseAt;
 
@@ -226,6 +237,7 @@ internal static class ShopCrestMenu
             MoveToHero();
             ReviveTeardown();
             control.SendEvent(OpenEvent);
+            _openState = ActiveState(control);
             _shopUp = Time.realtimeSinceStartup;
             int count = stock.GetItemCount();
 
@@ -570,6 +582,7 @@ internal static class ShopCrestMenu
     /// </summary>
     private static void BeginTeardown(Transform root)
     {
+        RestoreLeftovers();
         _teardownCaptured = true;
         _fade = root.GetComponent<NestedFadeGroupBase>();
         Transform? window = root.Find("Window");
@@ -692,7 +705,8 @@ internal static class ShopCrestMenu
     /// <summary>
     /// Puts the prompts back to their captured vanilla state only when our own teardown
     /// switched them off, i.e. on the emergency path. In a normal close the vanilla chain
-    /// owns them and is left alone.
+    /// owns them and is left alone. A prompt already recorded by the close leftovers is
+    /// skipped: it is restored on the next open instead.
     /// </summary>
     private static void RestorePrompts()
     {
@@ -703,23 +717,94 @@ internal static class ShopCrestMenu
 
         try
         {
-            if (_cancelPrompt != null && _cancelPrompt.activeSelf != _cancelWasActive)
+            if (_cancelPrompt != null && !LeftoverStates.ContainsKey(_cancelPrompt) &&
+                _cancelPrompt.activeSelf != _cancelWasActive)
             {
                 _cancelPrompt.SetActive(_cancelWasActive);
             }
 
-            if (_confirmPrompt != null && _confirmPrompt.activeSelf != _confirmWasActive)
+            if (_confirmPrompt != null && !LeftoverStates.ContainsKey(_confirmPrompt) &&
+                _confirmPrompt.activeSelf != _confirmWasActive)
             {
                 _confirmPrompt.SetActive(_confirmWasActive);
             }
 
             _promptsHidden = false;
-            Plugin.Log.LogInfo($"[SHOP] prompts restored cancel={_cancelWasActive} confirm={_confirmWasActive}");
+            bool leftovers = (_cancelPrompt != null && LeftoverStates.ContainsKey(_cancelPrompt)) ||
+                (_confirmPrompt != null && LeftoverStates.ContainsKey(_confirmPrompt));
+            Plugin.Log.LogInfo(leftovers
+                ? "[SHOP] prompts stay hidden until the next open"
+                : $"[SHOP] prompts restored cancel={_cancelWasActive} confirm={_confirmWasActive}");
         }
         catch (Exception ex)
         {
             Plugin.Log.LogWarning($"[SHOP] prompt restore failed: {ex.Message}");
         }
+    }
+
+    /// <summary>
+    /// Switches off the two action prompts and the whole item list group at the close
+    /// start: the vanilla fade never reaches the selector, the rows or the vanilla prompt
+    /// text, so they would outlive the window. Their vanilla active state is recorded and
+    /// written back by <see cref="BeginTeardown"/> on the next open.
+    /// </summary>
+    private static void HideLeftovers()
+    {
+        int prompts = 0;
+        if (HideLeftover(_cancelPrompt))
+        {
+            prompts++;
+        }
+
+        if (HideLeftover(_confirmPrompt))
+        {
+            prompts++;
+        }
+
+        bool listGroup = HideLeftover(ListGroup()?.gameObject);
+        Plugin.Log.LogInfo($"[SHOP] leftovers hidden prompts={prompts} listGroup={listGroup}");
+    }
+
+    /// <summary>Turns one object off and records its vanilla active state; false when absent.</summary>
+    private static bool HideLeftover(GameObject? target)
+    {
+        if (target == null)
+        {
+            return false;
+        }
+
+        if (!LeftoverStates.ContainsKey(target))
+        {
+            LeftoverStates[target] = target.activeSelf;
+        }
+
+        target.SetActive(false);
+        return true;
+    }
+
+    /// <summary>Container of the shop rows and the selector; null when the window has none.</summary>
+    private static Transform? ListGroup()
+    {
+        if (_root == null)
+        {
+            return null;
+        }
+
+        return _root.Find("Item List Group") ?? FindChild(_root, "Item List Group");
+    }
+
+    /// <summary>Puts every object switched off for a close back to the state it had before it.</summary>
+    private static void RestoreLeftovers()
+    {
+        foreach (KeyValuePair<GameObject, bool> pair in LeftoverStates)
+        {
+            if (pair.Key != null && pair.Key.activeSelf != pair.Value)
+            {
+                pair.Key.SetActive(pair.Value);
+            }
+        }
+
+        LeftoverStates.Clear();
     }
 
     /// <summary>Asks the window FSM to fade its borders out; false when it has no such event.</summary>
@@ -898,13 +983,48 @@ internal static class ShopCrestMenu
             return false;
         }
 
-        if (ActiveState(_control) != IdleState)
+        string state = ActiveState(_control);
+        if (state != IdleState)
         {
             _sawOpenState = true;
+            if (_openState.Length == 0 || _openState == IdleState)
+            {
+                _openState = state;
+            }
+
             return false;
         }
 
+        if (_sawOpenState && !_closeDetectedLogged)
+        {
+            _closeDetectedLogged = true;
+            Plugin.Log.LogInfo($"[SHOP] close detected state='{state}'");
+        }
+
         return _sawOpenState;
+    }
+
+    /// <summary>
+    /// Hides both schemas the moment the FSM leaves the state the window was opened in.
+    /// The schema lives outside the fade hierarchy, so the vanilla close fade never
+    /// reaches it; an alpha threshold only catches it once the window is nearly gone.
+    /// </summary>
+    internal static void HideSchemaAtCloseStart()
+    {
+        if (!IsOpen || !_sawOpenState || _control == null || _schemaCloseLogged)
+        {
+            return;
+        }
+
+        string state = ActiveState(_control);
+        if (state.Length == 0 || _openState.Length == 0 || state == _openState)
+        {
+            return;
+        }
+
+        _schemaCloseLogged = true;
+        ShopCrestSchema.Hide();
+        Plugin.Log.LogInfo($"[SHOP] schema hidden at close start state='{_openState}'->'{state}'");
     }
 
     /// <summary>
@@ -1033,6 +1153,7 @@ internal static class ShopCrestMenu
 
         _closing = true;
         ShopCrestSchema.Hide();
+        Step("leftovers", HideLeftovers);
         ShopInputLock.Unblock(reason);
         if (_stock == null)
         {
@@ -1119,6 +1240,9 @@ internal static class ShopCrestMenu
         _boundShift = 0f;
         _fromDialogue = false;
         _sawOpenState = false;
+        _openState = string.Empty;
+        _schemaCloseLogged = false;
+        _closeDetectedLogged = false;
         SuppressDialogue = false;
         _teardownCaptured = false;
         _closing = false;
@@ -1551,11 +1675,9 @@ internal sealed class ShopCrestSession : MonoBehaviour
             ShopCrestMenu.CheckOpenTiming(_frames);
             ShopCrestMenu.TickPurchase(_frames);
 
-            if (ShopCrestMenu.IsOpen &&
-                (ShopCrestMenu._closing || ShopCrestMenu.ClosedByFsm() ||
-                 (ShopCrestMenu.TimingLogged && ShopCrestMenu.SafeAlpha(1f) < 0.5f)))
+            if (ShopCrestMenu.IsOpen)
             {
-                ShopCrestSchema.Hide(ShopCrestMenu.SafeAlpha(1f));
+                ShopCrestMenu.HideSchemaAtCloseStart();
             }
 
             if (ShopCrestMenu.ClosedByFsm())
