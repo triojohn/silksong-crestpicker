@@ -963,28 +963,10 @@ internal static class ShopCrestSchema
         DestroySchema();
         _builtFor = crest;
 
-        bool equipped = false;
-        try
-        {
-            equipped = crest.IsEquipped;
-        }
-        catch (Exception ex)
-        {
-            Plugin.Log.LogWarning($"[SCHEMA] IsEquipped failed for '{crest.name}': {ex.Message}");
-        }
-
-        Sprite? silhouette = equipped ? crest.CrestSprite : null;
-        string source = "CrestSprite";
-        if (silhouette == null)
-        {
-            silhouette = crest.CrestSilhouette;
-            source = "CrestSilhouette";
-        }
-
+        Sprite? silhouette = CrestCardLook.UseSilhouette(false) ? crest.CrestSilhouette : crest.CrestSprite;
         if (silhouette == null)
         {
             silhouette = crest.CrestSprite;
-            source = "CrestSprite";
             Plugin.Log.LogWarning($"[SCHEMA] silhouette fallback '{crest.name}'");
         }
 
@@ -1002,16 +984,13 @@ internal static class ShopCrestSchema
         float scale = reference > 0.0001f ? panel * Scale / reference : Scale;
         Plugin.Log.LogInfo($"[SCHEMA] scale={scale:F4} (reference={reference:F3} panel={panel:F3})");
 
-        Color bodyColor = equipped && crest.CrestSprite != null && silhouette == crest.CrestSprite
-            ? Color.white
-            : InventoryToolCrest.DeselectedColor;
+        Color bodyColor = InventoryToolCrest.DeselectedColor;
         _detailsSchema = BuildSchema(crest, silhouette, bodyColor, scale, true, "Crest Schema");
         _confirmSchema = BuildSchema(crest, silhouette, bodyColor, scale, false,
             "Confirm Crest Schema");
         int slots = crest.Slots?.Length ?? 0;
-        bool dotsTemplate = _detailsSchema == null || _detailsSchema.DotsTemplate;
-        Plugin.Log.LogInfo($"[SCHEMA] built '{crest.name}' silhouette={source} slots={slots}" +
-            $" dots={(dotsTemplate ? "template" : "generated")} live={LiveContainers()}");
+        Plugin.Log.LogInfo($"[SCHEMA] built '{crest.name}' body=silhouette slots={slots}" +
+            $" slotScale={CrestCardLook.SlotScale(false):F2}");
     }
 
     /// <summary>Logs the raw metrics of the silhouette and of <c>CrestSprite</c>, once per build.</summary>
@@ -1844,8 +1823,8 @@ internal static class ShopCrestSchema
 
     /// <summary>
     /// Adds one dot per slot as a child of the schema container. Slot positions are
-    /// silhouette-local units and stay as they are; the diameter is one fraction of the
-    /// reference height in world units, converted to local scale once.
+    /// silhouette-local units and stay as they are; the diameter is the unselected-card
+    /// slot fraction of the reference height in world units, converted to local scale once.
     /// </summary>
     private static void AddDots(Schema schema, ToolCrest crest, SpriteRenderer? reference)
     {
@@ -1857,7 +1836,8 @@ internal static class ShopCrestSchema
         }
 
         float lossy = Mathf.Abs(schema.Content.transform.lossyScale.y);
-        float world = DotSize * (_referenceHeight > 0.0001f ? _referenceHeight : 1f);
+        float world = CrestCardLook.SlotScale(false) * DotSize *
+            (_referenceHeight > 0.0001f ? _referenceHeight : 1f);
         Plugin.Log.LogInfo($"[SCHEMA] dot diameter={world:F3} world");
         for (int i = 0; i < slots.Length; i++)
         {
