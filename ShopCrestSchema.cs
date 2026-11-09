@@ -113,6 +113,11 @@ internal static class ShopCrestSchema
     /// <summary>Row index the details FSM last asked <c>ShopMenuStock.GetName</c> about; -1 before.</summary>
     private static int _selectedIndex = -1;
 
+    /// <summary>How the current crest was picked, so the log line is written only on a change.</summary>
+    private static string _pickSource = string.Empty;
+    private static int _pickIndex = -1;
+    private static string _pickName = string.Empty;
+
     /// <summary>True once the first details text correction has been logged for this session.</summary>
     private static bool _detailsCorrectedLogged;
 
@@ -175,6 +180,9 @@ internal static class ShopCrestSchema
             _closed = false;
             _closeAlphaLogged = false;
             _selectedIndex = -1;
+            _pickSource = string.Empty;
+            _pickIndex = -1;
+            _pickName = string.Empty;
             _detailsCorrectedLogged = false;
             _confirmGroupActiveLogged = null;
             _detailsBounds = default;
@@ -262,6 +270,9 @@ internal static class ShopCrestSchema
         _confirmGroupActiveLogged = null;
         _detailsBounds = default;
         _selectedIndex = -1;
+        _pickSource = string.Empty;
+        _pickIndex = -1;
+        _pickName = string.Empty;
         _detailsCorrectedLogged = false;
         try
         {
@@ -668,7 +679,8 @@ internal static class ShopCrestSchema
     /// <param name="itemNum">Row index passed to <c>ShopMenuStock.GetName</c> or <c>GetDesc</c>.</param>
     internal static void NoteDetailsIndex(int itemNum)
     {
-        if (itemNum >= 0)
+        // Other shops call the same methods; only our window's rows map onto our crests.
+        if (itemNum >= 0 && ShopCrestMenu.IsOpen)
         {
             _selectedIndex = itemNum;
         }
@@ -729,14 +741,26 @@ internal static class ShopCrestSchema
 
     /// <summary>
     /// Crest the details panel currently describes: the row index the FSM asked about,
-    /// then the name text, description text as the last fallback.
+    /// then the row under the selector bar, then the name text, description text last.
     /// </summary>
     private static ToolCrest? SelectedCrest()
     {
         ToolCrest? byIndex = SelectedCrestByIndex();
         if (byIndex != null)
         {
+            LogPick(_selectedIndex, "fsm", byIndex);
             return byIndex;
+        }
+
+        int selectorRow = SelectedRowBySelector();
+        if (selectorRow >= 0)
+        {
+            ToolCrest? bySelector = ShopCrestMenu.CrestForRow(selectorRow);
+            if (bySelector != null)
+            {
+                LogPick(selectorRow, "selector", bySelector);
+                return bySelector;
+            }
         }
 
         if (_nameLabel == null || _root == null)
@@ -748,30 +772,87 @@ internal static class ShopCrestSchema
         ToolCrest? byName = Match(name, true);
         if (byName != null)
         {
+            LogPick(-1, "text", byName);
             return byName;
         }
 
         TMP_Text? desc = _descLabel ?? (_details != null ? FindText(_details, "Item desc") : null);
-        return Match(desc != null ? SafeText(desc) : null, false);
+        ToolCrest? byDesc = Match(desc != null ? SafeText(desc) : null, false);
+        if (byDesc != null)
+        {
+            LogPick(-1, "text", byDesc);
+        }
+
+        return byDesc;
     }
 
     /// <summary>Crest of the row the details FSM asked about, null when the index is stale.</summary>
     private static ToolCrest? SelectedCrestByIndex()
     {
-        if (_selectedIndex < 0 || _root == null)
+        return _selectedIndex < 0 ? null : ShopCrestMenu.CrestForRow(_selectedIndex);
+    }
+
+    /// <summary>Row under the selector bar; -1 when the selector or the rows are missing.</summary>
+    private static int SelectedRowBySelector()
+    {
+        if (_root == null || !ShopCosmetics.TrySelectorY(out float selectorY))
         {
-            return null;
+            return -1;
         }
 
-        foreach (ShopItemStats row in _root.GetComponentsInChildren<ShopItemStats>(true))
+        float[] rowYs = ShopCrestMenu.RowYs();
+        return rowYs.Length == 0 ? -1 : RowPick.PickRowIndex(selectorY, rowYs, RowTolerance(rowYs));
+    }
+
+    /// <summary>Half the smallest gap between rows, so the selector picks only a real row.</summary>
+    /// <param name="rowYs">Row Y positions; NaN entries are skipped.</param>
+    /// <returns>Row step over two, unlimited when there is at most one row.</returns>
+    private static float RowTolerance(float[] rowYs)
+    {
+        List<float> ys = new List<float>(rowYs.Length);
+        foreach (float y in rowYs)
         {
-            if (row != null && row.ItemNumber == _selectedIndex)
+            if (!float.IsNaN(y) && !float.IsInfinity(y))
             {
-                return ShopCrestMenu.CrestFor(row.Item);
+                ys.Add(y);
             }
         }
 
-        return null;
+        if (ys.Count <= 1)
+        {
+            return float.PositiveInfinity;
+        }
+
+        ys.Sort();
+        float smallest = float.MaxValue;
+        for (int i = 1; i < ys.Count; i++)
+        {
+            float gap = ys[i] - ys[i - 1];
+            if (gap > 0f && gap < smallest)
+            {
+                smallest = gap;
+            }
+        }
+
+        return smallest == float.MaxValue ? float.PositiveInfinity : smallest * 0.5f;
+    }
+
+    /// <summary>Writes the row pick once, so a change of crest or source is visible in the log.</summary>
+    /// <param name="index">Row the crest came from; -1 for the text path.</param>
+    /// <param name="source">Path that resolved the crest.</param>
+    /// <param name="crest">Resolved crest.</param>
+    private static void LogPick(int index, string source, ToolCrest crest)
+    {
+        string name = crest.name ?? string.Empty;
+        if (source == _pickSource && index == _pickIndex && name == _pickName)
+        {
+            return;
+        }
+
+        _pickSource = source;
+        _pickIndex = index;
+        _pickName = name;
+        Plugin.Log.LogInfo($"[SCHEMA] row index={index} source={source} crest='{name}'");
     }
 
     /// <summary>Compares one text against every crest of the window.</summary>
@@ -1985,5 +2066,32 @@ internal static class ShopCrestSchema
         }
 
         return null;
+    }
+}
+
+/// <summary>
+/// Feeds <see cref="ShopCrestSchema"/> the stock row the details FSM asks about through
+/// <c>ShopMenuStock.GetName</c>. The row number indexes <c>availableStock</c>, so it is
+/// the authoritative link between the visible row and the crest.
+/// </summary>
+[HarmonyPatch(typeof(ShopMenuStock), nameof(ShopMenuStock.GetName), new[] { typeof(int) })]
+internal static class CrestRowNamePatch
+{
+    private static void Prefix(int __0)
+    {
+        ShopCrestSchema.NoteDetailsIndex(__0);
+    }
+}
+
+/// <summary>
+/// Same link as <see cref="CrestRowNamePatch"/> for <c>ShopMenuStock.GetDesc</c>: the FSM
+/// may ask the name and the description in different states, the last asked row wins.
+/// </summary>
+[HarmonyPatch(typeof(ShopMenuStock), nameof(ShopMenuStock.GetDesc), new[] { typeof(int) })]
+internal static class CrestRowDescPatch
+{
+    private static void Prefix(int __0)
+    {
+        ShopCrestSchema.NoteDetailsIndex(__0);
     }
 }

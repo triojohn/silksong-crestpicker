@@ -259,6 +259,49 @@ internal static class ShopCrestMenu
         return index >= 0 && index < _crests.Count ? _crests[index] : null;
     }
 
+    /// <summary>Crest of a stock row, by that row's index in the available stock list.</summary>
+    /// <param name="row">Row index the shop FSM asked about.</param>
+    /// <returns>Offered crest, or null for a vanilla row or a bad index.</returns>
+    internal static ToolCrest? CrestForRow(int row)
+    {
+        if (row < 0)
+        {
+            return null;
+        }
+
+        ShopItem? item = null;
+        if (_stock != null && AvailableStockField?.GetValue(_stock) is List<ShopItemStats> list && row < list.Count)
+        {
+            item = list[row] != null ? list[row].Item : null;
+        }
+
+        if (item == null && row < _swapItems.Length)
+        {
+            item = _swapItems[row];
+        }
+
+        return CrestFor(item);
+    }
+
+    /// <summary>World Y of every available stock row in row-index order; NaN for an absent row.</summary>
+    /// <returns>One value per row, empty when no stock is open.</returns>
+    internal static float[] RowYs()
+    {
+        if (_stock == null || AvailableStockField?.GetValue(_stock) is not List<ShopItemStats> list)
+        {
+            return Array.Empty<float>();
+        }
+
+        float[] ys = new float[list.Count];
+        for (int i = 0; i < list.Count; i++)
+        {
+            ShopItemStats? row = list[i];
+            ys[i] = row != null ? row.transform.position.y : float.NaN;
+        }
+
+        return ys;
+    }
+
     /// <summary>Builds one free temp shop entry per offered crest and records its index.</summary>
     private static ShopItem[] BuildItems()
     {

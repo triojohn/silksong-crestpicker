@@ -1601,6 +1601,22 @@ internal static class ShopCosmetics
         return FindChildNamed(_listGroup, "selector") ?? FindChildNamed(_root, "selector");
     }
 
+    /// <summary>World Y of the cached selector bar, false when the window has none.</summary>
+    /// <param name="y">Selector position when found; 0 otherwise.</param>
+    /// <returns>True when the selector is known.</returns>
+    internal static bool TrySelectorY(out float y)
+    {
+        Transform? selector = _selector;
+        if (selector == null)
+        {
+            y = 0f;
+            return false;
+        }
+
+        y = selector.position.y;
+        return true;
+    }
+
     /// <summary>Direct or nested child of that exact name, ignoring letter case.</summary>
     /// <param name="root">Object to search under; null is a miss.</param>
     /// <param name="name">Wanted object name.</param>
