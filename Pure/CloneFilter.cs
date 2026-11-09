@@ -34,6 +34,11 @@ internal static class CloneFilter
             return CloneNode.Keep;
         }
 
+        if (nodeName is null)
+        {
+            return CloneNode.Keep;
+        }
+
         if (string.Equals(nodeName, SubmitEffectsName, StringComparison.OrdinalIgnoreCase) ||
             nodeName.IndexOf("Burst Effect", StringComparison.OrdinalIgnoreCase) >= 0 ||
             nodeName.IndexOf("White Flash", StringComparison.OrdinalIgnoreCase) >= 0)

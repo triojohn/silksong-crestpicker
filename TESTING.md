@@ -24,8 +24,9 @@
 | `Pure/OfferStore.cs` | `CrestPicker.Tests/OfferStoreTests.cs` | битый JSON → пустой словарь; round-trip через JSON и через файл; слот -1 не пишется и не читается |
 | `Pure/CrestLabel.cs` | `CrestPicker.Tests/CrestLabelTests.cs` | пустое, пробельное и null-имя → имя ассета; кириллица без изменений |
 | `Pure/CrestCardLook.cs` | `CrestPicker.Tests/CrestCardLookTests.cs` | `SlotScale` 1 для текущей карточки и 0.7 для остальных (ванильная `_slotScaleOther`); `UseSilhouette` только для невыбранной; правило карточки 0.7 и правило закрытого слота 0.8 перемножаются, давая 0.56 |
+| `Pure/CloneFilter.cs` | `CrestPicker.Tests/CloneFilterTests.cs` | силуэт и слот важнее правила эффектов; `Crest Submit Effects` в любом регистре, `Burst Effect`, `White Flash` выключаются; `Crest Glow` и `Crest Sprite` остаются; пустое и `null` имя остаются без исключения |
 
-Всего 56 тестов. Тестовый проект `CrestPicker.Tests` собирается отдельно от мода
+Всего 78 тестов. Тестовый проект `CrestPicker.Tests` собирается отдельно от мода
 и подключает `Pure/*.cs` как исходники: ссылок на DLL игры в нём нет.
 
 Связка «правило карточки 0.7 × правило закрытого слота 0.8 = 0.56» в тесте
@@ -83,8 +84,13 @@
       (0.7 × 0.8 = 0.56 от базового диаметра), правила карточки и слота не
       подменяют друг друга;
 - [ ] надетый гребень показывает `CrestSprite`, ненадетый — силуэт;
+- [ ] на клоне карточки силуэт и слоты остаются, `Crest Submit Effects` и эффекты
+      выключаются; если снова увидели другую форму у гребня, смотреть
+      `[SCHEMA] clone ... disabled extras`;
 - [ ] после переключений между гребнями в сцене нет дубликатов объектов схемы;
 - [ ] в логе `[SCHEMA] built '<имя>' slots=N` встречается с тремя разными именами;
+- [ ] `[SCHEMA] clone '<имя>' disabled extras='...'` перечисляет только эффекты
+      (`Crest Submit Effects`, `*Burst Effect*`, `*White Flash*`), не силуэт и не слоты;
 - [ ] при дефолтном конфиге нет строк `clone mode from`.
 
 Лог-проверки (не глазами, а grep по `LogOutput.log`):
