@@ -89,10 +89,11 @@ public sealed class Plugin : BaseUnityPlugin
             "Показывать выбор знака в настоящем окне магазина (сток и позиция восстанавливаются)");
         _showCrestSchema = Config.Bind("General", "ShowCrestSchema", true,
             "Рисовать схему знака (силуэт и цветные точки слотов) в панели деталей магазина");
-        _schemaRender = Config.Bind("General", "SchemaRender", SchemaRenderMode.Clone,
-            "Способ отрисовки схемы знака: clone — клон живого InventoryToolCrest из игры (основной путь), " +
-            "vanillaSprites — силуэт плюс спрайты slotTypeSprite из templateSlots, " +
-            "generated — силуэт плюс сгенерированные кружки. При clone слоты и их точки берутся из клона.");
+        _schemaRender = Config.Bind("General", "SchemaRender", SchemaRenderMode.VanillaSprites,
+            "Способ отрисовки схемы знака: vanillaSprites — силуэт из данных гребня плюс спрайты " +
+            "slotTypeSprite из templateSlots (основной путь), generated — силуэт плюс сгенерированные " +
+            "кружки, clone — клон живого InventoryToolCrest (только для отладки, не гарантирует " +
+            "соответствие выбранному гребню).");
         _crestSchemaScale = Config.Bind("General", "CrestSchemaScale", 1f,
             "Множитель размера схемы знака в панели деталей: схема вписывается в 80% панели, " +
             "значение подкручивает эту подгонку (1 — ровно вписано)");

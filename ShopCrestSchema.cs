@@ -39,11 +39,8 @@ internal static class ShopCrestSchema
     /// <summary>Fraction of the details panel the details schema fills.</summary>
     private const float PanelFill = 0.8f;
 
-    /// <summary>Dot diameter factor for a locked slot.</summary>
-    private const float LockedDotFactor = 0.85f;
-
-    /// <summary>Dot alpha for a locked slot.</summary>
-    private const float LockedAlpha = 0.45f;
+    /// <summary>Dot scale of a locked slot, as in the vanilla slot widget.</summary>
+    private const float LockedSlotScale = 0.8f;
 
     /// <summary>Dot fits tried per frame before the next frame takes over.</summary>
     private const int MaxDotAttempts = 3;
@@ -136,6 +133,9 @@ internal static class ShopCrestSchema
     /// <summary>Vanilla slot sprites indexed by <see cref="ToolItemType"/>; read once per session.</summary>
     private static Sprite?[]? _templateSprites;
 
+    /// <summary>Slot types whose dot sprite source was already logged.</summary>
+    private static readonly HashSet<ToolItemType> DotLoggedTypes = new HashSet<ToolItemType>();
+
     private static bool _templateRead;
     private static bool _inventoryFound;
     private static bool _spritesLogged;
@@ -144,8 +144,8 @@ internal static class ShopCrestSchema
     /// <summary>True to draw the crest schema at all.</summary>
     internal static bool Enabled = true;
 
-    /// <summary>How the schema body is drawn; clone keeps the vanilla crest card.</summary>
-    internal static SchemaRenderMode Render = SchemaRenderMode.Clone;
+    /// <summary>How the schema body is drawn; vanilla sprites are built from the crest data.</summary>
+    internal static SchemaRenderMode Render = SchemaRenderMode.VanillaSprites;
 
     /// <summary>Multiplier applied to the schema size.</summary>
     internal static float Scale = 1f;
@@ -901,11 +901,29 @@ internal static class ShopCrestSchema
         DestroySchema();
         _builtFor = crest;
 
-        Sprite? silhouette = crest.CrestSilhouette;
-        bool darkened = silhouette == null;
+        bool equipped = false;
+        try
+        {
+            equipped = crest.IsEquipped;
+        }
+        catch (Exception ex)
+        {
+            Plugin.Log.LogWarning($"[SCHEMA] IsEquipped failed for '{crest.name}': {ex.Message}");
+        }
+
+        Sprite? silhouette = equipped ? crest.CrestSprite : null;
+        string source = "CrestSprite";
+        if (silhouette == null)
+        {
+            silhouette = crest.CrestSilhouette;
+            source = "CrestSilhouette";
+        }
+
         if (silhouette == null)
         {
             silhouette = crest.CrestSprite;
+            source = "CrestSprite";
+            Plugin.Log.LogWarning($"[SCHEMA] silhouette fallback '{crest.name}'");
         }
 
         if (silhouette == null || _details == null || _nameLabel == null)
@@ -914,10 +932,16 @@ internal static class ShopCrestSchema
             return;
         }
 
-        _detailsSchema = BuildSchema(crest, silhouette, darkened, 1f, true, "Crest Schema");
-        _confirmSchema = BuildSchema(crest, silhouette, darkened, ConfirmScale, false,
+        Color bodyColor = equipped && crest.CrestSprite != null && silhouette == crest.CrestSprite
+            ? Color.white
+            : InventoryToolCrest.DeselectedColor;
+        _detailsSchema = BuildSchema(crest, silhouette, bodyColor, 1f, true, "Crest Schema");
+        _confirmSchema = BuildSchema(crest, silhouette, bodyColor, ConfirmScale, false,
             "Confirm Crest Schema");
-        Plugin.Log.LogInfo($"[SCHEMA] built '{crest.name}' mode={Render} live={LiveContainers()}");
+        int slots = crest.Slots?.Length ?? 0;
+        bool dotsTemplate = _detailsSchema == null || _detailsSchema.DotsTemplate;
+        Plugin.Log.LogInfo($"[SCHEMA] built '{crest.name}' silhouette={source} slots={slots}" +
+            $" dots={(dotsTemplate ? "template" : "generated")} live={LiveContainers()}");
     }
 
     /// <summary>
@@ -927,7 +951,7 @@ internal static class ShopCrestSchema
     /// assumption about the parent scale chain is made. The container lives under the
     /// neutral schema root and is placed by the caller.
     /// </summary>
-    private static Schema? BuildSchema(ToolCrest crest, Sprite silhouette, bool darkened,
+    private static Schema? BuildSchema(ToolCrest crest, Sprite silhouette, Color bodyColor,
         float sizeFactor, bool fitPanel, string label)
     {
         Transform? host = SchemaHost();
@@ -974,7 +998,7 @@ internal static class ShopCrestSchema
 
         bool vanilla = Render != SchemaRenderMode.Generated && TemplateSprites() != null;
         SpriteRenderer body = AddRenderer(content, "Schema Silhouette", silhouette, reference, 0);
-        body.color = darkened ? new Color(0.3f, 0.3f, 0.3f, 1f) : Color.white;
+        body.color = bodyColor;
 
         Schema schema = new Schema(label, container, content, body, targetH)
         {
@@ -982,6 +1006,7 @@ internal static class ShopCrestSchema
             PanelSize = panel,
         };
         AddDots(schema, crest, reference);
+        schema.DotsTemplate = DotsFromTemplate(crest);
         Fit(schema);
         LiftConfirm(schema, fitPanel);
         LogSprites(vanilla ? "vanilla" : "generated");
@@ -1036,10 +1061,7 @@ internal static class ShopCrestSchema
 
             SpriteRenderer dot = schema.Dots[i];
             Transform scale = dot.transform;
-            float target = wanted * (schema.Locked[i] ? LockedDotFactor : 1f);
-            Color color = dot.color;
-            color.a = schema.Locked[i] ? LockedAlpha : 1f;
-            dot.color = color;
+            float target = wanted * (schema.Locked[i] ? LockedSlotScale : 1f);
 
             for (int attempt = 0; attempt < MaxDotAttempts; attempt++)
             {
@@ -1309,19 +1331,50 @@ internal static class ShopCrestSchema
     /// <summary>Sprite of one slot type: the vanilla template sprite, else the generated circle.</summary>
     private static Sprite? DotSprite(ToolItemType type)
     {
-        if (Render == SchemaRenderMode.Generated)
+        if (Render != SchemaRenderMode.Generated)
         {
-            return DotSprite();
+            Sprite?[]? sprites = TemplateSprites();
+            int index = (int)type;
+            if (sprites != null && index >= 0 && index < sprites.Length && sprites[index] != null)
+            {
+                LogDot(type, "template");
+                return sprites[index];
+            }
         }
 
-        Sprite?[]? sprites = TemplateSprites();
-        int index = (int)type;
-        if (sprites != null && index >= 0 && index < sprites.Length && sprites[index] != null)
-        {
-            return sprites[index];
-        }
-
+        LogDot(type, "generated");
         return DotSprite();
+    }
+
+    /// <summary>Logs the sprite source of one slot type once per session.</summary>
+    private static void LogDot(ToolItemType type, string sprite)
+    {
+        if (DotLoggedTypes.Add(type))
+        {
+            Plugin.Log.LogInfo($"[SCHEMA] dot type={type} sprite={sprite}");
+        }
+    }
+
+    /// <summary>True when every slot type has a vanilla template sprite.</summary>
+    private static bool DotsFromTemplate(ToolCrest crest)
+    {
+        ToolCrest.SlotInfo[]? slots = crest.Slots;
+        if (slots == null || slots.Length == 0)
+        {
+            return true;
+        }
+
+        Sprite?[]? sprites = Render == SchemaRenderMode.Generated ? null : TemplateSprites();
+        for (int i = 0; i < slots.Length; i++)
+        {
+            int index = (int)slots[i].Type;
+            if (sprites == null || index < 0 || index >= sprites.Length || sprites[index] == null)
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /// <summary>
@@ -1384,9 +1437,9 @@ internal static class ShopCrestSchema
             };
             Fit(schema);
             float whole = ContainerHeight(clone.transform);
-            Plugin.Log.LogInfo($"[SCHEMA] {label} cloned from '{source.name}'" +
-                $" (active={source.gameObject.activeInHierarchy}) slots={slots.Length}" +
-                $" wholeH={whole:F3} targetH={targetH:F3}");
+            Plugin.Log.LogWarning($"[SCHEMA] clone mode from '{source.name}'" +
+                $" (does not guarantee crest match, active={source.gameObject.activeInHierarchy})" +
+                $" slots={slots.Length} wholeH={whole:F3} targetH={targetH:F3}");
             return schema;
         }
         catch (Exception ex)
@@ -1710,6 +1763,8 @@ internal static class ShopCrestSchema
                 continue;
             }
 
+            bool locked = IsLocked(crest, slot);
+            Color typeColor = TypeColor(slot.Type);
             float approx = lossy > 0.0001f
                 ? (schema.TargetHeight * DotSize) / (SpriteHeight(dot) * lossy)
                 : 1f;
@@ -1718,36 +1773,37 @@ internal static class ShopCrestSchema
             Vector3 local = new Vector3(position.x, position.y, 0f);
             renderer.transform.localPosition = local;
             renderer.transform.localScale = new Vector3(approx, approx, 1f);
-            renderer.color = TypeColor(slot.Type);
+            renderer.color = locked ? LockedColor(typeColor) : typeColor;
             schema.Dots.Add(renderer);
             schema.BasePositions.Add(local);
-            schema.Locked.Add(IsLocked(crest, i, slot));
+            schema.Locked.Add(locked);
             schema.DotDone.Add(false);
         }
     }
 
-    /// <summary>True when the slot is locked by the crest itself or by the save data.</summary>
-    private static bool IsLocked(ToolCrest crest, int index, ToolCrest.SlotInfo slot)
+    /// <summary>Vanilla lock rule: the slot is locked until the crest itself is unlocked.</summary>
+    private static bool IsLocked(ToolCrest crest, ToolCrest.SlotInfo slot)
     {
-        if (slot.IsLocked)
+        if (!slot.IsLocked)
         {
-            return true;
+            return false;
         }
 
         try
         {
-            List<ToolCrestsData.SlotData>? saved = crest.SaveData.Slots;
-            if (saved == null || index >= saved.Count)
-            {
-                return false;
-            }
-
-            return !saved[index].IsUnlocked;
+            return !crest.SaveData.IsUnlocked;
         }
         catch (Exception)
         {
-            return false;
+            return true;
         }
+    }
+
+    /// <summary>Vanilla locked-slot tint: the type value without saturation.</summary>
+    private static Color LockedColor(Color color)
+    {
+        Color.RGBToHSV(color, out float h, out _, out float v);
+        return Color.HSVToRGB(h, 0f, v);
     }
 
     /// <summary>Slot colour from the game palette, with a local fallback.</summary>
@@ -1941,6 +1997,9 @@ internal static class ShopCrestSchema
 
         /// <summary>Fit-done flag per dot, in creation order.</summary>
         internal List<bool> DotDone { get; } = new List<bool>();
+
+        /// <summary>True when every dot used the vanilla template sprite.</summary>
+        internal bool DotsTemplate { get; set; } = true;
 
         /// <summary>True once the container reached its wanted height.</summary>
         internal bool ContainerFitted { get; set; }
