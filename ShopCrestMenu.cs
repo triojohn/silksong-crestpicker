@@ -92,9 +92,9 @@ internal static class ShopCrestMenu
     /// <summary>True once the return to idle was logged for this session.</summary>
     private static bool _closeDetectedLogged;
 
-    /// <summary>Vanilla active state of every object switched off for a close; restored on the next open.</summary>
-    private static readonly Dictionary<GameObject, bool> LeftoverStates =
-        new Dictionary<GameObject, bool>();
+    /// <summary>Alpha every leftover fade group had before the close; restored on the next open.</summary>
+    private static readonly Dictionary<NestedFadeGroupBase, float> LeftoverAlphas =
+        new Dictionary<NestedFadeGroupBase, float>();
 
     /// <summary>True once the close switched the leftovers off, so a later restore does not repeat it.</summary>
     private static bool _leftoversHidden;
@@ -733,21 +733,20 @@ internal static class ShopCrestMenu
 
         try
         {
-            if (_cancelPrompt != null && !LeftoverStates.ContainsKey(_cancelPrompt) &&
+            if (_cancelPrompt != null && !LeftoverCovers(_cancelPrompt) &&
                 _cancelPrompt.activeSelf != _cancelWasActive)
             {
                 _cancelPrompt.SetActive(_cancelWasActive);
             }
 
-            if (_confirmPrompt != null && !LeftoverStates.ContainsKey(_confirmPrompt) &&
+            if (_confirmPrompt != null && !LeftoverCovers(_confirmPrompt) &&
                 _confirmPrompt.activeSelf != _confirmWasActive)
             {
                 _confirmPrompt.SetActive(_confirmWasActive);
             }
 
             _promptsHidden = false;
-            bool leftovers = (_cancelPrompt != null && LeftoverStates.ContainsKey(_cancelPrompt)) ||
-                (_confirmPrompt != null && LeftoverStates.ContainsKey(_confirmPrompt));
+            bool leftovers = LeftoverCovers(_cancelPrompt) || LeftoverCovers(_confirmPrompt);
             Plugin.Log.LogInfo(leftovers
                 ? "[SHOP] prompts stay hidden until the next open"
                 : $"[SHOP] prompts restored cancel={_cancelWasActive} confirm={_confirmWasActive}");
@@ -758,49 +757,83 @@ internal static class ShopCrestMenu
         }
     }
 
-    /// <summary>
-    /// Switches off the two action prompts and the whole item list group once the close
-    /// starts or the window begins to fade: the vanilla fade never reaches the selector,
-    /// the rows or the vanilla prompt text, so they would outlive the window. Their vanilla
-    /// active state is recorded and written back by <see cref="RestoreLeftovers"/> once the
-    /// fade is done.
-    /// </summary>
-    /// <param name="duringFade">True when the close fade itself asked for the hide, false at the FSM close start.</param>
-    private static void HideLeftovers(bool duringFade = false)
-    {
-        LogCloseStart();
-        int prompts = 0;
-        if (HideLeftover(_cancelPrompt))
-        {
-            prompts++;
-        }
-
-        if (HideLeftover(_confirmPrompt))
-        {
-            prompts++;
-        }
-
-        bool listGroup = HideLeftover(ListGroup()?.gameObject);
-        _leftoversHidden = prompts > 0 || listGroup;
-        Plugin.Log.LogInfo(duringFade
-            ? $"[SHOP] leftovers hidden at fade listGroup={listGroup} prompts={prompts}"
-            : $"[SHOP] leftovers hidden at close start listGroup={listGroup} prompts={prompts}");
-    }
-
-    /// <summary>Turns one object off and records its vanilla active state; false when absent.</summary>
-    private static bool HideLeftover(GameObject? target)
+    /// <summary>True when a close already recorded a fade group on this object or below it.</summary>
+    private static bool LeftoverCovers(GameObject? target)
     {
         if (target == null)
         {
             return false;
         }
 
-        if (!LeftoverStates.ContainsKey(target))
+        Transform transform = target.transform;
+        foreach (NestedFadeGroupBase group in LeftoverAlphas.Keys)
         {
-            LeftoverStates[target] = target.activeSelf;
+            if (group != null && group.transform.IsChildOf(transform))
+            {
+                return true;
+            }
         }
 
-        target.SetActive(false);
+        return false;
+    }
+
+    /// <summary>
+    /// Fades the two action prompts and the whole item list group out once the close starts
+    /// or the window begins to fade: the vanilla fade never reaches the selector, the rows
+    /// or the vanilla prompt text, so they would outlive the window. Only the alpha is
+    /// written - deactivating them killed the vanilla <c>FadeNestedFadeGroup</c> coroutines
+    /// on the same nodes, leaving the root alpha stuck above zero. Each prior value is
+    /// recorded and written back by <see cref="RestoreLeftovers"/> once the fade is done.
+    /// </summary>
+    /// <param name="duringFade">True when the close fade itself asked for the hide, false at the FSM close start.</param>
+    private static void HideLeftovers(bool duringFade = false)
+    {
+        LogCloseStart();
+        bool listGroup = FadeOutGroup(ListGroup()?.GetComponent<NestedFadeGroupBase>());
+        int prompts = FadeOutChildren(_cancelPrompt) + FadeOutChildren(_confirmPrompt);
+        _leftoversHidden = listGroup || prompts > 0;
+        Plugin.Log.LogInfo(duringFade
+            ? $"[SHOP] leftovers hidden at fade listGroup={listGroup} promptGroups={prompts}"
+            : $"[SHOP] leftovers hidden at close start listGroup={listGroup} promptGroups={prompts}");
+    }
+
+    /// <summary>
+    /// Fades every <see cref="NestedFadeGroupBase"/> under the prompt, remembering each own
+    /// alpha; returns how many groups were touched. The prompts carry no group of their own.
+    /// </summary>
+    private static int FadeOutChildren(GameObject? target)
+    {
+        if (target == null)
+        {
+            return 0;
+        }
+
+        int groups = 0;
+        foreach (NestedFadeGroupBase group in target.GetComponentsInChildren<NestedFadeGroupBase>(true))
+        {
+            if (FadeOutGroup(group))
+            {
+                groups++;
+            }
+        }
+
+        return groups;
+    }
+
+    /// <summary>Puts one fade group's own alpha to zero and records its prior value; false when absent.</summary>
+    private static bool FadeOutGroup(NestedFadeGroupBase? group)
+    {
+        if (group == null)
+        {
+            return false;
+        }
+
+        if (!LeftoverAlphas.ContainsKey(group))
+        {
+            LeftoverAlphas[group] = group.AlphaSelf;
+        }
+
+        group.AlphaSelf = 0f;
         return true;
     }
 
@@ -815,19 +848,19 @@ internal static class ShopCrestMenu
         return _root.Find("Item List Group") ?? FindChild(_root, "Item List Group");
     }
 
-    /// <summary>Puts every object switched off for a close back to the state it had before it.</summary>
+    /// <summary>Puts every fade group faded out for a close back to the alpha it had before it.</summary>
     private static void RestoreLeftovers()
     {
         LogRestoreDiag();
-        foreach (KeyValuePair<GameObject, bool> pair in LeftoverStates)
+        foreach (KeyValuePair<NestedFadeGroupBase, float> pair in LeftoverAlphas)
         {
-            if (pair.Key != null && pair.Key.activeSelf != pair.Value)
+            if (pair.Key != null)
             {
-                pair.Key.SetActive(pair.Value);
+                pair.Key.AlphaSelf = pair.Value;
             }
         }
 
-        LeftoverStates.Clear();
+        LeftoverAlphas.Clear();
         _leftoversHidden = false;
     }
 
@@ -977,13 +1010,14 @@ internal static class ShopCrestMenu
     /// </summary>
     private static void RaiseRootAlpha()
     {
+        if (_fade == null)
+        {
+            Plugin.Log.LogInfo("[SHOP] root alpha raise skipped: no fade");
+            return;
+        }
+
         try
         {
-            if (_fade == null || _fade.gameObject == null)
-            {
-                return;
-            }
-
             float before = SafeAlpha(0f);
             _fade.AlphaSelf = 1f;
             Plugin.Log.LogInfo($"[SHOP] root alpha raised at open was={before:F2}");
@@ -1070,7 +1104,7 @@ internal static class ShopCrestMenu
             Transform? listGroup = ListGroup();
             Plugin.Log.LogInfo(
                 $"[SHOPDIAG] closeStart flags(hide={_hideStarted} leftovers={_leftoversHidden}" +
-                $" leftStates={LeftoverStates.Count} seenOpen={_windowSeenOpen})" +
+                $" leftAlphas={LeftoverAlphas.Count} seenOpen={_windowSeenOpen})" +
                 $" rootAlpha={AlphaOf(_root):F2} listGroupActive={ActiveOf(listGroup)}" +
                 $" listGroupAlpha={AlphaOf(listGroup):F2} listChildren={ListChildren()}");
         }
@@ -1088,7 +1122,7 @@ internal static class ShopCrestMenu
             Transform? listGroup = ListGroup();
             Plugin.Log.LogInfo(
                 $"[SHOPDIAG] restore flags(leftovers={_leftoversHidden}" +
-                $" leftStates={LeftoverStates.Count}) listGroupActive={ActiveOf(listGroup)}" +
+                $" leftAlphas={LeftoverAlphas.Count}) listGroupActive={ActiveOf(listGroup)}" +
                 $" listGroupAlpha={AlphaOf(listGroup):F2} prompts={PromptFlags()}" +
                 $" rootAlpha={AlphaOf(_root):F2}");
         }
