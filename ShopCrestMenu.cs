@@ -41,6 +41,12 @@ internal static class ShopCrestMenu
     /// <summary>Idle state of <c>shop_control</c>; the window is closed there.</summary>
     private const string IdleState = "Idle";
 
+    /// <summary>Resting open state of <c>shop_control</c>; the window is fully shown there.</summary>
+    private const string OpenState = "Open";
+
+    /// <summary>Prefix of the states that fade the window out.</summary>
+    private const string CloseStatePrefix = "Close";
+
     /// <summary>Panel centre is lifted this far above the hero so the window reads centred.</summary>
     private const float UiLift = 0.8f;
 
@@ -74,8 +80,8 @@ internal static class ShopCrestMenu
     private static bool _fromDialogue;
     private static bool _sawOpenState;
 
-    /// <summary>FSM state the window was opened in; empty until it is known.</summary>
-    private static string _openState = string.Empty;
+    /// <summary>True once reaching the resting open state was logged for this session.</summary>
+    private static bool _openReachedLogged;
 
     /// <summary>True once the schema hide at the close start was logged for this session.</summary>
     private static bool _schemaCloseLogged;
@@ -237,7 +243,6 @@ internal static class ShopCrestMenu
             MoveToHero();
             ReviveTeardown();
             control.SendEvent(OpenEvent);
-            _openState = ActiveState(control);
             _shopUp = Time.realtimeSinceStartup;
             int count = stock.GetItemCount();
 
@@ -987,9 +992,10 @@ internal static class ShopCrestMenu
         if (state != IdleState)
         {
             _sawOpenState = true;
-            if (_openState.Length == 0 || _openState == IdleState)
+            if (state == OpenState && !_openReachedLogged)
             {
-                _openState = state;
+                _openReachedLogged = true;
+                Plugin.Log.LogInfo($"[SHOP] schema visible through open (state='{OpenState}')");
             }
 
             return false;
@@ -1005,9 +1011,11 @@ internal static class ShopCrestMenu
     }
 
     /// <summary>
-    /// Hides both schemas the moment the FSM leaves the state the window was opened in.
+    /// Hides both schemas when the FSM reaches a terminal close state.
     /// The schema lives outside the fade hierarchy, so the vanilla close fade never
     /// reaches it; an alpha threshold only catches it once the window is nearly gone.
+    /// The open chain passes through several states before it rests, so a state that
+    /// merely differs from the state at the open event is not a close.
     /// </summary>
     internal static void HideSchemaAtCloseStart()
     {
@@ -1017,14 +1025,15 @@ internal static class ShopCrestMenu
         }
 
         string state = ActiveState(_control);
-        if (state.Length == 0 || _openState.Length == 0 || state == _openState)
+        bool terminal = state == IdleState || state.StartsWith(CloseStatePrefix, StringComparison.Ordinal);
+        if (state.Length == 0 || !terminal)
         {
             return;
         }
 
         _schemaCloseLogged = true;
         ShopCrestSchema.Hide();
-        Plugin.Log.LogInfo($"[SHOP] schema hidden at close start state='{_openState}'->'{state}'");
+        Plugin.Log.LogInfo($"[SHOP] schema hidden at close start state='{state}'");
     }
 
     /// <summary>
@@ -1240,7 +1249,7 @@ internal static class ShopCrestMenu
         _boundShift = 0f;
         _fromDialogue = false;
         _sawOpenState = false;
-        _openState = string.Empty;
+        _openReachedLogged = false;
         _schemaCloseLogged = false;
         _closeDetectedLogged = false;
         SuppressDialogue = false;
