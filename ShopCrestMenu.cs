@@ -4,6 +4,7 @@ using System.Reflection;
 using CrestPicker.Pure;
 using HarmonyLib;
 using HutongGames.PlayMaker;
+using TeamCherry.Localization;
 using TeamCherry.NestedFadeGroup;
 using TMProOld;
 using UnityEngine;
@@ -331,15 +332,30 @@ internal static class ShopCrestMenu
     /// <summary>Copies the crest's own localised name and description onto the item.</summary>
     private static void CopyCrestText(ShopItem item, ToolCrest crest)
     {
-        try
+        SetLocalised(item, "displayName", crest.DisplayName);
+        SetLocalised(item, "description", crest.Description);
+    }
+
+    /// <summary>
+    /// Writes a <see cref="LocalisedString"/> into a private field of the same type. A
+    /// text field is never written with a plain string: that cast fails, the panel falls
+    /// back to the temp key, and the old catch hid it. A type mismatch is logged instead.
+    /// </summary>
+    /// <param name="item">Shop entry whose text field is written.</param>
+    /// <param name="fieldName">Private field of <see cref="ShopItem"/> to write.</param>
+    /// <param name="value">Crest text, sheet and key included, so it stays localised.</param>
+    private static void SetLocalised(ShopItem item, string fieldName, LocalisedString value)
+    {
+        FieldInfo? field = typeof(ShopItem).GetField(fieldName, PrivateInstance);
+        if (field == null || field.FieldType != typeof(LocalisedString))
         {
-            SetField(item, "displayName", crest.DisplayName);
-            SetField(item, "description", crest.Description);
+            Plugin.Log.LogWarning(
+                $"[SHOP] crest text field '{fieldName}' is {field?.FieldType.FullName ?? "<missing>"}," +
+                $" expected {typeof(LocalisedString).FullName}; value '{value.Key}' not written");
+            return;
         }
-        catch (Exception ex)
-        {
-            Plugin.Log.LogWarning($"[SHOP] crest text copy failed for '{crest.name}': {ex.Message}");
-        }
+
+        field.SetValue(item, value);
     }
 
     /// <summary>
