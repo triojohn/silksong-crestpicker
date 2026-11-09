@@ -57,9 +57,6 @@ internal static class ShopCrestSchema
     /// <summary>Slot scale of an unselected vanilla crest card (<c>_slotScaleOther</c>).</summary>
     private const float CloneSlotScale = 0.7f;
 
-    /// <summary>Effect holder of a vanilla crest card, invisible on an unselected card.</summary>
-    private const string SubmitEffectsName = "Crest Submit Effects";
-
     /// <summary>Vanilla local scale of the silhouette child inside a crest card.</summary>
     private const float SilhouetteScale = 2f;
 
@@ -141,6 +138,12 @@ internal static class ShopCrestSchema
     /// <summary>True once the close-start alpha was logged for this session.</summary>
     private static bool _closeAlphaLogged;
 
+    /// <summary>True once the schema y offset was logged for this window.</summary>
+    private static bool _offsetLogged;
+
+    /// <summary>True once the y offset clamp was logged for this window.</summary>
+    private static bool _offsetClampedLogged;
+
     /// <summary>Flags for the private fields read off the vanilla crest widgets.</summary>
     private const BindingFlags PrivateInstance = BindingFlags.Instance | BindingFlags.NonPublic;
 
@@ -188,6 +191,9 @@ internal static class ShopCrestSchema
     /// <summary>Multiplier applied to the schema size.</summary>
     internal static float Scale = 1f;
 
+    /// <summary>Vertical shift of the details schema, as a fraction of the panel height; negative goes down.</summary>
+    internal static float OffsetY = -0.12f;
+
     /// <summary>Dot diameter for an unlocked slot, as a fraction of the reference height.</summary>
     internal static float DotSize = 0.373f;
 
@@ -227,6 +233,8 @@ internal static class ShopCrestSchema
             _detailsCorrectedLogged = false;
             _confirmGroupActiveLogged = null;
             _detailsBounds = default;
+            _offsetLogged = false;
+            _offsetClampedLogged = false;
             DestroySchemaRoot();
             DumpAllCrests();
             Apply();
@@ -314,6 +322,8 @@ internal static class ShopCrestSchema
         ConfirmActive = false;
         _confirmGroupActiveLogged = null;
         _detailsBounds = default;
+        _offsetLogged = false;
+        _offsetClampedLogged = false;
         _selectedIndex = -1;
         _pickSource = string.Empty;
         _pickIndex = -1;
@@ -398,7 +408,15 @@ internal static class ShopCrestSchema
         Vector3 target = new Vector3(bounds.center.x, lowerCentreY, bounds.center.z);
         if (_detailsSchema.Container.activeSelf)
         {
-            PlaceAt(_detailsSchema, target);
+            float offsetWorld = OffsetY * bounds.size.y;
+            if (!_offsetLogged && Mathf.Abs(offsetWorld) > 0.0001f)
+            {
+                _offsetLogged = true;
+                Plugin.Log.LogInfo($"[SCHEMA] offsetY={OffsetY:F3} world={offsetWorld:F3}" +
+                    $" ({Mathf.Abs(OffsetY):F2} of panel)");
+            }
+
+            PlaceAt(_detailsSchema, target, offsetWorld, bounds);
             _detailsBounds = ContainerBounds(_detailsSchema.Container.transform);
         }
 
@@ -508,13 +526,46 @@ internal static class ShopCrestSchema
         return _detailsBounds;
     }
 
-    /// <summary>Moves a schema in world space so its own drawn centre lands on <paramref name="target"/>.</summary>
-    private static void PlaceAt(Schema schema, Vector3 target)
+    /// <summary>
+    /// Moves a schema in world space so its own drawn centre lands on <paramref name="target"/>,
+    /// shifted down by <paramref name="offsetY"/>; with a <paramref name="panel"/> the shifted
+    /// schema is kept inside the panel edges. The shift is measured against the drawn bounds on
+    /// every call, so it never accumulates.
+    /// </summary>
+    /// <param name="schema">Schema to move.</param>
+    /// <param name="target">World position the drawn centre should take.</param>
+    /// <param name="offsetY">Extra world shift along Y; negative goes down.</param>
+    /// <param name="panel">Panel the schema must stay inside, when known.</param>
+    private static void PlaceAt(Schema schema, Vector3 target, float offsetY = 0f, Bounds? panel = null)
     {
         Transform container = schema.Container.transform;
         Bounds bounds = ContainerBounds(container);
         Vector3 shift = target - bounds.center;
         shift.z = 0f;
+        shift.y += offsetY;
+
+        if (panel.HasValue && Mathf.Abs(offsetY) > 0.0001f)
+        {
+            Bounds outer = panel.Value;
+            float centre = bounds.center.y + shift.y;
+            float half = bounds.extents.y;
+            float min = outer.min.y + half;
+            float max = outer.max.y - half;
+            if (min <= max)
+            {
+                float clamped = Mathf.Clamp(centre, min, max);
+                if (Mathf.Abs(clamped - centre) > 0.0001f)
+                {
+                    shift.y += clamped - centre;
+                    if (!_offsetClampedLogged)
+                    {
+                        _offsetClampedLogged = true;
+                        Plugin.Log.LogInfo("[SCHEMA] offsetY clamped");
+                    }
+                }
+            }
+        }
+
         if (shift.sqrMagnitude > 0.0000001f)
         {
             container.position += shift;
@@ -1526,8 +1577,6 @@ internal static class ShopCrestSchema
             clone.transform.localRotation = Quaternion.identity;
             clone.transform.localScale = Vector3.one;
 
-            int extras = StripEffects(clone.transform);
-
             // The vanilla components drive themselves from a manager the clone does not have.
             InventoryToolCrestSlot[] slots = clone.GetComponentsInChildren<InventoryToolCrestSlot>(true);
             foreach (InventoryToolCrestSlot slot in slots)
@@ -1537,6 +1586,7 @@ internal static class ShopCrestSchema
             }
 
             InventoryToolCrest? widget = clone.GetComponent<InventoryToolCrest>();
+            int extras = 0;
             string silhouetteName = "none";
             string crestSpriteName = "none";
             if (widget != null)
@@ -1611,9 +1661,10 @@ internal static class ShopCrestSchema
     }
 
     /// <summary>
-    /// Last resort against a part the vanilla fade kept hidden: switches off every renderer
-    /// of the clone that is neither the silhouette nor a slot. Returns the number of
-    /// switched-off objects.
+    /// Switches off every effect renderer of the clone, decided by
+    /// <see cref="CloneFilter.Evaluate"/>: the glow and the white flash draw over the
+    /// silhouette, and only the vanilla fade kept them invisible. The silhouette subtree
+    /// and the slot widgets always stay. Returns the number of switched-off objects.
     /// </summary>
     private static int DisableExtras(InventoryToolCrest widget)
     {
@@ -1627,8 +1678,9 @@ internal static class ShopCrestSchema
         foreach (Renderer renderer in clone.GetComponentsInChildren<Renderer>(true))
         {
             Transform part = renderer.transform;
-            if (part.IsChildOf(silhouette.transform) || HiddenInClone(part, clone) ||
-                InSlot(part, clone) || disabled.Contains(renderer.gameObject))
+            bool isSilhouette = part == silhouette.transform || part.IsChildOf(silhouette.transform);
+            if (HiddenInClone(part, clone) || disabled.Contains(renderer.gameObject) ||
+                CloneFilter.Evaluate(part.name, isSilhouette, InSlot(part, clone)) == CloneNode.Keep)
             {
                 continue;
             }
@@ -1673,37 +1725,6 @@ internal static class ShopCrestSchema
         }
 
         return false;
-    }
-
-    /// <summary>
-    /// Switches off the effect objects of a cloned card: its glow and its white flash draw
-    /// over the silhouette, and only the vanilla fade kept them invisible. Returns the
-    /// number of switched-off objects.
-    /// </summary>
-    private static int StripEffects(Transform parent)
-    {
-        int disabled = 0;
-        foreach (Transform child in parent)
-        {
-            if (IsEffect(child.name))
-            {
-                child.gameObject.SetActive(false);
-                disabled++;
-                continue;
-            }
-
-            disabled += StripEffects(child);
-        }
-
-        return disabled;
-    }
-
-    /// <summary>Name match of an effect object of a vanilla crest card.</summary>
-    private static bool IsEffect(string name)
-    {
-        return string.Equals(name, SubmitEffectsName, StringComparison.OrdinalIgnoreCase) ||
-            name.IndexOf("Burst Effect", StringComparison.OrdinalIgnoreCase) >= 0 ||
-            name.IndexOf("White Flash", StringComparison.OrdinalIgnoreCase) >= 0;
     }
 
     /// <summary>

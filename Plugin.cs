@@ -59,6 +59,7 @@ public sealed class Plugin : BaseUnityPlugin
     private ConfigEntry<bool> _showCrestSchema = null!;
     private ConfigEntry<SchemaRenderMode> _schemaRender = null!;
     private ConfigEntry<float> _crestSchemaScale = null!;
+    private ConfigEntry<float> _crestSchemaOffsetY = null!;
     private ConfigEntry<float> _crestDotSize = null!;
     private ConfigEntry<float> _crestLockedDotSize = null!;
     private ConfigEntry<float> _crestDotOffsetY = null!;
@@ -113,6 +114,9 @@ public sealed class Plugin : BaseUnityPlugin
         _crestSchemaScale = Config.Bind("General", "CrestSchemaScale", 1f,
             "Множитель единого масштаба схемы знака: все гребни рисуются в одном масштабе от " +
             "эталонной высоты, схема занимает 80% панели деталей (1 — ровно вписано)");
+        _crestSchemaOffsetY = Config.Bind("General", "CrestSchemaOffsetY", -0.12f,
+            "Сдвиг схемы знака по вертикали как доля высоты панели деталей " +
+            "(минус — вниз, чтобы схема не наезжала на описание)");
         _crestDotSize = Config.Bind("General", "CrestDotSize", 0.373f,
             "Диаметр точки слота как доля эталонной высоты силуэта знака (1 — вся высота, " +
             "0.373 — как слот невыбранной карточки в ванили: 1.267 / 3.400)");
@@ -154,6 +158,7 @@ public sealed class Plugin : BaseUnityPlugin
         ShopCrestSchema.Enabled = _showCrestSchema.Value;
         ShopCrestSchema.Render = _schemaRender.Value;
         ShopCrestSchema.Scale = ConfigRules.NormalizeSchemaScale(_crestSchemaScale.Value);
+        ShopCrestSchema.OffsetY = _crestSchemaOffsetY.Value;
         float dotSizeRaw = _crestDotSize.Value;
         ShopCrestSchema.DotSize = ConfigRules.NormalizeDotSize(dotSizeRaw);
         ShopCrestSchema.LockedDotSize = ConfigRules.NormalizeLockedDotSize(_crestLockedDotSize.Value);
