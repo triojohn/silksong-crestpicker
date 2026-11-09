@@ -50,7 +50,7 @@ internal static class LabelVisibility
             return LabelHiddenReason.Outside;
         }
 
-        if (meshWidth <= MinMeshWidth)
+        if (!(meshWidth > MinMeshWidth))
         {
             return LabelHiddenReason.Empty;
         }
