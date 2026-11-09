@@ -39,9 +39,6 @@ internal static class ShopCrestSchema
     /// <summary>Fraction of the details panel the details schema fills.</summary>
     private const float PanelFill = 0.8f;
 
-    /// <summary>Dot scale of a locked slot, as in the vanilla slot widget.</summary>
-    private const float LockedSlotScale = 0.8f;
-
     /// <summary>Path of the details panel inside the shop window.</summary>
     private const string DetailsPath = "Item List Group/Item Details";
 
@@ -154,6 +151,9 @@ internal static class ShopCrestSchema
     /// <summary>Crests whose slots were already written to the log.</summary>
     private static readonly HashSet<string> SlotLogged = new HashSet<string>();
 
+    /// <summary>Crests whose dot diameters were already written to the log.</summary>
+    private static readonly HashSet<string> DotsLogged = new HashSet<string>();
+
     /// <summary>True once every crest of the game was dumped for this session.</summary>
     private static bool _crestDumpLogged;
     private static readonly HashSet<string> LoggedReasons = new HashSet<string>();
@@ -167,8 +167,11 @@ internal static class ShopCrestSchema
     /// <summary>Multiplier applied to the schema size.</summary>
     internal static float Scale = 1f;
 
-    /// <summary>Multiplier for the slot dot diameter, as a fraction of the reference height.</summary>
-    internal static float DotSize = 0.11f;
+    /// <summary>Dot diameter for an unlocked slot, as a fraction of the reference height.</summary>
+    internal static float DotSize = 0.373f;
+
+    /// <summary>Dot diameter for a locked slot, as a fraction of the reference height.</summary>
+    internal static float LockedDotSize = 0.174f;
 
     /// <summary>Dot drop, as a fraction of the drawn silhouette height, in world units.</summary>
     internal static float DotOffsetY = -0.02f;
@@ -1823,8 +1826,9 @@ internal static class ShopCrestSchema
 
     /// <summary>
     /// Adds one dot per slot as a child of the schema container. Slot positions are
-    /// silhouette-local units and stay as they are; the diameter is the unselected-card
-    /// slot fraction of the reference height in world units, converted to local scale once.
+    /// silhouette-local units and stay as they are; the diameter is the card slot scale
+    /// times the reference height times the unlocked or locked dot fraction, converted to
+    /// local scale once.
     /// </summary>
     private static void AddDots(Schema schema, ToolCrest crest, SpriteRenderer? reference)
     {
@@ -1836,9 +1840,9 @@ internal static class ShopCrestSchema
         }
 
         float lossy = Mathf.Abs(schema.Content.transform.lossyScale.y);
-        float world = CrestCardLook.SlotScale(false) * DotSize *
+        float card = CrestCardLook.SlotScale(false) *
             (_referenceHeight > 0.0001f ? _referenceHeight : 1f);
-        Plugin.Log.LogInfo($"[SCHEMA] dot diameter={world:F3} world");
+        bool logDots = DotsLogged.Add(crest.name ?? string.Empty);
         for (int i = 0; i < slots.Length; i++)
         {
             ToolCrest.SlotInfo slot = slots[i];
@@ -1850,8 +1854,14 @@ internal static class ShopCrestSchema
 
             bool locked = IsLocked(crest, slot);
             Color typeColor = TypeColor(slot.Type);
-            float diameter = locked ? world * LockedSlotScale : world;
+            float diameter = card * (locked ? LockedDotSize : DotSize);
             float native = SpriteHeight(dot);
+            if (logDots)
+            {
+                Plugin.Log.LogInfo($"[SCHEMA] dot diameter={diameter:F3} world" +
+                    $" locked={locked} native={native:F3}");
+            }
+
             float approx = native > 0.0001f && lossy > 0.0001f
                 ? diameter / (native * lossy)
                 : 1f;

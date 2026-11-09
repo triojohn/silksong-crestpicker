@@ -59,6 +59,7 @@ public sealed class Plugin : BaseUnityPlugin
     private ConfigEntry<SchemaRenderMode> _schemaRender = null!;
     private ConfigEntry<float> _crestSchemaScale = null!;
     private ConfigEntry<float> _crestDotSize = null!;
+    private ConfigEntry<float> _crestLockedDotSize = null!;
     private ConfigEntry<float> _crestDotOffsetY = null!;
     private ConfigEntry<float> _confirmSchemaScale = null!;
     private ConfigEntry<string> _confirmText = null!;
@@ -109,8 +110,12 @@ public sealed class Plugin : BaseUnityPlugin
         _crestSchemaScale = Config.Bind("General", "CrestSchemaScale", 1f,
             "Множитель единого масштаба схемы знака: все гребни рисуются в одном масштабе от " +
             "эталонной высоты, схема занимает 80% панели деталей (1 — ровно вписано)");
-        _crestDotSize = Config.Bind("General", "CrestDotSize", 0.11f,
-            "Диаметр точки слота как доля высоты силуэта знака");
+        _crestDotSize = Config.Bind("General", "CrestDotSize", 0.373f,
+            "Диаметр точки слота как доля эталонной высоты силуэта знака (1 — вся высота, " +
+            "0.373 — как слот невыбранной карточки в ванили: 1.267 / 3.400)");
+        _crestLockedDotSize = Config.Bind("General", "CrestLockedDotSize", 0.174f,
+            "Диаметр точки заблокированного слота как доля эталонной высоты силуэта " +
+            "(0.174 — как заблокированный слот в ванили: 0.59 / 3.400)");
         _crestDotOffsetY = Config.Bind("General", "CrestDotOffsetY", -0.02f,
             "Смещение точек слотов по вертикали как доля высоты силуэта (минус — вниз)");
         _confirmSchemaScale = Config.Bind("General", "ConfirmSchemaScale", 1f,
@@ -148,6 +153,7 @@ public sealed class Plugin : BaseUnityPlugin
         ShopCrestSchema.Scale = ConfigRules.NormalizeSchemaScale(_crestSchemaScale.Value);
         float dotSizeRaw = _crestDotSize.Value;
         ShopCrestSchema.DotSize = ConfigRules.NormalizeDotSize(dotSizeRaw);
+        ShopCrestSchema.LockedDotSize = _crestLockedDotSize.Value;
         ShopCrestSchema.DotOffsetY = _crestDotOffsetY.Value;
         if (ShopCrestSchema.DotSize != dotSizeRaw)
         {
