@@ -104,6 +104,19 @@ internal static class ShopCrestSchema
     /// <summary>True once the details schema was hidden behind the confirm screen.</summary>
     private static bool _detailsHiddenLogged;
 
+    /// <summary>True once the details schema was shown after a build.</summary>
+    private static bool _detailsShownLogged;
+
+    /// <summary>True once the stray-active confirm group was logged for this session.</summary>
+    private static bool _strayLogged;
+
+    /// <summary>
+    /// True from the purchase that starts the vanilla confirmation until the window is
+    /// restored. The confirm group may be left active by the game with stale text, so
+    /// this flag alone says whether a confirmation really runs.
+    /// </summary>
+    internal static bool ConfirmActive;
+
     /// <summary>True from the close start until the next <see cref="Begin"/>; blocks any re-show.</summary>
     private static bool _closed;
 
@@ -177,6 +190,9 @@ internal static class ShopCrestSchema
             _builtFor = null;
             _missingLogged = false;
             _detailsHiddenLogged = false;
+            _detailsShownLogged = false;
+            _strayLogged = false;
+            ConfirmActive = false;
             _closed = false;
             _closeAlphaLogged = false;
             _selectedIndex = -1;
@@ -267,6 +283,9 @@ internal static class ShopCrestSchema
         _confirmMessage = null;
         _builtFor = null;
         _detailsHiddenLogged = false;
+        _detailsShownLogged = false;
+        _strayLogged = false;
+        ConfirmActive = false;
         _confirmGroupActiveLogged = null;
         _detailsBounds = default;
         _selectedIndex = -1;
@@ -332,6 +351,21 @@ internal static class ShopCrestSchema
         if (_detailsSchema == null || _details == null || !TryBounds(_details, out Bounds bounds))
         {
             return;
+        }
+
+        // A stale confirm group left active by the game must not keep the details hidden.
+        if (!ConfirmActive)
+        {
+            if (!_detailsSchema.Container.activeSelf)
+            {
+                ShowDetails();
+            }
+
+            if (_detailsSchema.Container.activeSelf && !_detailsShownLogged)
+            {
+                _detailsShownLogged = true;
+                Plugin.Log.LogInfo("[SCHEMA] details shown (confirm inactive)");
+            }
         }
 
         float lowerCentreY = Mathf.Lerp(bounds.min.y, bounds.center.y, 0.5f);
@@ -414,11 +448,14 @@ internal static class ShopCrestSchema
         if (!_detailsHiddenLogged)
         {
             _detailsHiddenLogged = true;
-            Plugin.Log.LogInfo("[SCHEMA] details hidden while confirm visible");
+            Plugin.Log.LogInfo("[SCHEMA] details hidden (confirm active)");
         }
     }
 
-    /// <summary>Puts our details schema back to the state it had before the confirm screen.</summary>
+    /// <summary>
+    /// Puts our details schema back to the state it had before the confirm screen, or
+    /// shows it when no hidden state was recorded.
+    /// </summary>
     private static void ShowDetails()
     {
         if (_detailsSchema == null)
@@ -427,9 +464,10 @@ internal static class ShopCrestSchema
         }
 
         GameObject go = _detailsSchema.Container;
-        if (ObjectStates.TryGetValue(go, out bool wasActive) && go.activeSelf != wasActive)
+        bool wanted = !ObjectStates.TryGetValue(go, out bool wasActive) || wasActive;
+        if (go.activeSelf != wanted)
         {
-            go.SetActive(wasActive);
+            go.SetActive(wanted);
         }
     }
 
@@ -547,11 +585,18 @@ internal static class ShopCrestSchema
     /// <summary>
     /// Empty when the confirm schema belongs on screen, otherwise why it does not:
     /// our schema replaces the vanilla item picture, so it follows the confirmation
-    /// group and its message object. The renderer flag and the fade alpha are not
-    /// consulted: the game leaves the mesh disabled while the text is on screen.
+    /// started by our purchase handler. The group activity, its message text, the
+    /// renderer flag and the fade alpha are only additional hints: the game leaves
+    /// the group active with stale text after a window closes.
     /// </summary>
     private static string ConfirmHiddenReason()
     {
+        if (!ConfirmActive)
+        {
+            LogStrayConfirmGroup();
+            return "confirm inactive";
+        }
+
         if (_confirmGroup == null)
         {
             return "no group";
@@ -575,6 +620,21 @@ internal static class ShopCrestSchema
         }
 
         return string.IsNullOrEmpty(SafeText(_confirmMessage)) ? "confirm msg empty" : string.Empty;
+    }
+
+    /// <summary>
+    /// Logs once per session a confirm group the game left active while no confirmation
+    /// of ours runs, so an old message is visible in the log without hiding the details.
+    /// </summary>
+    private static void LogStrayConfirmGroup()
+    {
+        if (_strayLogged || _confirmGroup == null || !_confirmGroup.gameObject.activeInHierarchy)
+        {
+            return;
+        }
+
+        _strayLogged = true;
+        Plugin.Log.LogWarning("[SCHEMA] confirm group stray active, ignoring");
     }
 
     /// <summary>Active state name of the item list FSM, or null when it is out of reach.</summary>

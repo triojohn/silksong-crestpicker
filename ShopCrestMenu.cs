@@ -458,6 +458,7 @@ internal static class ShopCrestMenu
 
             ToolCrest crest = _crests[index];
             Plugin.Log.LogInfo($"[SHOP] crest purchased from live shop: {crest.name} (index={index})");
+            ShopCrestSchema.ConfirmActive = true;
             CrestPickerService.ApplyCrest(crest);
             Plugin.OnMenuClosed(true, _fromDialogue);
             BeginPurchaseWait();
@@ -1011,6 +1012,9 @@ internal static class ShopCrestMenu
     /// </param>
     internal static void Restore(string reason = "closed", bool emergency = false, int session = -1)
     {
+        // The confirmation lives no longer than the window: every restore ends it.
+        ShopCrestSchema.ConfirmActive = false;
+
         // A newer session already owns the window: this call is a leftover. Same for a
         // call with no live session and nothing left to put back.
         bool foreign = IsOpen && session >= 0 && session != _session;
