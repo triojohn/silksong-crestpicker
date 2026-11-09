@@ -13,6 +13,7 @@
 | Модуль | Тест-файл | Что фиксирует |
 |---|---|---|
 | `Pure/CrestPoolRules.cs` | `CrestPicker.Tests/CrestPoolRulesTests.cs` | `All` включает закрытые знаки, `Unlocked` исключает; скрытые и не-base исключены всегда; надетый знак исключён |
+| `Pure/CrestPoolRules.cs` | `CrestPicker.Tests/CrestPoolSelectTests.cs` | `Select` при `ignoreUnlock` + `includeEquipped` даёт 7 из 12 в порядке списка; скрытые и не-base апгрейды не попадают ни при каких флагах; дубликаты имён сохраняются, пустой вход → пустой список |
 | `Pure/ConfigRules.cs` | `CrestPicker.Tests/ConfigRulesTests.cs` | `CrestSchemaScale > 2` → 1; `CrestDotSize > 0.5` → ×0.11; значения в норме не трогаются |
 | `Pure/PurchaseClose.cs` | `CrestPicker.Tests/PurchaseCloseTests.cs` | закрытие через 0.5 с после сообщения о покупке; 3 с без сообщения; `ForceIdle` через 5 с после отправки; до порогов — `None` |
 | `Pure/CentreSource.cs` | `CrestPicker.Tests/CentreSourceTests.cs` | неизвестное или пустое значение → `columns` и `unknown = true`; известное значение сохраняется |
@@ -22,7 +23,7 @@
 | `Pure/OfferStore.cs` | `CrestPicker.Tests/OfferStoreTests.cs` | битый JSON → пустой словарь; round-trip через JSON и через файл; слот -1 не пишется и не читается |
 | `Pure/CrestLabel.cs` | `CrestPicker.Tests/CrestLabelTests.cs` | пустое, пробельное и null-имя → имя ассета; кириллица без изменений |
 
-Всего 46 тестов. Тестовый проект `CrestPicker.Tests` собирается отдельно от мода
+Всего 52 теста. Тестовый проект `CrestPicker.Tests` собирается отдельно от мода
 и подключает `Pure/*.cs` как исходники: ссылок на DLL игры в нём нет.
 
 ## 2. Что требует ручной проверки в игре
