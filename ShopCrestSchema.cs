@@ -57,6 +57,9 @@ internal static class ShopCrestSchema
     /// <summary>Slot scale of an unselected vanilla crest card (<c>_slotScaleOther</c>).</summary>
     private const float CloneSlotScale = 0.7f;
 
+    /// <summary>Effect holder of a vanilla crest card, invisible on an unselected card.</summary>
+    private const string SubmitEffectsName = "Crest Submit Effects";
+
     /// <summary>Vanilla local scale of the silhouette child inside a crest card.</summary>
     private const float SilhouetteScale = 2f;
 
@@ -1523,6 +1526,8 @@ internal static class ShopCrestSchema
             clone.transform.localRotation = Quaternion.identity;
             clone.transform.localScale = Vector3.one;
 
+            int extras = StripEffects(clone.transform);
+
             // The vanilla components drive themselves from a manager the clone does not have.
             InventoryToolCrestSlot[] slots = clone.GetComponentsInChildren<InventoryToolCrestSlot>(true);
             foreach (InventoryToolCrestSlot slot in slots)
@@ -1536,7 +1541,7 @@ internal static class ShopCrestSchema
             string crestSpriteName = "none";
             if (widget != null)
             {
-                Unselect(widget);
+                extras += Unselect(widget);
                 silhouetteName = PartName(CrestSilhouetteField?.GetValue(widget));
                 crestSpriteName = PartName(CrestSpriteField?.GetValue(widget));
                 RemoveNewItem(clone, widget);
@@ -1545,14 +1550,6 @@ internal static class ShopCrestSchema
             }
 
             clone.SetActive(true);
-            ResetFades(clone);
-            float slotWorld = SlotWorld(slots);
-            foreach (InventoryToolCrestSlot slot in slots)
-            {
-                slot.ItemFlashAmount = 0f;
-                UnityEngine.Object.Destroy(slot);
-            }
-
             Renderer? body = SilhouetteRenderer(clone.transform);
             if (body == null)
             {
@@ -1561,11 +1558,17 @@ internal static class ShopCrestSchema
                 return null;
             }
 
+            ResetFades(clone, body.transform);
+            foreach (InventoryToolCrestSlot slot in slots)
+            {
+                slot.ItemFlashAmount = 0f;
+                UnityEngine.Object.Destroy(slot);
+            }
+
             Schema schema = new Schema(label, container, content, body);
             Fit(schema);
             Plugin.Log.LogInfo($"[SCHEMA] clone '{crest.name}' silhouette='{silhouetteName}'" +
-                $" crestSprite='{crestSpriteName}' slots={slots.Length}" +
-                $" slotWorld={slotWorld:F3} bodyH={WorldHeight(body):F3}");
+                $" crestSprite='{crestSpriteName}' extras={extras} slots={slots.Length}");
             return schema;
         }
         catch (Exception ex)
@@ -1578,9 +1581,10 @@ internal static class ShopCrestSchema
     /// <summary>
     /// Forced unselected view of a vanilla crest card: the crest sprite object is switched
     /// off, because its fade group rewrites the sprite alpha every frame and alpha alone
-    /// let the detailed sprite reappear. The silhouette is switched on at full alpha.
+    /// let the detailed sprite reappear. The silhouette is switched on at full alpha, and
+    /// every leftover renderer is switched off. Returns the number of switched-off objects.
     /// </summary>
-    private static void Unselect(InventoryToolCrest widget)
+    private static int Unselect(InventoryToolCrest widget)
     {
         if (CrestSpriteField?.GetValue(widget) is NestedFadeGroupSpriteRenderer sprite)
         {
@@ -1602,6 +1606,104 @@ internal static class ShopCrestSchema
         {
             LogOnce("[SCHEMA] crestSilhouette field missing, clone silhouette unchanged");
         }
+
+        return DisableExtras(widget);
+    }
+
+    /// <summary>
+    /// Last resort against a part the vanilla fade kept hidden: switches off every renderer
+    /// of the clone that is neither the silhouette nor a slot. Returns the number of
+    /// switched-off objects.
+    /// </summary>
+    private static int DisableExtras(InventoryToolCrest widget)
+    {
+        Transform clone = widget.transform;
+        if (CrestSilhouetteField?.GetValue(widget) is not NestedFadeGroupSpriteRenderer silhouette)
+        {
+            return 0;
+        }
+
+        List<GameObject> disabled = new List<GameObject>();
+        foreach (Renderer renderer in clone.GetComponentsInChildren<Renderer>(true))
+        {
+            Transform part = renderer.transform;
+            if (part.IsChildOf(silhouette.transform) || HiddenInClone(part, clone) ||
+                InSlot(part, clone) || disabled.Contains(renderer.gameObject))
+            {
+                continue;
+            }
+
+            renderer.gameObject.SetActive(false);
+            disabled.Add(renderer.gameObject);
+        }
+
+        if (disabled.Count > 0)
+        {
+            List<string> names = disabled.ConvertAll(part => part.name);
+            LogOnce($"[SCHEMA] clone '{clone.name}' disabled extras='{string.Join(", ", names)}'");
+        }
+
+        return disabled.Count;
+    }
+
+    /// <summary>True when <paramref name="part"/> or an ancestor inside the clone is off.</summary>
+    private static bool HiddenInClone(Transform part, Transform clone)
+    {
+        for (Transform? current = part; current != null && current != clone; current = current.parent)
+        {
+            if (!current.gameObject.activeSelf)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>True when <paramref name="part"/> belongs to a slot of the card.</summary>
+    private static bool InSlot(Transform part, Transform clone)
+    {
+        for (Transform? current = part; current != null && current != clone; current = current.parent)
+        {
+            if (current.GetComponent<InventoryToolCrestSlot>() != null ||
+                current.name.IndexOf("Slot", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Switches off the effect objects of a cloned card: its glow and its white flash draw
+    /// over the silhouette, and only the vanilla fade kept them invisible. Returns the
+    /// number of switched-off objects.
+    /// </summary>
+    private static int StripEffects(Transform parent)
+    {
+        int disabled = 0;
+        foreach (Transform child in parent)
+        {
+            if (IsEffect(child.name))
+            {
+                child.gameObject.SetActive(false);
+                disabled++;
+                continue;
+            }
+
+            disabled += StripEffects(child);
+        }
+
+        return disabled;
+    }
+
+    /// <summary>Name match of an effect object of a vanilla crest card.</summary>
+    private static bool IsEffect(string name)
+    {
+        return string.Equals(name, SubmitEffectsName, StringComparison.OrdinalIgnoreCase) ||
+            name.IndexOf("Burst Effect", StringComparison.OrdinalIgnoreCase) >= 0 ||
+            name.IndexOf("White Flash", StringComparison.OrdinalIgnoreCase) >= 0;
     }
 
     /// <summary>
@@ -1643,21 +1745,6 @@ internal static class ShopCrestSchema
                 UnityEngine.Object.Destroy(child.gameObject);
             }
         }
-    }
-
-    /// <summary>World height of the first slot icon of a cloned card; zero when it has none.</summary>
-    private static float SlotWorld(InventoryToolCrestSlot[] slots)
-    {
-        foreach (InventoryToolCrestSlot slot in slots)
-        {
-            Renderer? renderer = slot != null ? slot.GetComponentInChildren<Renderer>(true) : null;
-            if (renderer != null && renderer.bounds.size.y > 0.0001f)
-            {
-                return renderer.bounds.size.y;
-            }
-        }
-
-        return 0f;
     }
 
     /// <summary>Card of <paramref name="crest"/>; any card of the scene as a logged fallback.</summary>
@@ -1707,14 +1794,24 @@ internal static class ShopCrestSchema
         return active;
     }
 
-    /// <summary>Clears the faded look the vanilla widget had in its list.</summary>
-    private static void ResetFades(GameObject clone)
+    /// <summary>
+    /// Raises the fade groups the silhouette sits in: the vanilla card fades as a whole, so
+    /// every group between the silhouette and the clone root must be at full alpha. The
+    /// other groups keep the alpha the vanilla fade left, which is what hides the effects.
+    /// </summary>
+    private static void ResetFades(GameObject clone, Transform silhouette)
     {
-        foreach (NestedFadeGroupBase group in clone.GetComponentsInChildren<NestedFadeGroupBase>(true))
+        for (Transform? current = silhouette; current != null; current = current.parent)
         {
+            NestedFadeGroupBase? group = current.GetComponent<NestedFadeGroupBase>();
             if (group != null)
             {
                 group.AlphaSelf = 1f;
+            }
+
+            if (current == clone.transform)
+            {
+                break;
             }
         }
     }
