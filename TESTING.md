@@ -17,6 +17,7 @@
 | `Pure/CrestPoolRules.cs` | `CrestPicker.Tests/CrestPoolSelectTests.cs` | `Select` при `ignoreUnlock` + `includeEquipped` даёт 7 из 12 в порядке списка; скрытые и не-base апгрейды не попадают ни при каких флагах; дубликаты имён сохраняются, пустой вход → пустой список |
 | `Pure/ConfigRules.cs` | `CrestPicker.Tests/ConfigRulesTests.cs` | `CrestSchemaScale > 2` → 1; `CrestDotSize > 0.5` → ×0.11; значения в норме не трогаются |
 | `Pure/PurchaseClose.cs` | `CrestPicker.Tests/PurchaseCloseTests.cs` | закрытие через 0.5 с после сообщения о покупке; 3 с без сообщения; `ForceIdle` через 5 с после отправки; до порогов — `None` |
+| `Pure/ShopPanelPolicy.cs` | `CrestPicker.Tests/ShopPanelPolicyTests.cs` | состав и порядок пяти панелей, скрываемых на закрытии; без дубликатов и пустых имён; `ShouldHidePanels` только при `opening=false, alreadyHidden=false`; `ShouldWriteRootAlpha` всегда `false` |
 | `Pure/CentreSource.cs` | `CrestPicker.Tests/CentreSourceTests.cs` | неизвестное или пустое значение → `columns` и `unknown = true`; известное значение сохраняется |
 | `Pure/Geometry.cs` | `CrestPicker.Tests/GeometryTests.cs` | `IsSane` отбраковывает NaN, ∞ и \|x\| ≥ 1000; `ClampAxis` держит отрезок в границах, центрирует негабаритный, при `min > max` возвращает `min` |
 | `Pure/RowPick.cs` | `CrestPicker.Tests/RowPickTests.cs` | `PickRowIndex` даёт индекс строки при точном совпадении и ближайшую в допуске (граница включительно), `-1` вне допуска, для пустого и `null` массива, при `NaN`/`∞` в `selectorY`; `NaN`/`∞` в `rowYs` пропускаются |
@@ -26,7 +27,7 @@
 | `Pure/CrestCardLook.cs` | `CrestPicker.Tests/CrestCardLookTests.cs` | `SlotScale` 1 для текущей карточки и 0.7 для остальных (ванильная `_slotScaleOther`); `UseSilhouette` только для невыбранной; правило карточки 0.7 и правило закрытого слота 0.8 перемножаются, давая 0.56 |
 | `Pure/CloneFilter.cs` | `CrestPicker.Tests/CloneFilterTests.cs` | силуэт и слот важнее правила эффектов; `Crest Submit Effects` в любом регистре, `Burst Effect`, `White Flash` выключаются; `Crest Glow` и `Crest Sprite` остаются; пустое и `null` имя остаются без исключения |
 
-Всего 78 тестов. Тестовый проект `CrestPicker.Tests` собирается отдельно от мода
+Всего 82 теста. Тестовый проект `CrestPicker.Tests` собирается отдельно от мода
 и подключает `Pure/*.cs` как исходники: ссылок на DLL игры в нём нет.
 
 Связка «правило карточки 0.7 × правило закрытого слота 0.8 = 0.56» в тесте
