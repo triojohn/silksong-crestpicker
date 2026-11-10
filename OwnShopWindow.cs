@@ -1,6 +1,7 @@
 using System;
 using System.Reflection;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 
 namespace CrestPicker;
 
@@ -33,6 +34,38 @@ internal static class OwnShopWindow
     /// <summary>Owner the clone was spawned for, null when there is none.</summary>
     internal static ShopOwnerBase? Owner { get; private set; }
 
+    /// <summary>Scene handle the clone belongs to; 0 when no clone was spawned.</summary>
+    internal static int SceneHandle { get; private set; }
+
+    private static GameObject? _container;
+
+    /// <summary>Drops the reference once the clone is gone; call every frame.</summary>
+    internal static void Tick()
+    {
+        if (SceneHandle == 0)
+        {
+            return;
+        }
+
+        if (Current != null && Owner != null)
+        {
+            return;
+        }
+
+        string reason = ReleaseReason();
+        Release(reason);
+    }
+
+    private static string ReleaseReason()
+    {
+        if (SceneManager.GetActiveScene().handle != SceneHandle)
+        {
+            return "scene";
+        }
+
+        return Owner == null ? "owner" : "external";
+    }
+
     /// <summary>Spawns the clone once; a live clone is left untouched.</summary>
     internal static void TrySpawn()
     {
@@ -60,11 +93,14 @@ internal static class OwnShopWindow
 
             Plugin.Log.LogInfo($"[OWN] prefab ok '{prefab.name}'");
 
+            // Scene object: unloaded together with the scene, never DontDestroyOnLoad.
             GameObject container = new GameObject(ContainerName);
             ShopMenuStock clone = UnityEngine.Object.Instantiate(prefab, container.transform);
             clone.gameObject.name = RootName;
+            _container = container;
             Current = clone;
             Owner = owner;
+            SceneHandle = owner.gameObject.scene.handle;
             Plugin.Log.LogInfo(
                 $"[OWN] clone spawned path='{PathOf(clone.transform)}' stock={StockCount(clone)}");
         }
@@ -72,8 +108,36 @@ internal static class OwnShopWindow
         {
             Current = null;
             Owner = null;
+            SceneHandle = 0;
+            _container = null;
             Fail(ex.Message);
         }
+    }
+
+    /// <summary>Destroys the clone root and clears the cached references.</summary>
+    private static void Release(string reason)
+    {
+        try
+        {
+            if (_container != null)
+            {
+                UnityEngine.Object.Destroy(_container);
+            }
+            else if (Current != null)
+            {
+                UnityEngine.Object.Destroy(Current.gameObject);
+            }
+        }
+        catch (Exception ex)
+        {
+            Plugin.Log.LogWarning($"[OWN] release failed: {ex.Message}");
+        }
+
+        Current = null;
+        Owner = null;
+        SceneHandle = 0;
+        _container = null;
+        Plugin.Log.LogInfo($"[OWN] released reason={reason}");
     }
 
     /// <summary>First active scene shop owner; asset copies are ignored.</summary>

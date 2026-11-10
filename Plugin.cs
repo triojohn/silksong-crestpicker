@@ -212,6 +212,7 @@ public sealed class Plugin : BaseUnityPlugin
 
         InventoryDiag.Poll();
         UpdatePendingOffer();
+        OwnShopWindow.Tick();
 
         if (_shopDumpHotkey.Value.IsDown())
         {
