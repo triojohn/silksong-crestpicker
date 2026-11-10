@@ -86,9 +86,6 @@ internal static class ShopCrestMenu
     /// <summary>True once this session started hiding the schema and the rows, whatever triggered it.</summary>
     private static bool _hideStarted;
 
-    /// <summary>True once the shared window panels were faded out for this close.</summary>
-    private static bool _panelsHidden;
-
     /// <summary>True once the root alpha reached 1 in this session, so a later drop means the close fade.</summary>
     private static bool _windowSeenOpen;
 
@@ -1098,7 +1095,6 @@ internal static class ShopCrestMenu
 
         _hideStarted = true;
         ShopCrestSchema.Hide();
-        HideSharedPanels();
         Plugin.Log.LogInfo($"[SHOP] schema hidden at close start state='{state}'");
     }
 
@@ -1129,53 +1125,7 @@ internal static class ShopCrestMenu
 
         _hideStarted = true;
         ShopCrestSchema.Hide();
-        HideSharedPanels();
         Plugin.Log.LogInfo($"[SHOP] window fading, hiding schema alpha={alpha:F2}");
-    }
-
-    /// <summary>
-    /// Fades out the window panels the vanilla close timer never touches: the rows, the
-    /// selector, the confirm text and both action prompts keep <c>AlphaSelf</c> at 1 and
-    /// stay on screen after the window is gone. Nothing is remembered: the vanilla open
-    /// chain raises these groups itself on the next open.
-    /// </summary>
-    private static void HideSharedPanels(bool opening = false)
-    {
-        if (_root == null || !ShopPanelPolicy.ShouldHidePanels(opening, _panelsHidden))
-        {
-            return;
-        }
-
-        _panelsHidden = true;
-        List<string> hidden = new List<string>();
-        foreach (string name in ShopPanelPolicy.PanelsHiddenOnClose)
-        {
-            Transform? node = name == "Item List Group" ? ListGroup() : FindChild(_root, name);
-            hidden.Add($"{HideAlpha(node)}={name}");
-        }
-
-        Plugin.Log.LogInfo($"[SHOP] panels hidden {string.Join(" ", hidden)}");
-    }
-
-    /// <summary>Zeroes every fade group on a node and below; returns how many were touched.</summary>
-    private static int HideAlpha(Transform? node)
-    {
-        if (node == null)
-        {
-            return 0;
-        }
-
-        int hidden = 0;
-        foreach (NestedFadeGroupBase group in node.GetComponentsInChildren<NestedFadeGroupBase>(true))
-        {
-            if (group != null)
-            {
-                group.AlphaSelf = 0f;
-                hidden++;
-            }
-        }
-
-        return hidden;
     }
 
     /// <summary>
@@ -1395,7 +1345,6 @@ internal static class ShopCrestMenu
         _sawOpenState = false;
         _openReachedLogged = false;
         _hideStarted = false;
-        _panelsHidden = false;
         _windowSeenOpen = false;
         _closeDetectedLogged = false;
         SuppressDialogue = false;
