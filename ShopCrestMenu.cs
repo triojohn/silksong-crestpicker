@@ -92,13 +92,6 @@ internal static class ShopCrestMenu
     /// <summary>True once the return to idle was logged for this session.</summary>
     private static bool _closeDetectedLogged;
 
-    /// <summary>Alpha every leftover fade group had before the close; restored on the next open.</summary>
-    private static readonly Dictionary<NestedFadeGroupBase, float> LeftoverAlphas =
-        new Dictionary<NestedFadeGroupBase, float>();
-
-    /// <summary>True once the close switched the leftovers off, so a later restore does not repeat it.</summary>
-    private static bool _leftoversHidden;
-
     /// <summary>Teardown targets and their vanilla state, captured when the window opens.</summary>
     private static NestedFadeGroupBase? _fade;
     private static PlayMakerFSM? _windowFsm;
@@ -598,7 +591,6 @@ internal static class ShopCrestMenu
     /// </summary>
     private static void BeginTeardown(Transform root)
     {
-        RestoreLeftovers();
         _teardownCaptured = true;
         _fade = root.GetComponent<NestedFadeGroupBase>();
         Transform? window = root.Find("Window");
@@ -721,8 +713,7 @@ internal static class ShopCrestMenu
     /// <summary>
     /// Puts the prompts back to their captured vanilla state only when our own teardown
     /// switched them off, i.e. on the emergency path. In a normal close the vanilla chain
-    /// owns them and is left alone. A prompt already recorded by the close leftovers is
-    /// skipped: it is restored on the next open instead.
+    /// owns them and is left alone.
     /// </summary>
     private static void RestorePrompts()
     {
@@ -733,108 +724,23 @@ internal static class ShopCrestMenu
 
         try
         {
-            if (_cancelPrompt != null && !LeftoverCovers(_cancelPrompt) &&
-                _cancelPrompt.activeSelf != _cancelWasActive)
+            if (_cancelPrompt != null && _cancelPrompt.activeSelf != _cancelWasActive)
             {
                 _cancelPrompt.SetActive(_cancelWasActive);
             }
 
-            if (_confirmPrompt != null && !LeftoverCovers(_confirmPrompt) &&
-                _confirmPrompt.activeSelf != _confirmWasActive)
+            if (_confirmPrompt != null && _confirmPrompt.activeSelf != _confirmWasActive)
             {
                 _confirmPrompt.SetActive(_confirmWasActive);
             }
 
             _promptsHidden = false;
-            bool leftovers = LeftoverCovers(_cancelPrompt) || LeftoverCovers(_confirmPrompt);
-            Plugin.Log.LogInfo(leftovers
-                ? "[SHOP] prompts stay hidden until the next open"
-                : $"[SHOP] prompts restored cancel={_cancelWasActive} confirm={_confirmWasActive}");
+            Plugin.Log.LogInfo($"[SHOP] prompts restored cancel={_cancelWasActive} confirm={_confirmWasActive}");
         }
         catch (Exception ex)
         {
             Plugin.Log.LogWarning($"[SHOP] prompt restore failed: {ex.Message}");
         }
-    }
-
-    /// <summary>True when a close already recorded a fade group on this object or below it.</summary>
-    private static bool LeftoverCovers(GameObject? target)
-    {
-        if (target == null)
-        {
-            return false;
-        }
-
-        Transform transform = target.transform;
-        foreach (NestedFadeGroupBase group in LeftoverAlphas.Keys)
-        {
-            if (group != null && group.transform.IsChildOf(transform))
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    /// <summary>
-    /// Fades the two action prompts and the whole item list group out once the close starts
-    /// or the window begins to fade: the vanilla fade never reaches the selector, the rows
-    /// or the vanilla prompt text, so they would outlive the window. Only the alpha is
-    /// written - deactivating them killed the vanilla <c>FadeNestedFadeGroup</c> coroutines
-    /// on the same nodes, leaving the root alpha stuck above zero. Each prior value is
-    /// recorded and written back by <see cref="RestoreLeftovers"/> once the fade is done.
-    /// </summary>
-    /// <param name="duringFade">True when the close fade itself asked for the hide, false at the FSM close start.</param>
-    private static void HideLeftovers(bool duringFade = false)
-    {
-        LogCloseStart();
-        bool listGroup = FadeOutGroup(ListGroup()?.GetComponent<NestedFadeGroupBase>());
-        int prompts = FadeOutChildren(_cancelPrompt) + FadeOutChildren(_confirmPrompt);
-        _leftoversHidden = listGroup || prompts > 0;
-        Plugin.Log.LogInfo(duringFade
-            ? $"[SHOP] leftovers hidden at fade listGroup={listGroup} promptGroups={prompts}"
-            : $"[SHOP] leftovers hidden at close start listGroup={listGroup} promptGroups={prompts}");
-    }
-
-    /// <summary>
-    /// Fades every <see cref="NestedFadeGroupBase"/> under the prompt, remembering each own
-    /// alpha; returns how many groups were touched. The prompts carry no group of their own.
-    /// </summary>
-    private static int FadeOutChildren(GameObject? target)
-    {
-        if (target == null)
-        {
-            return 0;
-        }
-
-        int groups = 0;
-        foreach (NestedFadeGroupBase group in target.GetComponentsInChildren<NestedFadeGroupBase>(true))
-        {
-            if (FadeOutGroup(group))
-            {
-                groups++;
-            }
-        }
-
-        return groups;
-    }
-
-    /// <summary>Puts one fade group's own alpha to zero and records its prior value; false when absent.</summary>
-    private static bool FadeOutGroup(NestedFadeGroupBase? group)
-    {
-        if (group == null)
-        {
-            return false;
-        }
-
-        if (!LeftoverAlphas.ContainsKey(group))
-        {
-            LeftoverAlphas[group] = group.AlphaSelf;
-        }
-
-        group.AlphaSelf = 0f;
-        return true;
     }
 
     /// <summary>Container of the shop rows and the selector; null when the window has none.</summary>
@@ -846,46 +752,6 @@ internal static class ShopCrestMenu
         }
 
         return _root.Find("Item List Group") ?? FindChild(_root, "Item List Group");
-    }
-
-    /// <summary>Puts every fade group faded out for a close back to the alpha it had before it.</summary>
-    private static void RestoreLeftovers()
-    {
-        LogRestoreDiag();
-        foreach (KeyValuePair<NestedFadeGroupBase, float> pair in LeftoverAlphas)
-        {
-            if (pair.Key != null)
-            {
-                pair.Key.AlphaSelf = pair.Value;
-            }
-        }
-
-        LeftoverAlphas.Clear();
-        _leftoversHidden = false;
-    }
-
-    /// <summary>
-    /// Puts the nodes the close start switched off back as soon as the window is fully
-    /// faded out. The vanilla shop reuses this same window, so leaving them off until the
-    /// next open of ours left a vanilla trader with an empty frame.
-    /// </summary>
-    internal static void RestoreLeftoversAfterFade()
-    {
-        if (!_leftoversHidden)
-        {
-            return;
-        }
-
-        float alpha = SafeAlpha(1f);
-        bool faded = alpha < 0.01f;
-        bool idle = _control != null && ActiveState(_control) == IdleState && alpha < 0.05f;
-        if (!faded && !idle)
-        {
-            return;
-        }
-
-        RestoreLeftovers();
-        Plugin.Log.LogInfo($"[SHOP] leftovers restored after fade alpha={alpha:F2}");
     }
 
     /// <summary>Asks the window FSM to fade its borders out; false when it has no such event.</summary>
@@ -1096,49 +962,13 @@ internal static class ShopCrestMenu
         }
     }
 
-    /// <summary>One line per hide: the flags that decide whether the restore ever runs.</summary>
-    private static void LogCloseStart()
-    {
-        try
-        {
-            Transform? listGroup = ListGroup();
-            Plugin.Log.LogInfo(
-                $"[SHOPDIAG] closeStart flags(hide={_hideStarted} leftovers={_leftoversHidden}" +
-                $" leftAlphas={LeftoverAlphas.Count} seenOpen={_windowSeenOpen})" +
-                $" rootAlpha={AlphaOf(_root):F2} listGroupActive={ActiveOf(listGroup)}" +
-                $" listGroupAlpha={AlphaOf(listGroup):F2} listChildren={ListChildren()}");
-        }
-        catch (Exception ex)
-        {
-            Plugin.Log.LogWarning($"[SHOPDIAG] close diag failed: {ex.Message}");
-        }
-    }
-
-    /// <summary>One line per restore: what is put back and what the window looks like now.</summary>
-    private static void LogRestoreDiag()
-    {
-        try
-        {
-            Transform? listGroup = ListGroup();
-            Plugin.Log.LogInfo(
-                $"[SHOPDIAG] restore flags(leftovers={_leftoversHidden}" +
-                $" leftAlphas={LeftoverAlphas.Count}) listGroupActive={ActiveOf(listGroup)}" +
-                $" listGroupAlpha={AlphaOf(listGroup):F2} prompts={PromptFlags()}" +
-                $" rootAlpha={AlphaOf(_root):F2}");
-        }
-        catch (Exception ex)
-        {
-            Plugin.Log.LogWarning($"[SHOPDIAG] restore diag failed: {ex.Message}");
-        }
-    }
-
     /// <summary>One line per session reset: the flags that must not leak into the next session.</summary>
     private static void LogResetDiag()
     {
         try
         {
             Plugin.Log.LogInfo(
-                $"[SHOPDIAG] resetSession hide={_hideStarted} leftovers={_leftoversHidden}" +
+                $"[SHOPDIAG] resetSession hide={_hideStarted}" +
                 $" seenOpen={_windowSeenOpen} teardown={_teardownCaptured}");
         }
         catch (Exception ex)
@@ -1285,15 +1115,14 @@ internal static class ShopCrestMenu
 
         _hideStarted = true;
         ShopCrestSchema.Hide();
-        HideLeftovers();
         Plugin.Log.LogInfo($"[SHOP] schema hidden at close start state='{state}'");
     }
 
     /// <summary>
     /// Hides the schema as soon as the window starts fading, whatever the FSM says: the
     /// schema lives outside the fade hierarchy and the window is gone before the FSM reaches
-    /// a terminal state. The rows follow for the same reason. Needs a fully shown window in
-    /// this session first, so the fade-in itself is not taken for a close.
+    /// a terminal state. Needs a fully shown window in this session first, so the fade-in
+    /// itself is not taken for a close.
     /// </summary>
     internal static void HideSchemaOnFade()
     {
@@ -1316,8 +1145,7 @@ internal static class ShopCrestMenu
 
         _hideStarted = true;
         ShopCrestSchema.Hide();
-        HideLeftovers(true);
-        Plugin.Log.LogInfo($"[SHOP] window fading, hiding schema and rows alpha={alpha:F2}");
+        Plugin.Log.LogInfo($"[SHOP] window fading, hiding schema alpha={alpha:F2}");
     }
 
     /// <summary>
@@ -1448,10 +1276,6 @@ internal static class ShopCrestMenu
         LogTickDiag(_diagFrames);
         ShopCrestSchema.Hide();
 
-        // The session is over: the window goes back to the vanilla shop, which needs the
-        // nodes the close start switched off. Hiding them here again is what left the
-        // vanilla trader with an empty frame until the next open of ours.
-        Step("leftovers", RestoreLeftovers);
         ShopInputLock.Unblock(reason);
         if (_stock == null)
         {
@@ -1982,8 +1806,6 @@ internal sealed class ShopCrestSession : MonoBehaviour
             {
                 ShopCrestMenu.HideSchemaAtCloseStart();
             }
-
-            ShopCrestMenu.RestoreLeftoversAfterFade();
 
             if (ShopCrestMenu.ClosedByFsm())
             {
