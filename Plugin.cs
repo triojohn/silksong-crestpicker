@@ -185,6 +185,15 @@ public sealed class Plugin : BaseUnityPlugin
 
         _harmony = new Harmony(PluginGuid);
         _harmony.PatchAll();
+        try
+        {
+            AlphaTrace.Apply(_harmony);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning($"[ALPHATRACE] apply failed: {ex.Message}");
+        }
+
         gameObject.AddComponent<ShopWatch>();
 
         Logger.LogInfo($"{PluginName} {PluginVersion} loaded.");

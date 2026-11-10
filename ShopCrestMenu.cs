@@ -894,6 +894,10 @@ internal static class ShopCrestMenu
             _fade.AlphaSelf = 1f;
             Plugin.Log.LogInfo($"[SHOP] root alpha raised at open was={before:F2}");
         }
+        catch (MissingReferenceException)
+        {
+            Plugin.Log.LogInfo("[SHOP] root alpha raise skipped: fade destroyed");
+        }
         catch (Exception ex)
         {
             Plugin.Log.LogWarning($"[SHOP] root alpha raise failed: {ex.Message}");
