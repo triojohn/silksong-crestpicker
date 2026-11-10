@@ -86,6 +86,9 @@ internal static class ShopCrestMenu
     /// <summary>True once this session started hiding the schema and the rows, whatever triggered it.</summary>
     private static bool _hideStarted;
 
+    /// <summary>True once the shared window panels were faded out for this close.</summary>
+    private static bool _panelsHidden;
+
     /// <summary>True once the root alpha reached 1 in this session, so a later drop means the close fade.</summary>
     private static bool _windowSeenOpen;
 
@@ -252,7 +255,6 @@ internal static class ShopCrestMenu
             ReviveTeardown();
             control.SendEvent(OpenEvent);
             _shopUp = Time.realtimeSinceStartup;
-            RaiseRootAlpha();
             LogOpenDiag(owner, control);
             int count = stock.GetItemCount();
 
@@ -876,35 +878,6 @@ internal static class ShopCrestMenu
     }
 
     /// <summary>
-    /// Raises the root alpha once when the window opens. Every row, the selector and both
-    /// prompts hang off this group, and a reused window can start the session at zero; the
-    /// vanilla open chain keeps tweening the value afterwards.
-    /// </summary>
-    private static void RaiseRootAlpha()
-    {
-        if (_fade == null)
-        {
-            Plugin.Log.LogInfo("[SHOP] root alpha raise skipped: no fade");
-            return;
-        }
-
-        try
-        {
-            float before = SafeAlpha(0f);
-            _fade.AlphaSelf = 1f;
-            Plugin.Log.LogInfo($"[SHOP] root alpha raised at open was={before:F2}");
-        }
-        catch (MissingReferenceException)
-        {
-            Plugin.Log.LogInfo("[SHOP] root alpha raise skipped: fade destroyed");
-        }
-        catch (Exception ex)
-        {
-            Plugin.Log.LogWarning($"[SHOP] root alpha raise failed: {ex.Message}");
-        }
-    }
-
-    /// <summary>
     /// Logs the one open timing line once the root alpha reached 1, i.e. when the vanilla
     /// open chain finished fading the window in.
     /// </summary>
@@ -1125,6 +1098,7 @@ internal static class ShopCrestMenu
 
         _hideStarted = true;
         ShopCrestSchema.Hide();
+        HideSharedPanels();
         Plugin.Log.LogInfo($"[SHOP] schema hidden at close start state='{state}'");
     }
 
@@ -1155,7 +1129,53 @@ internal static class ShopCrestMenu
 
         _hideStarted = true;
         ShopCrestSchema.Hide();
+        HideSharedPanels();
         Plugin.Log.LogInfo($"[SHOP] window fading, hiding schema alpha={alpha:F2}");
+    }
+
+    /// <summary>
+    /// Fades out the window panels the vanilla close timer never touches: the rows, the
+    /// selector, the confirm text and both action prompts keep <c>AlphaSelf</c> at 1 and
+    /// stay on screen after the window is gone. Nothing is remembered: the vanilla open
+    /// chain raises these groups itself on the next open.
+    /// </summary>
+    private static void HideSharedPanels()
+    {
+        if (_panelsHidden || _root == null)
+        {
+            return;
+        }
+
+        _panelsHidden = true;
+        int list = HideAlpha(ListGroup());
+        int details = HideAlpha(FindChild(_root, "Item Details"));
+        int confirm = HideAlpha(FindChild(_root, "Item Confirm Group"));
+        int cancel = HideAlpha(FindChild(_root, "Action Cancel"));
+        int confirmPrompt = HideAlpha(FindChild(_root, "Action Confirm"));
+        Plugin.Log.LogInfo(
+            $"[SHOP] panels hidden list={list} details={details} confirm={confirm}" +
+            $" cancel={cancel} promptGroups={cancel + confirmPrompt}");
+    }
+
+    /// <summary>Zeroes every fade group on a node and below; returns how many were touched.</summary>
+    private static int HideAlpha(Transform? node)
+    {
+        if (node == null)
+        {
+            return 0;
+        }
+
+        int hidden = 0;
+        foreach (NestedFadeGroupBase group in node.GetComponentsInChildren<NestedFadeGroupBase>(true))
+        {
+            if (group != null)
+            {
+                group.AlphaSelf = 0f;
+                hidden++;
+            }
+        }
+
+        return hidden;
     }
 
     /// <summary>
@@ -1375,6 +1395,7 @@ internal static class ShopCrestMenu
         _sawOpenState = false;
         _openReachedLogged = false;
         _hideStarted = false;
+        _panelsHidden = false;
         _windowSeenOpen = false;
         _closeDetectedLogged = false;
         SuppressDialogue = false;

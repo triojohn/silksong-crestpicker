@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Reflection;
 using System.Text;
@@ -19,7 +20,10 @@ internal static class AlphaTrace
     internal const string Tag = "[ALPHATRACE]";
 
     /// <summary>Lines allowed per scene, so a fading window cannot flood the log.</summary>
-    private const int LineLimit = 300;
+    private const int LineLimit = 2000;
+
+    /// <summary>A write closer than this to the last logged value is not worth a line.</summary>
+    private const float MinDelta = 0.001f;
 
     /// <summary>How many methods the caller chain shows.</summary>
     private const int StackFrames = 4;
@@ -28,6 +32,10 @@ internal static class AlphaTrace
     private const string WindowMark = "Shop Menu";
 
     private static int _lines;
+
+    /// <summary>Last logged value per fade group, so a repeated write stays silent.</summary>
+    private static readonly Dictionary<NestedFadeGroupBase, float> LastValue =
+        new Dictionary<NestedFadeGroupBase, float>();
 
     /// <summary>True once the limit line was written for this scene.</summary>
     private static bool _limitLogged;
@@ -78,6 +86,12 @@ internal static class AlphaTrace
                 _sceneHandle = handle;
                 _lines = 0;
                 _limitLogged = false;
+                LastValue.Clear();
+            }
+
+            if (LastValue.TryGetValue(__instance, out float last) && Math.Abs(__0 - last) < MinDelta)
+            {
+                return;
             }
 
             if (_limitLogged)
@@ -93,6 +107,7 @@ internal static class AlphaTrace
             }
 
             _lines++;
+            LastValue[__instance] = __0;
             Plugin.Log.LogInfo(Describe(transform, __0));
         }
         catch (Exception ex)

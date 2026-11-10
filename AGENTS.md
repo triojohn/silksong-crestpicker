@@ -4,7 +4,7 @@ BepInEx 5 плагин для Hollow Knight: Silksong (C#, .NET, Harmony) — с
 
 ## Оркестрация
 
-Конфиг агентов — `opencode.json` в корне папки. Промпты живут в пакете оркестратора: `C:/aaz_vault/10-projects/opencode-orchestrator/package/agent/`. Здесь их не копируем и не правим.
+Конфиг агентов — глобальный `C:\Users\trioj\.config\opencode\opencode.jsonc` (V2-ключ `agents`). Проектного `opencode.json` нет, права только глобальные; исключений проект не добавляет. Промпты живут в пакете оркестратора: `C:/aaz_vault/10-projects/opencode-orchestrator/package/agent/`. Здесь их не копируем и не правим.
 
 ## Права и владение файлами
 
