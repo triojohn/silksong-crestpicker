@@ -56,6 +56,7 @@ public sealed class Plugin : BaseUnityPlugin
     private ConfigEntry<KeyboardShortcut> _testHotkey = null!;
     private ConfigEntry<KeyboardShortcut> _shopDumpHotkey = null!;
     private ConfigEntry<KeyboardShortcut> _spriteDumpHotkey = null!;
+    private ConfigEntry<KeyboardShortcut> _ownWindowHotkey = null!;
     private ConfigEntry<bool> _showCrestSchema = null!;
     private ConfigEntry<SchemaRenderMode> _schemaRender = null!;
     private ConfigEntry<float> _crestSchemaScale = null!;
@@ -102,6 +103,8 @@ public sealed class Plugin : BaseUnityPlugin
             "Клавиша дампа живого магазина (объекты, FSM, строки)");
         _spriteDumpHotkey = Config.Bind("General", "SpriteDumpHotkey", new KeyboardShortcut(KeyCode.F10),
             "Клавиша дампа спрайтов гребней в PNG (C:\\Users\\trioj\\Downloads\\silksong_sprites)");
+        _ownWindowHotkey = Config.Bind("General", "OwnWindowHotkey", new KeyboardShortcut(KeyCode.F7),
+            "Клавиша спавна собственного окна магазина (клон префаба, ничего не открывает)");
         _useLiveShop = Config.Bind("General", "UseLiveShop", true,
             "Показывать выбор знака в настоящем окне магазина (сток и позиция восстанавливаются)");
         _showCrestSchema = Config.Bind("General", "ShowCrestSchema", true,
@@ -217,6 +220,12 @@ public sealed class Plugin : BaseUnityPlugin
             ShopDiag.DumpLiveShop();
             ShopTrace.Begin("hotkey");
             ShopRenderDiag.Capture("hotkey", null);
+        }
+
+        if (_ownWindowHotkey.Value.IsDown())
+        {
+            Log.LogInfo($"[OWN] Hotkey {_ownWindowHotkey.Value} pressed: spawn shop window clone.");
+            OwnShopWindow.TrySpawn();
         }
 
         if (_spriteDumpHotkey.Value.IsDown())

@@ -292,3 +292,9 @@ verify: pending
 - статус: `not_run`
 - команды и точный вывод: —
 - замечания: этап 0 (T3) — обязательный гейт: без вердикта по изоляции `BroadcastAll` этап 1 не начинать.
+
+### 2026-11-10 — реализация T1–T2 (этап 0)
+
+- T1: `passed` по декомпилу `%TEMP%\opencode\silksong\dec\ShopOwnerBase.cs:6–7` — поле префаба `private ShopMenuStock shopPrefab` (`[SerializeField]`, экземплярное, не статическое). Живая сборка рефлексией не перепроверялась; `FieldInfo` создаётся с `BindingFlags.Instance | NonPublic`.
+- T2: `not_run` в игре. Сделано: `OwnShopWindow.TrySpawn()` по хоткею `General/OwnWindowHotkey` (F7) — `Instantiate` префаба в контейнер `CrestPicker Shop Window`, корень `CrestPicker Shop Menu`, ссылка в статическом `Current` с null-проверкой; повторный F7 при живом клоне печатает `[OWN] clone already alive`; логи `[OWN] prefab ok '<name>'`, `[OWN] clone spawned path='...' stock=<n>`, `[OWN] clone spawn failed: <reason>`. Сток, позиция и FSM не трогаются.
+- T2 команды: `dotnet build -c Release` — 0 предупреждений, 0 ошибок; `dotnet test CrestPicker.Tests` — 82/82 пройдено. DLL скопирован в `BepInEx/plugins` (хеш совпадает с `bin/Release`).
