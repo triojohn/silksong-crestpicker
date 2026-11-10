@@ -1,5 +1,6 @@
 using System;
 using System.Text;
+using CrestPicker.Pure;
 using HutongGames.PlayMaker;
 using TeamCherry.NestedFadeGroup;
 using TMProOld;
@@ -9,9 +10,9 @@ namespace CrestPicker;
 
 /// <summary>
 /// Watches the shared shop window for the whole session: samples it twice a second and
-/// logs a line only when one of the watched fields changes. This is what shows what
-/// happens to the window between our picker sessions and when the vanilla shopkeeper
-/// opens it. Read-only, never throws.
+/// logs a line only when one of the watched fields changes. Pins the fade alphas the
+/// vanilla shop leaves at zero: the close timer drops the root alpha and the open chain
+/// raises only <c>Window</c>, never the root or the panels. Never throws.
 /// </summary>
 internal sealed class ShopWatch : MonoBehaviour
 {
@@ -38,6 +39,12 @@ internal sealed class ShopWatch : MonoBehaviour
 
     /// <summary>Unscaled time of the next sample.</summary>
     private float _nextPoll;
+
+    /// <summary>State the root alpha was last pinned in, so the pin is logged once per state.</summary>
+    private string _pinnedState = string.Empty;
+
+    /// <summary>True once the panels were restored in this window session.</summary>
+    private bool _panelsRestored;
 
     private void Update()
     {
@@ -78,9 +85,12 @@ internal sealed class ShopWatch : MonoBehaviour
 
             _windowId = id;
             _last = string.Empty;
+            _pinnedState = string.Empty;
+            _panelsRestored = false;
             Note(true, "[WATCH] window found");
         }
 
+        Apply(_window.transform);
         string line = Describe(_window.transform);
         if (line == _last)
         {
@@ -89,6 +99,67 @@ internal sealed class ShopWatch : MonoBehaviour
 
         _last = line;
         Plugin.Log.LogInfo(line);
+    }
+
+    /// <summary>
+    /// Writes back the alphas the vanilla shop leaves at zero: the root fade group is
+    /// pinned while the window is live, and the panels are raised once per window session.
+    /// Panels wait for <c>winAlpha &gt; 0.5</c> so a close, where the window fades first,
+    /// never gets a flashed panel.
+    /// </summary>
+    private void Apply(Transform root)
+    {
+        string state = State(root);
+        float alpha = Alpha(root);
+        if (WindowPinPolicy.ShouldPinRoot(state) && alpha < 1f)
+        {
+            NestedFadeGroupBase? group = FadeGroup(root);
+            if (group != null)
+            {
+                group.AlphaSelf = 1f;
+                if (_pinnedState != state)
+                {
+                    _pinnedState = state;
+                    Plugin.Log.LogInfo($"[WATCH] root pinned to 1 state='{state}' was={alpha:F2}");
+                }
+            }
+        }
+
+        if (!WindowPinPolicy.ShouldRestorePanels(state, _panelsRestored))
+        {
+            return;
+        }
+
+        if (Alpha(root.Find("Window")) <= 0.5f)
+        {
+            return;
+        }
+
+        if (RaisePanels(root))
+        {
+            _panelsRestored = true;
+            Plugin.Log.LogInfo($"[WATCH] panels restored state='{state}'");
+        }
+    }
+
+    /// <summary>Sets every zeroed panel fade group back to one; false when none was zero.</summary>
+    private static bool RaisePanels(Transform root)
+    {
+        bool raised = false;
+        foreach (string name in ShopPanelPolicy.PanelsHiddenOnClose)
+        {
+            Transform? node = name == "Item List Group" ? root.Find(name) : FindChild(root, name);
+            NestedFadeGroupBase? group = FadeGroup(node);
+            if (group == null || group.AlphaSelf > 0.0001f)
+            {
+                continue;
+            }
+
+            group.AlphaSelf = 1f;
+            raised = true;
+        }
+
+        return raised;
     }
 
     /// <summary>Logs a presence line only when the presence changed.</summary>
