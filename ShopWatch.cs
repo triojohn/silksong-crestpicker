@@ -2,6 +2,7 @@ using System;
 using System.Text;
 using HutongGames.PlayMaker;
 using TeamCherry.NestedFadeGroup;
+using TMProOld;
 using UnityEngine;
 
 namespace CrestPicker;
@@ -107,6 +108,10 @@ internal sealed class ShopWatch : MonoBehaviour
     {
         Transform? window = root.Find("Window");
         Transform? listGroup = root.Find("Item List Group");
+        Transform? details = FindChild(root, "Item Details");
+        Transform? confirm = FindChild(root, "Item Confirm Group");
+        Transform? cancel = FindChild(root, "Action Cancel");
+        Transform? confirmAction = FindChild(root, "Action Confirm");
         StringBuilder line = new StringBuilder("[WATCH] ");
         line.Append($"alpha={Alpha(root):F2}");
         line.Append($" winAlpha={Alpha(window):F2}");
@@ -114,6 +119,10 @@ internal sealed class ShopWatch : MonoBehaviour
         line.Append($" state='{State(root)}'");
         line.Append($" listAlpha={Alpha(listGroup):F2}");
         line.Append($" listActive={listGroup != null && listGroup.gameObject.activeSelf}");
+        line.Append($" detailsAlpha={Alpha(details):F2}");
+        line.Append($" confirmAlpha={Alpha(confirm):F2}");
+        line.Append($" cancelAlpha={Alpha(cancel):F2}");
+        line.Append($" confirmText='{ConfirmText(confirmAction)}'");
         line.Append($" rootPos={Vec(root.position)}");
         line.Append($" ourOpen={ShopCrestMenu.OurOpen}");
         line.Append($" ourClosing={ShopCrestMenu.OurClosing}");
@@ -151,6 +160,41 @@ internal sealed class ShopWatch : MonoBehaviour
 
         NestedFadeGroupBase? group = node.GetComponent<NestedFadeGroupBase>();
         return group != null ? group : node.GetComponentInChildren<NestedFadeGroupBase>(true);
+    }
+
+    /// <summary>First child with this name anywhere under the root, inactive ones included.</summary>
+    private static Transform? FindChild(Transform root, string name)
+    {
+        foreach (Transform child in root.GetComponentsInChildren<Transform>(true))
+        {
+            if (child != null && child.name == name)
+            {
+                return child;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// First text of a node, cut to the first 24 characters with line breaks escaped,
+    /// <c>none</c> when the node or its text is absent.
+    /// </summary>
+    private static string ConfirmText(Transform? node)
+    {
+        TMP_Text? text = node != null ? node.GetComponentInChildren<TMP_Text>(true) : null;
+        if (text == null)
+        {
+            return "none";
+        }
+
+        string value = text.text ?? string.Empty;
+        if (value.Length > 24)
+        {
+            value = value.Substring(0, 24);
+        }
+
+        return value.Replace("\r", string.Empty).Replace("\n", "\\n");
     }
 
     /// <summary>Name of the live shop owner, <c>none</c> when nothing owns the window.</summary>
