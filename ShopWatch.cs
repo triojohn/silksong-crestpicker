@@ -103,15 +103,17 @@ internal sealed class ShopWatch : MonoBehaviour
 
     /// <summary>
     /// Writes back the alphas the vanilla shop leaves at zero: the root fade group is
-    /// pinned while the window is visible, and the panels are raised once per window session.
-    /// Both key off <c>winAlpha</c>, not the FSM state: while the window fades out the watcher
-    /// writes nothing, so the vanilla close timer can drive the fade to zero.
+    /// pinned while the window is open, and the panels are raised once per window session.
+    /// Both key off the <c>shop_control</c> state, not <c>winAlpha</c>: the fade alpha of a
+    /// closed window stays at one, so it cannot tell open from closed, and while the window
+    /// fades out the watcher writes nothing, so the vanilla close timer can drive the fade
+    /// to zero.
     /// </summary>
     private void Apply(Transform root)
     {
-        float winAlpha = Alpha(root.Find("Window"));
+        string state = State(root);
         float alpha = Alpha(root);
-        if (WindowPinPolicy.ShouldPinRoot(winAlpha) && alpha < 1f)
+        if (WindowPinPolicy.ShouldPinRoot(state) && alpha < 1f)
         {
             NestedFadeGroupBase? group = FadeGroup(root);
             if (group != null)
@@ -120,12 +122,12 @@ internal sealed class ShopWatch : MonoBehaviour
                 if (!_rootPinned)
                 {
                     _rootPinned = true;
-                    Plugin.Log.LogInfo($"[WATCH] root pinned to 1 winAlpha={winAlpha:F2} was={alpha:F2}");
+                    Plugin.Log.LogInfo($"[WATCH] root pinned to 1 state='{state}' was={alpha:F2}");
                 }
             }
         }
 
-        if (!WindowPinPolicy.ShouldRestorePanels(winAlpha, _panelsRestored))
+        if (!WindowPinPolicy.ShouldRestorePanels(state, _panelsRestored))
         {
             return;
         }
@@ -133,7 +135,7 @@ internal sealed class ShopWatch : MonoBehaviour
         if (RaisePanels(root))
         {
             _panelsRestored = true;
-            Plugin.Log.LogInfo($"[WATCH] panels restored winAlpha={winAlpha:F2}");
+            Plugin.Log.LogInfo($"[WATCH] panels restored state='{state}'");
         }
     }
 
