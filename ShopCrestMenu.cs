@@ -255,7 +255,6 @@ internal static class ShopCrestMenu
             ReviveTeardown();
             control.SendEvent(OpenEvent);
             _shopUp = Time.realtimeSinceStartup;
-            RaiseRootAlpha("open");
             LogOpenDiag(owner, control);
             int count = stock.GetItemCount();
 
@@ -879,38 +878,6 @@ internal static class ShopCrestMenu
     }
 
     /// <summary>
-    /// Puts the root alpha back to one: once at the open, and again after the FSM has
-    /// returned to idle. The vanilla close timer leaves the root near zero while the
-    /// window is hidden, and the next open chain does not raise it, so every later window
-    /// starts almost invisible. Only the root group is written here; the rows, the
-    /// selector and the prompts are faded separately by <see cref="HideSharedPanels"/>.
-    /// </summary>
-    /// <param name="phase">Where the raise happened: <c>open</c> or <c>close</c>.</param>
-    private static void RaiseRootAlpha(string phase)
-    {
-        if (_fade == null)
-        {
-            Plugin.Log.LogInfo("[SHOP] root alpha raise skipped: fade destroyed");
-            return;
-        }
-
-        try
-        {
-            float before = SafeAlpha(0f);
-            _fade.AlphaSelf = 1f;
-            Plugin.Log.LogInfo($"[SHOP] root alpha raised at {phase} was={before:F2}");
-        }
-        catch (MissingReferenceException)
-        {
-            Plugin.Log.LogInfo("[SHOP] root alpha raise skipped: fade destroyed");
-        }
-        catch (Exception ex)
-        {
-            Plugin.Log.LogWarning($"[SHOP] root alpha raise failed: {ex.Message}");
-        }
-    }
-
-    /// <summary>
     /// Logs the one open timing line once the root alpha reached 1, i.e. when the vanilla
     /// open chain finished fading the window in.
     /// </summary>
@@ -1388,17 +1355,8 @@ internal static class ShopCrestMenu
         }
         finally
         {
-            bool wasOpen = IsOpen;
             IsOpen = false;
             CrestSelectMenu.IsOpen = false;
-
-            // The vanilla close faded the window already: the root alpha goes back to one so
-            // the next shop does not open almost invisible. The panels were faded separately.
-            if (wasOpen && !emergency)
-            {
-                RaiseRootAlpha("close");
-            }
-
             ResetSession();
             _closing = false;
         }
