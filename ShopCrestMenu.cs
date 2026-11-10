@@ -1139,22 +1139,22 @@ internal static class ShopCrestMenu
     /// stay on screen after the window is gone. Nothing is remembered: the vanilla open
     /// chain raises these groups itself on the next open.
     /// </summary>
-    private static void HideSharedPanels()
+    private static void HideSharedPanels(bool opening = false)
     {
-        if (_panelsHidden || _root == null)
+        if (_root == null || !ShopPanelPolicy.ShouldHidePanels(opening, _panelsHidden))
         {
             return;
         }
 
         _panelsHidden = true;
-        int list = HideAlpha(ListGroup());
-        int details = HideAlpha(FindChild(_root, "Item Details"));
-        int confirm = HideAlpha(FindChild(_root, "Item Confirm Group"));
-        int cancel = HideAlpha(FindChild(_root, "Action Cancel"));
-        int confirmPrompt = HideAlpha(FindChild(_root, "Action Confirm"));
-        Plugin.Log.LogInfo(
-            $"[SHOP] panels hidden list={list} details={details} confirm={confirm}" +
-            $" cancel={cancel} promptGroups={cancel + confirmPrompt}");
+        List<string> hidden = new List<string>();
+        foreach (string name in ShopPanelPolicy.PanelsHiddenOnClose)
+        {
+            Transform? node = name == "Item List Group" ? ListGroup() : FindChild(_root, name);
+            hidden.Add($"{HideAlpha(node)}={name}");
+        }
+
+        Plugin.Log.LogInfo($"[SHOP] panels hidden {string.Join(" ", hidden)}");
     }
 
     /// <summary>Zeroes every fade group on a node and below; returns how many were touched.</summary>
