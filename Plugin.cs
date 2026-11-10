@@ -185,6 +185,7 @@ public sealed class Plugin : BaseUnityPlugin
 
         _harmony = new Harmony(PluginGuid);
         _harmony.PatchAll();
+        gameObject.AddComponent<ShopWatch>();
 
         Logger.LogInfo($"{PluginName} {PluginVersion} loaded.");
     }

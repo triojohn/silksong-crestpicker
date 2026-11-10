@@ -152,6 +152,12 @@ internal static class ShopCrestMenu
     /// <summary>True while the live shop window is showing our crests.</summary>
     internal static bool IsOpen { get; set; }
 
+    /// <summary>Read-only view of <see cref="IsOpen"/> for the shop window watchdog.</summary>
+    public static bool OurOpen => IsOpen;
+
+    /// <summary>Read-only view of the close-in-progress flag for the shop window watchdog.</summary>
+    public static bool OurClosing => _closing;
+
     /// <summary>
     /// True while the live shop window is ours: NPC dialogue must not pop up over it.
     /// Set before the open event is sent, cleared when the session is reset.
