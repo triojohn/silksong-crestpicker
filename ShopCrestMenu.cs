@@ -183,45 +183,40 @@ internal static class ShopCrestMenu
         _openStart = Time.realtimeSinceStartup;
         try
         {
-            ShopOwnerBase? owner = FindLiveOwner();
-            if (owner == null)
-            {
-                return Fallback("no live ShopOwnerBase in scene");
-            }
-
-            ShopMenuStock? stock = SpawnedStock() ?? FallbackStock(owner);
+            ShopMenuStock? stock = OwnShopWindow.Current;
             if (stock == null)
             {
-                return Fallback($"'{owner.name}' has no spawned shop window");
+                OwnShopWindow.TrySpawn();
+                stock = OwnShopWindow.Current;
+            }
+
+            ShopOwnerBase? owner = OwnShopWindow.Owner;
+            if (stock == null || owner == null)
+            {
+                return Fail("own shop window unavailable");
             }
 
             GameObject root = stock.gameObject;
             if (!root.activeInHierarchy)
             {
-                return Fallback($"shop window '{root.name}' is inactive");
+                return Fail($"own shop window '{root.name}' is inactive");
             }
 
             PlayMakerFSM? control = ControlFsm(root);
             if (control == null)
             {
-                return Fallback($"'{root.name}' has no PlayMakerFSM '{ControlFsmName}'");
+                return Fail($"'{root.name}' has no PlayMakerFSM '{ControlFsmName}'");
             }
 
             string state = ActiveState(control);
             if (state != IdleState)
             {
-                return Fallback($"'{ControlFsmName}' is in state '{state}', not '{IdleState}'");
+                return Fail($"'{ControlFsmName}' is in state '{state}', not '{IdleState}'");
             }
 
             if (!HasEvent(control, OpenEvent))
             {
-                return Fallback($"'{ControlFsmName}' has no '{OpenEvent}' transition");
-            }
-
-            ShopItem[]? origStock = StockArrayField?.GetValue(stock) as ShopItem[];
-            if (origStock == null || origStock.Length == 0)
-            {
-                return Fallback("live shop has no stock array");
+                return Fail($"'{ControlFsmName}' has no '{OpenEvent}' transition");
             }
 
             _stock = stock;
@@ -233,12 +228,17 @@ internal static class ShopCrestMenu
             _fromDialogue = fromDialogue;
             SuppressDialogue = true;
 
+            if (OwnShopWindow.Title is { Length: > 0 } title)
+            {
+                stock.Title = title;
+            }
+
             SwapStock(BuildItems());
             BuildLists();
             _stockReady = Time.realtimeSinceStartup;
             if (stock.GetItemCount() == 0)
             {
-                return Fallback("live shop built an empty item list");
+                return Fail("own shop built an empty item list");
             }
 
             // The open event runs FSM actions that read ShopObject, and that getter
@@ -257,13 +257,15 @@ internal static class ShopCrestMenu
 
             ShopCosmetics.Begin(root.transform);
             root.AddComponent<ShopCrestSession>();
+            Plugin.Log.LogInfo(
+                $"[OWN] session opened items={count} state='{ActiveState(control)}'");
             LogState($"opened with {count} crest entries");
             return true;
         }
         catch (Exception ex)
         {
             Restore("open exception");
-            return Fallback($"{ex.GetType().Name}: {ex.Message}");
+            return Fail($"{ex.GetType().Name}: {ex.Message}");
         }
         finally
         {
@@ -1720,6 +1722,13 @@ internal static class ShopCrestMenu
         IsOpen = false;
         Plugin.Log.LogWarning($"[SHOP] fallback to custom menu: {reason}");
         return false;
+    }
+
+    /// <summary>Logs why our own shop window could not be opened, then falls back.</summary>
+    private static bool Fail(string reason)
+    {
+        Plugin.Log.LogWarning($"[OWN] open failed: {reason}");
+        return Fallback(reason);
     }
 
     private static string Vec(Vector3 value)

@@ -1,5 +1,7 @@
 using System;
 using System.Reflection;
+using CrestPicker.Pure;
+using TeamCherry.Localization;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 
@@ -8,7 +10,8 @@ namespace CrestPicker;
 /// <summary>
 /// Own instance of the vanilla shop window, spawned from the live
 /// <see cref="ShopOwnerBase"/> prefab. The clone is independent of the scene's shared
-/// window: nothing is opened, the stock is not touched and the position is not moved.
+/// window: a session swaps the clone's own stock and moves the clone, never the vanilla
+/// object.
 /// Never throws.
 /// </summary>
 internal static class OwnShopWindow
@@ -22,8 +25,9 @@ internal static class OwnShopWindow
     private static readonly FieldInfo? StockArrayField =
         typeof(ShopMenuStock).GetField("stock", PrivateInstance);
 
-    /// <summary>Clone root name; must not match the vanilla <c>Shop Menu(Clone)</c>.</summary>
-    private const string RootName = "CrestPicker Shop Menu";
+    /// <summary>Title field the vanilla owner copies onto its own window.</summary>
+    private static readonly FieldInfo? ShopTitleField =
+        typeof(ShopOwnerBase).GetField("shopTitle", PrivateInstance);
 
     /// <summary>Scene container the clone is parented to, so it stays a separate root.</summary>
     private const string ContainerName = "CrestPicker Shop Window";
@@ -37,6 +41,30 @@ internal static class OwnShopWindow
     /// <summary>Scene handle the clone belongs to; 0 when no clone was spawned.</summary>
     internal static int SceneHandle { get; private set; }
 
+    /// <summary>Instance id of the owner the clone was spawned for; 0 when none.</summary>
+    internal static int OwnerId { get; private set; }
+
+    /// <summary>
+    /// Shop title of the owner, the text the vanilla window shows. Empty when the
+    /// field cannot be read, so the caller keeps whatever the clone already has.
+    /// </summary>
+    internal static string Title
+    {
+        get
+        {
+            try
+            {
+                return ShopTitleField?.GetValue(Owner) is LocalisedString title
+                    ? (string)title
+                    : string.Empty;
+            }
+            catch (Exception)
+            {
+                return string.Empty;
+            }
+        }
+    }
+
     private static GameObject? _container;
 
     /// <summary>Drops the reference once the clone is gone; call every frame.</summary>
@@ -47,7 +75,10 @@ internal static class OwnShopWindow
             return;
         }
 
-        if (Current != null && Owner != null)
+        int ownerId = Owner != null ? Owner.GetInstanceID() : 0;
+        bool stale = OwnWindowPolicy.ShouldRebuild(
+            SceneHandle, SceneManager.GetActiveScene().handle, OwnerId, ownerId);
+        if (Current != null && !stale)
         {
             return;
         }
@@ -63,7 +94,7 @@ internal static class OwnShopWindow
             return "scene";
         }
 
-        return Owner == null ? "owner" : "external";
+        return Owner == null || Owner.GetInstanceID() != OwnerId ? "owner" : "external";
     }
 
     /// <summary>Spawns the clone once; a live clone is left untouched.</summary>
@@ -96,11 +127,12 @@ internal static class OwnShopWindow
             // Scene object: unloaded together with the scene, never DontDestroyOnLoad.
             GameObject container = new GameObject(ContainerName);
             ShopMenuStock clone = UnityEngine.Object.Instantiate(prefab, container.transform);
-            clone.gameObject.name = RootName;
+            clone.gameObject.name = OwnWindowPolicy.RootName;
             _container = container;
             Current = clone;
             Owner = owner;
             SceneHandle = owner.gameObject.scene.handle;
+            OwnerId = owner.GetInstanceID();
             Plugin.Log.LogInfo(
                 $"[OWN] clone spawned path='{PathOf(clone.transform)}' stock={StockCount(clone)}");
         }
@@ -109,6 +141,7 @@ internal static class OwnShopWindow
             Current = null;
             Owner = null;
             SceneHandle = 0;
+            OwnerId = 0;
             _container = null;
             Fail(ex.Message);
         }
@@ -136,6 +169,7 @@ internal static class OwnShopWindow
         Current = null;
         Owner = null;
         SceneHandle = 0;
+        OwnerId = 0;
         _container = null;
         Plugin.Log.LogInfo($"[OWN] released reason={reason}");
     }
