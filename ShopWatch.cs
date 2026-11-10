@@ -40,8 +40,8 @@ internal sealed class ShopWatch : MonoBehaviour
     /// <summary>Unscaled time of the next sample.</summary>
     private float _nextPoll;
 
-    /// <summary>True once the root alpha was pinned in this window session.</summary>
-    private bool _rootPinned;
+    /// <summary>State the root alpha was last pinned in, so the pin is logged once per state.</summary>
+    private string _pinnedState = string.Empty;
 
     /// <summary>True once the panels were restored in this window session.</summary>
     private bool _panelsRestored;
@@ -85,7 +85,7 @@ internal sealed class ShopWatch : MonoBehaviour
 
             _windowId = id;
             _last = string.Empty;
-            _rootPinned = false;
+            _pinnedState = string.Empty;
             _panelsRestored = false;
             Note(true, "[WATCH] window found");
         }
@@ -103,29 +103,34 @@ internal sealed class ShopWatch : MonoBehaviour
 
     /// <summary>
     /// Writes back the alphas the vanilla shop leaves at zero: the root fade group is
-    /// pinned while the window is visible, and the panels are raised once per window session.
-    /// Both key off <c>winAlpha</c>, not the FSM state: while the window fades out the watcher
-    /// writes nothing, so the vanilla close timer can drive the fade to zero.
+    /// pinned while the window is live, and the panels are raised once per window session.
+    /// Panels wait for <c>winAlpha &gt; 0.5</c> so a close, where the window fades first,
+    /// never gets a flashed panel.
     /// </summary>
     private void Apply(Transform root)
     {
-        float winAlpha = Alpha(root.Find("Window"));
+        string state = State(root);
         float alpha = Alpha(root);
-        if (WindowPinPolicy.ShouldPinRoot(winAlpha) && alpha < 1f)
+        if (WindowPinPolicy.ShouldPinRoot(state) && alpha < 1f)
         {
             NestedFadeGroupBase? group = FadeGroup(root);
             if (group != null)
             {
                 group.AlphaSelf = 1f;
-                if (!_rootPinned)
+                if (_pinnedState != state)
                 {
-                    _rootPinned = true;
-                    Plugin.Log.LogInfo($"[WATCH] root pinned to 1 winAlpha={winAlpha:F2} was={alpha:F2}");
+                    _pinnedState = state;
+                    Plugin.Log.LogInfo($"[WATCH] root pinned to 1 state='{state}' was={alpha:F2}");
                 }
             }
         }
 
-        if (!WindowPinPolicy.ShouldRestorePanels(winAlpha, _panelsRestored))
+        if (!WindowPinPolicy.ShouldRestorePanels(state, _panelsRestored))
+        {
+            return;
+        }
+
+        if (Alpha(root.Find("Window")) <= 0.5f)
         {
             return;
         }
@@ -133,7 +138,7 @@ internal sealed class ShopWatch : MonoBehaviour
         if (RaisePanels(root))
         {
             _panelsRestored = true;
-            Plugin.Log.LogInfo($"[WATCH] panels restored winAlpha={winAlpha:F2}");
+            Plugin.Log.LogInfo($"[WATCH] panels restored state='{state}'");
         }
     }
 
