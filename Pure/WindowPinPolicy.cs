@@ -1,16 +1,31 @@
 namespace CrestPicker.Pure;
 
 /// <summary>
-/// Whether the shared shop window root alpha must be written to zero.
-/// Vanilla only drives the root <c>AlphaSelf</c>, and only one direction is ours:
-/// we push it down after idle, vanilla fades it up when it opens the window.
+/// Which alpha the shared shop window root must hold, per FSM state.
+/// Vanilla drives the root <c>AlphaSelf</c>; we only write it in settled states,
+/// so its own fades stay untouched.
 /// Free of Unity types so it can be unit tested.
 /// </summary>
 public static class WindowPinPolicy
 {
-    /// <summary>True only in the exact <c>Idle</c> state.</summary>
-    public static bool ShouldPinToZero(string? state)
+    /// <summary>
+    /// Target root alpha: <c>1</c> in the settled <c>Open</c> state, <c>0</c> in
+    /// <c>Idle</c>, <c>null</c> anywhere else. Every transitional state
+    /// (<c>Open Window</c>, <c>Item List Up</c>, <c>Down</c>, <c>Close*</c>,
+    /// <c>Special Close</c>) returns <c>null</c> and is left alone.
+    /// </summary>
+    public static float? RootTarget(string? fsmState)
     {
-        return state == "Idle";
+        if (fsmState == "Open")
+        {
+            return 1f;
+        }
+
+        if (fsmState == "Idle")
+        {
+            return 0f;
+        }
+
+        return null;
     }
 }

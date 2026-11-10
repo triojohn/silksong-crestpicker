@@ -12,7 +12,8 @@ namespace CrestPicker;
 /// Watches the shared shop window for the whole session: samples it twice a second and
 /// logs a line only when one of the watched fields changes. This is what shows what
 /// happens to the window between our picker sessions and when the vanilla shopkeeper
-/// opens it. Also pins the root fade alpha to zero while the window is idle.
+/// opens it. Also pins the root fade alpha in the settled states only: zero while idle,
+/// full while open.
 /// Never throws.
 /// </summary>
 internal sealed class ShopWatch : MonoBehaviour
@@ -95,14 +96,15 @@ internal sealed class ShopWatch : MonoBehaviour
     }
 
     /// <summary>
-    /// Pushes the root fade alpha down to zero once the window is idle. One direction only:
-    /// vanilla wakes the window up from zero itself, so writing <c>1</c> here would race
-    /// its own fade-in. The child panels are left alone.
+    /// Pins the root fade alpha only in settled states: <c>0</c> when idle, <c>1</c> when open.
+    /// Transitional states are skipped so vanilla's own open and close fades run untouched.
+    /// The child panels are left alone.
     /// </summary>
     private static void PinRoot(Transform root)
     {
         string state = State(root);
-        if (!WindowPinPolicy.ShouldPinToZero(state))
+        float? target = WindowPinPolicy.RootTarget(state);
+        if (target == null)
         {
             return;
         }
@@ -114,13 +116,13 @@ internal sealed class ShopWatch : MonoBehaviour
         }
 
         float alpha = group.AlphaSelf;
-        if (alpha <= 0.001f)
+        if (Mathf.Abs(alpha - target.Value) <= 0.001f)
         {
             return;
         }
 
-        group.AlphaSelf = 0f;
-        Plugin.Log.LogInfo($"[WATCH] root pinned 0 state='{state}' was={alpha:F2}");
+        group.AlphaSelf = target.Value;
+        Plugin.Log.LogInfo($"[WATCH] root pinned {target.Value:F2} state='{state}' was={alpha:F2}");
     }
 
     /// <summary>Logs a presence line only when the presence changed.</summary>
