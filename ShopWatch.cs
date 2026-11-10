@@ -10,22 +10,14 @@ namespace CrestPicker;
 
 /// <summary>
 /// Watches the shared shop window for the whole session: samples it twice a second and
-/// logs a line only when one of the watched fields changes. Pins the fade alpha the vanilla
-/// shop leaves at zero and writes back the panel snapshot the last close took: the close
-/// timer drops the root alpha and the open chain raises only <c>Window</c>, never the root
-/// or the nested panels. Never throws.
+/// logs a line only when one of the watched fields changes. Pins the fade alphas the
+/// vanilla shop leaves at zero: the close timer drops the root alpha and the open chain
+/// raises only <c>Window</c>, never the root or the panels. Never throws.
 /// </summary>
 internal sealed class ShopWatch : MonoBehaviour
 {
     /// <summary>Seconds between two samples.</summary>
     private const float PollInterval = 0.5f;
-
-    /// <summary>
-    /// Seconds the window must stay in an open state before the panel snapshot is written
-    /// back: the vanilla open chain raises the outer groups itself, and its writes must land
-    /// first or they overwrite the snapshot values we just put back.
-    /// </summary>
-    private const float RestoreDelay = 0.5f;
 
     /// <summary>Name of the spawned shop window in the scene.</summary>
     private const string WindowName = "Shop Menu(Clone)";
@@ -51,14 +43,8 @@ internal sealed class ShopWatch : MonoBehaviour
     /// <summary>True once the root alpha was pinned in this window session.</summary>
     private bool _rootPinned;
 
-    /// <summary>True once the panel snapshot was written back for the current open.</summary>
+    /// <summary>True once the panels were restored in this window session.</summary>
     private bool _panelsRestored;
-
-    /// <summary>Unscaled time the state entered an open state; valid only while open.</summary>
-    private float _openSince;
-
-    /// <summary>True while the last sample saw an open state.</summary>
-    private bool _sawOpenState;
 
     private void Update()
     {
@@ -101,8 +87,6 @@ internal sealed class ShopWatch : MonoBehaviour
             _last = string.Empty;
             _rootPinned = false;
             _panelsRestored = false;
-            _openSince = 0f;
-            _sawOpenState = false;
             Note(true, "[WATCH] window found");
         }
 
@@ -119,14 +103,11 @@ internal sealed class ShopWatch : MonoBehaviour
 
     /// <summary>
     /// Writes back the alphas the vanilla shop leaves at zero: the root fade group is
-    /// pinned while the window is open, and the panels hidden by the last close are
-    /// restored once per open. Both key off the <c>shop_control</c> state, not
-    /// <c>winAlpha</c>: the fade alpha of a closed window stays at one, so it cannot tell
-    /// open from closed, and while the window fades out the watcher writes nothing, so the
-    /// vanilla close timer can drive the fade to zero. The restore waits
-    /// <see cref="RestoreDelay"/> so the vanilla open chain finishes its own writes first;
-    /// raising the panels to one here would put the confirmation group the open chain just
-    /// zeroed back on screen before anything was bought.
+    /// pinned while the window is open, and the panels are raised once per window session.
+    /// Both key off the <c>shop_control</c> state, not <c>winAlpha</c>: the fade alpha of a
+    /// closed window stays at one, so it cannot tell open from closed, and while the window
+    /// fades out the watcher writes nothing, so the vanilla close timer can drive the fade
+    /// to zero.
     /// </summary>
     private void Apply(Transform root)
     {
@@ -146,28 +127,36 @@ internal sealed class ShopWatch : MonoBehaviour
             }
         }
 
-        if (!WindowPinPolicy.IsOpenState(state))
-        {
-            _sawOpenState = false;
-            _panelsRestored = false;
-            return;
-        }
-
-        if (!_sawOpenState)
-        {
-            _sawOpenState = true;
-            _openSince = Time.unscaledTime;
-            return;
-        }
-
-        if (_panelsRestored || Time.unscaledTime - _openSince < RestoreDelay)
+        if (!WindowPinPolicy.ShouldRestorePanels(state, _panelsRestored))
         {
             return;
         }
 
-        _panelsRestored = true;
-        ShopCrestMenu.RestorePanelSnapshot();
-        Plugin.Log.LogInfo($"[WATCH] panel snapshot restore state='{state}'");
+        if (RaisePanels(root))
+        {
+            _panelsRestored = true;
+            Plugin.Log.LogInfo($"[WATCH] panels restored state='{state}'");
+        }
+    }
+
+    /// <summary>Sets every zeroed panel fade group back to one; false when none was zero.</summary>
+    private static bool RaisePanels(Transform root)
+    {
+        bool raised = false;
+        foreach (string name in ShopPanelPolicy.PanelsHiddenOnClose)
+        {
+            Transform? node = name == "Item List Group" ? root.Find(name) : FindChild(root, name);
+            NestedFadeGroupBase? group = FadeGroup(node);
+            if (group == null || group.AlphaSelf > 0.0001f)
+            {
+                continue;
+            }
+
+            group.AlphaSelf = 1f;
+            raised = true;
+        }
+
+        return raised;
     }
 
     /// <summary>Logs a presence line only when the presence changed.</summary>

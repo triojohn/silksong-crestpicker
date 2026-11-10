@@ -89,10 +89,6 @@ internal static class ShopCrestMenu
     /// <summary>True once the shared window panels were faded out for this close.</summary>
     private static bool _panelsHidden;
 
-    /// <summary>Fade groups the last hide zeroed, with the alpha they had before that write.</summary>
-    private static readonly List<(NestedFadeGroupBase group, float alpha)> _panelSnapshot =
-        new List<(NestedFadeGroupBase group, float alpha)>();
-
     /// <summary>True once the root alpha reached 1 in this session, so a later drop means the close fade.</summary>
     private static bool _windowSeenOpen;
 
@@ -1140,9 +1136,8 @@ internal static class ShopCrestMenu
     /// <summary>
     /// Fades out the window panels the vanilla close timer never touches: the rows, the
     /// selector, the confirm text and both action prompts keep <c>AlphaSelf</c> at 1 and
-    /// stay on screen after the window is gone. The alpha each group had before the write
-    /// is kept in <see cref="_panelSnapshot"/>, because the vanilla open chain raises only
-    /// the outer groups: <see cref="RestorePanelSnapshot"/> puts the nested ones back.
+    /// stay on screen after the window is gone. Nothing is remembered: the vanilla open
+    /// chain raises these groups itself on the next open.
     /// </summary>
     private static void HideSharedPanels(bool opening = false)
     {
@@ -1152,7 +1147,6 @@ internal static class ShopCrestMenu
         }
 
         _panelsHidden = true;
-        _panelSnapshot.Clear();
         List<string> hidden = new List<string>();
         foreach (string name in ShopPanelPolicy.PanelsHiddenOnClose)
         {
@@ -1163,34 +1157,7 @@ internal static class ShopCrestMenu
         Plugin.Log.LogInfo($"[SHOP] panels hidden {string.Join(" ", hidden)}");
     }
 
-    /// <summary>
-    /// Writes back the alphas the last hide zeroed: the vanilla open chain leaves the nested
-    /// groups (icons, row texts, details) at zero, so a window reopened without this is
-    /// black. Doing nothing when no hide ran keeps the vanilla values of the first open,
-    /// where <c>Item Confirm Group</c> must stay at the zero the open chain wrote.
-    /// </summary>
-    public static void RestorePanelSnapshot()
-    {
-        int count = 0;
-        foreach ((NestedFadeGroupBase group, float alpha) in _panelSnapshot)
-        {
-            if (group == null)
-            {
-                continue;
-            }
-
-            group.AlphaSelf = alpha;
-            count++;
-        }
-
-        _panelSnapshot.Clear();
-        Plugin.Log.LogInfo($"[SHOP] panel snapshot restored n={count}");
-    }
-
-    /// <summary>
-    /// Zeroes every fade group on a node and below, remembering the value it had before;
-    /// returns how many were touched.
-    /// </summary>
+    /// <summary>Zeroes every fade group on a node and below; returns how many were touched.</summary>
     private static int HideAlpha(Transform? node)
     {
         if (node == null)
@@ -1203,7 +1170,6 @@ internal static class ShopCrestMenu
         {
             if (group != null)
             {
-                _panelSnapshot.Add((group, group.AlphaSelf));
                 group.AlphaSelf = 0f;
                 hidden++;
             }
