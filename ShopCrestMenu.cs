@@ -1190,54 +1190,25 @@ internal static class ShopCrestMenu
             $" cancel={cancel} promptGroups={cancel + confirmPrompt}");
     }
 
-    /// <summary>
-    /// Puts the shared panels back to alpha one once the window is out of sight. The vanilla
-    /// open chain never raises these groups, so a close that ended with them faded would
-    /// leave the vanilla shop empty and only the frame visible.
-    /// </summary>
-    private static void RestoreSharedPanels()
-    {
-        if (!_panelsHidden || _root == null)
-        {
-            return;
-        }
-
-        int list = PanelAlpha(ListGroup(), 1f);
-        int details = PanelAlpha(FindChild(_root, "Item Details"), 1f);
-        int confirm = PanelAlpha(FindChild(_root, "Item Confirm Group"), 1f);
-        int cancel = PanelAlpha(FindChild(_root, "Action Cancel"), 1f);
-        int confirmPrompt = PanelAlpha(FindChild(_root, "Action Confirm"), 1f);
-        _panelsHidden = false;
-        Plugin.Log.LogInfo(
-            $"[SHOP] panels restored list={list} details={details} confirm={confirm}" +
-            $" cancel={cancel} promptGroups={cancel + confirmPrompt}");
-    }
-
     /// <summary>Zeroes every fade group on a node and below; returns how many were touched.</summary>
     private static int HideAlpha(Transform? node)
-    {
-        return PanelAlpha(node, 0f);
-    }
-
-    /// <summary>Writes <paramref name="alpha"/> into every fade group on a node and below.</summary>
-    private static int PanelAlpha(Transform? node, float alpha)
     {
         if (node == null)
         {
             return 0;
         }
 
-        int touched = 0;
+        int hidden = 0;
         foreach (NestedFadeGroupBase group in node.GetComponentsInChildren<NestedFadeGroupBase>(true))
         {
             if (group != null)
             {
-                group.AlphaSelf = alpha;
-                touched++;
+                group.AlphaSelf = 0f;
+                hidden++;
             }
         }
 
-        return touched;
+        return hidden;
     }
 
     /// <summary>
@@ -1426,7 +1397,6 @@ internal static class ShopCrestMenu
             if (wasOpen && !emergency)
             {
                 RaiseRootAlpha("close");
-                RestoreSharedPanels();
             }
 
             ResetSession();
