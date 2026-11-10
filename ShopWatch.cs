@@ -12,14 +12,26 @@ namespace CrestPicker;
 /// Watches the shared shop window for the whole session: samples it twice a second and
 /// logs a line only when one of the watched fields changes. This is what shows what
 /// happens to the window between our picker sessions and when the vanilla shopkeeper
-/// opens it. Also pins the root fade alpha in the settled states only: zero while idle,
-/// full while open.
+/// opens it. Also glides the root fade alpha in the settled states only: toward zero
+/// while idle, toward full while open.
 /// Never throws.
 /// </summary>
 internal sealed class ShopWatch : MonoBehaviour
 {
     /// <summary>Seconds between two samples.</summary>
     private const float PollInterval = 0.5f;
+
+    /// <summary>Seconds between two root glide steps while the alpha is still moving.</summary>
+    private const float GlideInterval = 0.02f;
+
+    /// <summary>Seconds a full <c>0..1</c> root glide takes.</summary>
+    private const float GlideDuration = 0.2f;
+
+    /// <summary>Smallest alpha change worth writing.</summary>
+    private const float GlideEpsilon = 0.001f;
+
+    /// <summary>Distance to the target below which the glide stops.</summary>
+    private const float GlideSettle = 0.005f;
 
     /// <summary>Name of the spawned shop window in the scene.</summary>
     private const string WindowName = "Shop Menu(Clone)";
@@ -42,14 +54,39 @@ internal sealed class ShopWatch : MonoBehaviour
     /// <summary>Unscaled time of the next sample.</summary>
     private float _nextPoll;
 
+    /// <summary>Unscaled time of the next glide step.</summary>
+    private float _nextGlide;
+
+    /// <summary>True while the root alpha is still moving toward its target.</summary>
+    private bool _gliding;
+
+    /// <summary>Direction of the last glide step, <c>0</c> when the target is reached.</summary>
+    private int _glideDir;
+
     private void Update()
     {
-        if (Time.unscaledTime < _nextPoll)
+        float now = Time.unscaledTime;
+
+        if (_gliding && _window != null && now >= _nextGlide)
+        {
+            _nextGlide = now + GlideInterval;
+            try
+            {
+                StepRoot(_window.transform, GlideInterval);
+                return;
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.LogWarning($"[WATCH] glide failed: {ex.Message}");
+            }
+        }
+
+        if (now < _nextPoll)
         {
             return;
         }
 
-        _nextPoll = Time.unscaledTime + PollInterval;
+        _nextPoll = now + PollInterval;
         try
         {
             Sample();
@@ -68,6 +105,7 @@ internal sealed class ShopWatch : MonoBehaviour
             GameObject? found = GameObject.Find(WindowName);
             if (found == null)
             {
+                StopGlide();
                 Note(false, "[WATCH] window absent");
                 return;
             }
@@ -84,7 +122,7 @@ internal sealed class ShopWatch : MonoBehaviour
             Note(true, "[WATCH] window found");
         }
 
-        PinRoot(_window.transform);
+        StepRoot(_window.transform, 0f);
         string line = Describe(_window.transform);
         if (line == _last)
         {
@@ -96,33 +134,67 @@ internal sealed class ShopWatch : MonoBehaviour
     }
 
     /// <summary>
-    /// Pins the root fade alpha only in settled states: <c>0</c> when idle, <c>1</c> when open.
-    /// Transitional states are skipped so vanilla's own open and close fades run untouched.
-    /// The child panels are left alone.
+    /// Moves the root fade alpha one step toward the settled target: <c>0</c> when idle,
+    /// <c>1</c> when open. Transitional states and a missing window are left to vanilla's
+    /// own fades. With a non-positive <paramref name="deltaTime"/> nothing is written: the
+    /// sample only checks whether a glide is needed and arms the fast tick. The child
+    /// panels are left alone.
     /// </summary>
-    private static void PinRoot(Transform root)
+    private void StepRoot(Transform root, float deltaTime)
     {
         string state = State(root);
         float? target = WindowPinPolicy.RootTarget(state);
-        if (target == null)
+        NestedFadeGroupBase? group = target != null ? FadeGroup(root) : null;
+        if (target == null || group == null)
         {
-            return;
-        }
-
-        NestedFadeGroupBase? group = FadeGroup(root);
-        if (group == null)
-        {
+            StopGlide();
             return;
         }
 
         float alpha = group.AlphaSelf;
-        if (Mathf.Abs(alpha - target.Value) <= 0.001f)
+        float diff = target.Value - alpha;
+        if (Mathf.Abs(diff) <= GlideSettle)
+        {
+            if (Mathf.Abs(diff) > GlideEpsilon)
+            {
+                group.AlphaSelf = target.Value;
+                Plugin.Log.LogInfo($"[WATCH] root glide -> {target.Value:F2} now={target.Value:F2} state='{state}'");
+            }
+
+            StopGlide();
+            return;
+        }
+
+        if (deltaTime <= 0f)
+        {
+            _gliding = true;
+            _nextGlide = 0f;
+            return;
+        }
+
+        float next = WindowPinPolicy.StepTowards(alpha, target.Value, deltaTime, GlideDuration);
+        if (Mathf.Abs(next - alpha) <= GlideEpsilon)
         {
             return;
         }
 
-        group.AlphaSelf = target.Value;
-        Plugin.Log.LogInfo($"[WATCH] root pinned {target.Value:F2} state='{state}' was={alpha:F2}");
+        bool reached = Mathf.Abs(next - target.Value) <= GlideEpsilon;
+        int dir = Math.Sign(diff);
+        group.AlphaSelf = next;
+        if (reached || dir != _glideDir)
+        {
+            Plugin.Log.LogInfo($"[WATCH] root glide -> {target.Value:F2} now={next:F2} state='{state}'");
+        }
+
+        _glideDir = reached ? 0 : dir;
+        _gliding = !reached;
+    }
+
+    /// <summary>Stops the fast glide tick until a sample asks for it again.</summary>
+    private void StopGlide()
+    {
+        _gliding = false;
+        _glideDir = 0;
     }
 
     /// <summary>Logs a presence line only when the presence changed.</summary>
