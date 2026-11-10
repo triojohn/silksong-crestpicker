@@ -1,50 +1,16 @@
 namespace CrestPicker.Pure;
 
 /// <summary>
-/// Which root fade alpha the shared shop window needs, by FSM state.
-/// Vanilla only drives the root <c>AlphaSelf</c>: the child panels are not faded
-/// by us at all. Free of Unity types so it can be unit tested.
+/// Whether the shared shop window root alpha must be written to zero.
+/// Vanilla only drives the root <c>AlphaSelf</c>, and only one direction is ours:
+/// we push it down after idle, vanilla fades it up when it opens the window.
+/// Free of Unity types so it can be unit tested.
 /// </summary>
 public static class WindowPinPolicy
 {
-    /// <summary>States in which the window must be visible.</summary>
-    private static readonly string[] OpenStates =
+    /// <summary>True only in the exact <c>Idle</c> state.</summary>
+    public static bool ShouldPinToZero(string? state)
     {
-        "Open Window",
-        "Item List Up",
-        "Open",
-    };
-
-    /// <summary>True when the window is up in this state, exact comparison.</summary>
-    public static bool IsOpenState(string? state)
-    {
-        if (state == null)
-        {
-            return false;
-        }
-
-        foreach (string open in OpenStates)
-        {
-            if (state == open)
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    /// <summary>
-    /// Root alpha to force: <c>1</c> in an open state, <c>0</c> in idle,
-    /// <c>null</c> when the state is not ours to write.
-    /// </summary>
-    public static int? RootTarget(string? state)
-    {
-        if (IsOpenState(state))
-        {
-            return 1;
-        }
-
-        return state == "Idle" ? 0 : null;
+        return state == "Idle";
     }
 }

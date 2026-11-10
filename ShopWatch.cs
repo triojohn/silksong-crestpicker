@@ -12,7 +12,7 @@ namespace CrestPicker;
 /// Watches the shared shop window for the whole session: samples it twice a second and
 /// logs a line only when one of the watched fields changes. This is what shows what
 /// happens to the window between our picker sessions and when the vanilla shopkeeper
-/// opens it. Also pins the root fade alpha in the states vanilla leaves it wrong.
+/// opens it. Also pins the root fade alpha to zero while the window is idle.
 /// Never throws.
 /// </summary>
 internal sealed class ShopWatch : MonoBehaviour
@@ -95,15 +95,14 @@ internal sealed class ShopWatch : MonoBehaviour
     }
 
     /// <summary>
-    /// Forces the root fade alpha: <c>1</c> while the window is open, <c>0</c> in idle,
-    /// nothing in the in-between states. Vanilla owns only this alpha; the child panels
-    /// are left alone.
+    /// Pushes the root fade alpha down to zero once the window is idle. One direction only:
+    /// vanilla wakes the window up from zero itself, so writing <c>1</c> here would race
+    /// its own fade-in. The child panels are left alone.
     /// </summary>
     private static void PinRoot(Transform root)
     {
         string state = State(root);
-        int? target = WindowPinPolicy.RootTarget(state);
-        if (target == null)
+        if (!WindowPinPolicy.ShouldPinToZero(state))
         {
             return;
         }
@@ -115,26 +114,13 @@ internal sealed class ShopWatch : MonoBehaviour
         }
 
         float alpha = group.AlphaSelf;
-        float want = target.Value;
-        if (want <= 0f)
-        {
-            if (alpha <= 0f)
-            {
-                return;
-            }
-
-            group.AlphaSelf = 0f;
-            Plugin.Log.LogInfo($"[WATCH] root pinned 0 was={alpha:F2}");
-            return;
-        }
-
-        if (alpha >= 1f)
+        if (alpha <= 0.001f)
         {
             return;
         }
 
-        group.AlphaSelf = 1f;
-        Plugin.Log.LogInfo($"[WATCH] root pinned 1 state='{state}' was={alpha:F2}");
+        group.AlphaSelf = 0f;
+        Plugin.Log.LogInfo($"[WATCH] root pinned 0 state='{state}' was={alpha:F2}");
     }
 
     /// <summary>Logs a presence line only when the presence changed.</summary>
