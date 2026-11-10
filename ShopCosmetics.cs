@@ -157,7 +157,6 @@ internal static class ShopCosmetics
     private static string? _confirmOriginal;
     private static TMP_Text? _confirmButton;
     private static string? _confirmButtonOriginal;
-    private static string? _confirmButtonWritten;
 
     /// <summary>Purchase confirmation text the vanilla FSM writes.</summary>
     private static TMP_Text? _purchaseLabel;
@@ -269,7 +268,6 @@ internal static class ShopCosmetics
             BaselinePositions.Clear();
             _confirmButton = null;
             _confirmButtonOriginal = null;
-            _confirmButtonWritten = null;
             _purchaseLabel = null;
             _purchaseOriginal = null;
             HideCounters(root);
@@ -327,7 +325,6 @@ internal static class ShopCosmetics
             ApplyConfirmButton();
             ApplyPurchaseText();
             ShopCrestSchema.LateTick();
-            ApplyConfirmButton();
         }
         catch (Exception ex)
         {
@@ -878,7 +875,6 @@ internal static class ShopCosmetics
             _confirmOriginal = null;
             _confirmButton = null;
             _confirmButtonOriginal = null;
-            _confirmButtonWritten = null;
             _purchaseLabel = null;
             _purchaseOriginal = null;
         }
@@ -2541,11 +2537,7 @@ internal static class ShopCosmetics
             $" -> '{ConfirmButtonText}'");
     }
 
-    /// <summary>
-    /// Overwrites the confirmation button label; runs after the FSM's own write. Any text
-    /// that differs from the last value we wrote is our cue to write again, so a writer
-    /// later in the frame cannot keep the vanilla label on screen.
-    /// </summary>
+    /// <summary>Overwrites the confirmation button label; runs after the FSM's own write.</summary>
     private static void ApplyConfirmButton()
     {
         if (string.IsNullOrEmpty(ConfirmButtonText) || _confirmButton == null)
@@ -2553,13 +2545,10 @@ internal static class ShopCosmetics
             return;
         }
 
-        if (_confirmButton.text != _confirmButtonWritten
-            || _confirmButtonWritten != ConfirmButtonText)
+        if (_confirmButton.text != ConfirmButtonText)
         {
             _confirmButton.text = ConfirmButtonText;
         }
-
-        _confirmButtonWritten = ConfirmButtonText;
     }
 
     /// <summary>Locates the confirmation button label by path, then by parent name.</summary>
