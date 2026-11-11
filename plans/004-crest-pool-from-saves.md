@@ -344,3 +344,12 @@ verify: pending
   права shell отклоняют `Copy-Item`/`Set-Content`.
 - Статус: `passed` — критерии T1–T2 покрыты, набор зелёный; живое чтение слотов и FSM
   остаются в ручном чек-листе (T3, T6–T8).
+
+### 2026-11-11 — реализация T3
+
+- T3: `CrestPoolFromSaves.cs` (новый) — `enum LoadState { Idle, Loading, Ready, Failed }`, поля `_state`, `_slot`, `_scene`, `_queue`, `_elsewhere`, `_slotsRead`, `_startedAt`, `_deadline`, `_pending`, `_generation`; методы `Begin(int currentSlot)`, `Tick()`, `Reset()`; публично `LoadState State`, `bool Ready`, `IReadOnlyCollection<string> Elsewhere`, `int SlotsRead`.
+- Чтение: `Platform.Current.ReadSaveSlot(slot, cb)` → `GameManager.GetJsonForSaveBytesStatic` → `SaveDataUtility.DeserializeSaveData<SaveGameData>` → `playerData.ToolEquips.GetValidNames(d => d.IsUnlocked)`; `SetLoadedGameData`/`LoadGame`/подмена `PlayerData.instance` не вызываются; один слот за кадр.
+- Таймаут `TimeoutSeconds = 2f` на весь проход → `Failed` + лог; ошибка слота изолирована строкой `[CREST] save slot <n>: crests=<m> err=<...>`; итог `[CREST] saves read: slots=<k> unique=<m> inMs=<n>`.
+- Кэш: `GetSaveSlotMtime` в сборке игры отсутствует, поэтому кэшируется объединение по имени для пары «слот + сцена» (`GameManager.sceneName`); повторный `Begin` в том же слоте и сцене даёт `[CREST] saves cache hit slot=N`, смена слота или сцены — `Reset()` и новый проход.
+- Проверка: `dotnet build -c Release` — 0 предупреждений, 0 ошибок; `dotnet test CrestPicker.Tests -c Release` — 126/126; DLL скопирован в `BepInEx/plugins` (SHA256 `60442DC263AE5EF96300B4FCB6D6E0CBDC49DB27ECC93A4FF3586FBF80D62015`). Код — коммит `9f81205`.
+- Статус: `not_run` — потребителя пока нет (T5–T7), живое чтение слотов проверяется вручную по разделу 6.
