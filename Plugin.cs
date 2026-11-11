@@ -56,7 +56,6 @@ public sealed class Plugin : BaseUnityPlugin
     private ConfigEntry<KeyboardShortcut> _testHotkey = null!;
     private ConfigEntry<KeyboardShortcut> _shopDumpHotkey = null!;
     private ConfigEntry<KeyboardShortcut> _spriteDumpHotkey = null!;
-    private ConfigEntry<KeyboardShortcut> _ownWindowHotkey = null!;
     private ConfigEntry<bool> _showCrestSchema = null!;
     private ConfigEntry<SchemaRenderMode> _schemaRender = null!;
     private ConfigEntry<float> _crestSchemaScale = null!;
@@ -87,12 +86,11 @@ public sealed class Plugin : BaseUnityPlugin
 
         _grantAllCrests = Config.Bind("General", "GrantAllCrests", false,
             "Устаревший ключ: true трактуется как CrestPool=All");
-        _crestPool = Config.Bind("General", "CrestPool", CrestPoolMode.FromSaves,
-            "Пул знаков для выбора: FromSaves — открытые в любом слоте сейва минус открытые " +
-            "в текущем прохождении, All — все нормальные, Unlocked — только открытые в текущем сейве");
-        IgnoreUnlockState = Config.Bind("General", "IgnoreUnlockState", false,
-            "Устаревший ключ: true — показывать все нормальные знаки независимо от сейва, " +
-            "false — фильтровать по CrestPool. При CrestPool=FromSaves игнорируется. Читается на лету.");
+        _crestPool = Config.Bind("General", "CrestPool", CrestPoolMode.All,
+            "Пул знаков для выбора: All — все 7 нормальных, Unlocked — только открытые в сейве");
+        IgnoreUnlockState = Config.Bind("General", "IgnoreUnlockState", true,
+            "Временно показывать все нормальные знаки независимо от сейва. " +
+            "false — снова фильтровать по CrestPool/IsUnlocked. Читается на лету.");
         IncludeEquippedCrest = Config.Bind("General", "IncludeEquippedCrest", true,
             "Оставлять надетый знак в списке выбора. true — знак не вырезается, " +
             "false — прежнее поведение (надетый знак исключён). Читается на лету.");
@@ -104,8 +102,6 @@ public sealed class Plugin : BaseUnityPlugin
             "Клавиша дампа живого магазина (объекты, FSM, строки)");
         _spriteDumpHotkey = Config.Bind("General", "SpriteDumpHotkey", new KeyboardShortcut(KeyCode.F10),
             "Клавиша дампа спрайтов гребней в PNG (C:\\Users\\trioj\\Downloads\\silksong_sprites)");
-        _ownWindowHotkey = Config.Bind("General", "OwnWindowHotkey", new KeyboardShortcut(KeyCode.F7),
-            "Клавиша спавна собственного окна магазина (клон префаба, ничего не открывает)");
         _useLiveShop = Config.Bind("General", "UseLiveShop", true,
             "Показывать выбор знака в настоящем окне магазина (сток и позиция восстанавливаются)");
         _showCrestSchema = Config.Bind("General", "ShowCrestSchema", true,
@@ -181,11 +177,8 @@ public sealed class Plugin : BaseUnityPlugin
         ShopCosmetics.RowLabelOffsetX = _rowLabelOffsetX;
         ShopCosmetics.RowLabelOffsetY = _rowLabelOffsetY;
         ShopCosmetics.CentreSourceConfig = _textCentreSource;
-        Logger.LogInfo(CrestPickerService.PoolMode == CrestPoolMode.FromSaves
-            ? "[POOL] mode=FromSaves (IgnoreUnlockState ignored)."
-            : $"[POOL] mode={CrestPickerService.PoolMode}" +
-              $" (IgnoreUnlockState={IgnoreUnlockState.Value}, GrantAllCrests={_grantAllCrests.Value}," +
-              $" CrestPool={_crestPool.Value}).");
+        Logger.LogInfo($"[CREST] crest pool mode: {CrestPickerService.PoolMode}" +
+            $" (GrantAllCrests={_grantAllCrests.Value}, CrestPool={_crestPool.Value}).");
         CrestSelectMenu.Closed += OnMenuClosed;
         CrestSelectMenu.RunSelfCheck();
         CrestOfferState.RunSelfCheck();
@@ -216,8 +209,6 @@ public sealed class Plugin : BaseUnityPlugin
 
         InventoryDiag.Poll();
         UpdatePendingOffer();
-        OwnShopWindow.Tick();
-        ShopCrestMenu.TickOpenRetry();
 
         if (_shopDumpHotkey.Value.IsDown())
         {
@@ -226,12 +217,6 @@ public sealed class Plugin : BaseUnityPlugin
             ShopDiag.DumpLiveShop();
             ShopTrace.Begin("hotkey");
             ShopRenderDiag.Capture("hotkey", null);
-        }
-
-        if (_ownWindowHotkey.Value.IsDown())
-        {
-            Log.LogInfo($"[OWN] Hotkey {_ownWindowHotkey.Value} pressed: spawn shop window clone.");
-            OwnShopWindow.TrySpawn();
         }
 
         if (_spriteDumpHotkey.Value.IsDown())
@@ -284,7 +269,6 @@ public sealed class Plugin : BaseUnityPlugin
                 return;
             }
 
-            CrestPoolFromSaves.Begin(slot);
             _offerDeadline = Time.unscaledTime + OfferGrace;
             Log.LogInfo($"[CREST] Offer requested for slot {slot}.");
         }
@@ -297,31 +281,15 @@ public sealed class Plugin : BaseUnityPlugin
     /// <summary>Opens a pending offer once the game is playable; drops it after a grace period.</summary>
     private void UpdatePendingOffer()
     {
-        CrestPoolFromSaves.Tick();
-
         if (_offerDeadline <= 0f || CrestSelectMenu.IsOpen)
         {
             return;
         }
 
-        // While the other save slots are being read the offer simply stays pending: the
-        // read finishes (or times out to the all-normals fallback) inside its own budget,
-        // which matches the grace below.
-        bool savesPending = CrestPickerService.PoolMode == CrestPoolMode.FromSaves
-            && CrestPoolFromSaves.State == CrestPoolFromSaves.LoadState.Loading;
-
-        if (IsInGame() && !savesPending)
+        if (IsInGame() && CrestSelectMenu.TryOpen(fromDialogue: true))
         {
-            switch (CrestSelectMenu.TryOpen(fromDialogue: true))
-            {
-                case CrestSelectMenu.OpenResult.Opened:
-                    _offerDeadline = 0f;
-                    return;
-
-                case CrestSelectMenu.OpenResult.NoPool:
-                    _offerDeadline = 0f;
-                    return;
-            }
+            _offerDeadline = 0f;
+            return;
         }
 
         if (Time.unscaledTime > _offerDeadline)
@@ -345,7 +313,7 @@ public sealed class Plugin : BaseUnityPlugin
     }
 
     /// <summary>Game save slot index, taken from the fields the save system uses.</summary>
-    internal static int CurrentSlotId()
+    private static int CurrentSlotId()
     {
         GameManager? manager = GameManager.instance;
         if (manager != null && manager.profileID >= 0)
@@ -373,7 +341,6 @@ public sealed class Plugin : BaseUnityPlugin
 
     private void OnDestroy()
     {
-        CrestPoolFromSaves.Reset();
         CrestSelectMenu.Closed -= OnMenuClosed;
         _harmony?.UnpatchSelf();
     }

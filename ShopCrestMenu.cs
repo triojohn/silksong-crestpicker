@@ -12,14 +12,16 @@ using UnityEngine;
 namespace CrestPicker;
 
 /// <summary>
-/// Shows the crest choice in our own clone of the shop prefab
-/// (<see cref="OwnShopWindow"/>). The clone is moved to the hero, its stock is swapped
-/// for free temp entries, and its shop FSM is asked to open. The vanilla window of the
-/// scene's <see cref="ShopOwnerBase"/> is never touched. Never throws.
+/// Shows the crest choice in the game's own live shop window: the shop object the
+/// scene's <see cref="ShopOwnerBase"/> already spawned. The window is moved to the
+/// hero, its stock is swapped for free temp entries, and the shop FSM is asked to
+/// open. Vanilla stock and position are restored when the FSM returns to idle.
+/// Never throws.
 /// </summary>
 internal static class ShopCrestMenu
 {
     private const BindingFlags PrivateInstance = BindingFlags.Instance | BindingFlags.NonPublic;
+    private const BindingFlags PrivateStatic = BindingFlags.Static | BindingFlags.NonPublic;
 
     /// <summary>FSM on the shop root that drives the window.</summary>
     private const string ControlFsmName = "shop_control";
@@ -29,9 +31,6 @@ internal static class ShopCrestMenu
 
     /// <summary>Event that closes the window again.</summary>
     private const string CloseEvent = "CLOSE SHOP WINDOW";
-
-    /// <summary>Event that puts a clone left mid-chain back to its resting state.</summary>
-    private const string ResetEvent = "RESET SHOP WINDOW";
 
     /// <summary>Event the window FSM needs to fade its borders and prompts back in.</summary>
     private const string BordesUpEvent = "FLUERS UP";
@@ -48,14 +47,11 @@ internal static class ShopCrestMenu
     /// <summary>Prefix of the states that fade the window out.</summary>
     private const string CloseStatePrefix = "Close";
 
-    /// <summary>Seconds between open retries while the clone's FSM has not ticked yet.</summary>
-    private const float OpenRetryInterval = 0.05f;
-
-    /// <summary>Upper bound on that wait; after it the custom menu takes over.</summary>
-    private const float OpenRetryDeadline = 2f;
-
     /// <summary>Panel centre is lifted this far above the hero so the window reads centred.</summary>
     private const float UiLift = 0.8f;
+
+    private static readonly FieldInfo? SpawnedShopField =
+        typeof(ShopOwnerBase).GetField("_spawnedShop", PrivateStatic);
 
     private static readonly FieldInfo? StockArrayField =
         typeof(ShopMenuStock).GetField("stock", PrivateInstance);
@@ -76,6 +72,9 @@ internal static class ShopCrestMenu
     private static Transform? _root;
     private static PlayMakerFSM? _control;
 
+    /// <summary>Vanilla stock per swapped stock component, restored on close.</summary>
+    private static readonly Dictionary<ShopMenuStock, ShopItem[]> Swapped =
+        new Dictionary<ShopMenuStock, ShopItem[]>();
     private static Vector3 _origPosition;
     private static float _boundShift;
     private static bool _fromDialogue;
@@ -86,6 +85,9 @@ internal static class ShopCrestMenu
 
     /// <summary>True once this session started hiding the schema and the rows, whatever triggered it.</summary>
     private static bool _hideStarted;
+
+    /// <summary>True once the shared window panels were faded out for this close.</summary>
+    private static bool _panelsHidden;
 
     /// <summary>True once the root alpha reached 1 in this session, so a later drop means the close fade.</summary>
     private static bool _windowSeenOpen;
@@ -118,26 +120,9 @@ internal static class ShopCrestMenu
 
     /// <summary>Monotonic session counter; incremented by <see cref="TryOpen"/>.</summary>
     private static int _session;
+
     /// <summary>Current session number, captured by every live <see cref="ShopCrestSession"/>.</summary>
     internal static int Session => _session;
-
-    /// <summary>Unscaled time of the next open retry; zero when no attempt is pending.</summary>
-    private static float _openRetryAt;
-
-    /// <summary>Unscaled time the pending open gives up and the custom menu takes over.</summary>
-    private static float _openDeadlineAt;
-
-    /// <summary>Frames the pending open has waited, for the retry log line.</summary>
-    private static int _openRetryFrames;
-
-    /// <summary>Crests of the pending open, so the fallback still has them.</summary>
-    private static List<ToolCrest>? _pendingCrests;
-
-    /// <summary>True when the pending open came from the maid dialogue.</summary>
-    private static bool _pendingFromDialogue;
-
-    /// <summary>State the clone FSM was already reset from, so one reset is sent per state.</summary>
-    private static string _resetState = string.Empty;
 
     /// <summary>Frame counter of the last diagnostic tick line; zero before the first session frame.</summary>
     private static int _diagFrames;
@@ -164,7 +149,7 @@ internal static class ShopCrestMenu
     private static int _purchaseFrame;
     private static int _purchaseLines;
 
-    /// <summary>True from the moment the close is sent until the session state is dropped.</summary>
+    /// <summary>True from the moment the close is sent until the full restore finished.</summary>
     internal static bool _closing;
 
     /// <summary>True while the live shop window is showing our crests.</summary>
@@ -184,111 +169,62 @@ internal static class ShopCrestMenu
 
     /// <summary>
     /// Swaps the live shop stock for <paramref name="crests"/> and opens the window.
-    /// Falls back to the custom menu on any real failure; a clone whose FSM has not
-    /// ticked yet only defers the attempt, see <see cref="TickOpenRetry"/>.
+    /// Falls back to the custom menu on any failure.
     /// </summary>
     /// <param name="crests">Crests to show; must not be empty.</param>
     /// <param name="fromDialogue">True when the choice came from the maid dialogue.</param>
-    /// <param name="deferred">True when the clone is not ready and the open stays pending.</param>
     /// <returns>True when the live window was opened.</returns>
-    internal static bool TryOpen(List<ToolCrest> crests, bool fromDialogue, out bool deferred)
+    internal static bool TryOpen(List<ToolCrest> crests, bool fromDialogue)
     {
-        deferred = false;
         if (IsOpen || crests.Count == 0)
         {
             return false;
         }
 
-        // A repeated press replaces the pending attempt: the wait restarts, no second clone.
-        ClearOpenRetry();
-        _pendingCrests = new List<ToolCrest>(crests);
-        _pendingFromDialogue = fromDialogue;
         ResetSession();
         _session++;
-        bool opened = AttemptOpen(false, out deferred);
-        if (opened)
-        {
-            ClearOpenRetry();
-        }
-
-        return opened;
-    }
-
-    /// <summary>
-    /// One open attempt against the clone: arms the session, swaps the stock and sends
-    /// the open event. A clone whose FSM has not ticked yet leaves the attempt pending
-    /// instead of failing.
-    /// </summary>
-    /// <param name="retry">True when this attempt follows an earlier pending one.</param>
-    /// <param name="deferred">True when the clone was not ready and the attempt stays pending.</param>
-    /// <returns>True when the live window was opened.</returns>
-    private static bool AttemptOpen(bool retry, out bool deferred)
-    {
-        deferred = false;
-        if (!retry)
-        {
-            _openStart = Time.realtimeSinceStartup;
-        }
-
+        _openStart = Time.realtimeSinceStartup;
         try
         {
-            ShopMenuStock? stock = OwnShopWindow.Current;
-            if (stock == null)
+            ShopOwnerBase? owner = FindLiveOwner();
+            if (owner == null)
             {
-                OwnShopWindow.TrySpawn();
-                stock = OwnShopWindow.Current;
+                return Fallback("no live ShopOwnerBase in scene");
             }
 
-            ShopOwnerBase? owner = OwnShopWindow.Owner;
-            if (stock == null || owner == null)
+            ShopMenuStock? stock = SpawnedStock() ?? FallbackStock(owner);
+            if (stock == null)
             {
-                return Fail("own shop window unavailable");
+                return Fallback($"'{owner.name}' has no spawned shop window");
             }
 
             GameObject root = stock.gameObject;
-
-            // The clone is switched off between sessions; the FSM does not tick while it
-            // is off, so nothing but its saved state can be stale here.
-            OwnShopWindow.EnsureActive();
             if (!root.activeInHierarchy)
             {
-                return Fail($"own shop window '{root.name}' is inactive");
+                return Fallback($"shop window '{root.name}' is inactive");
             }
 
             PlayMakerFSM? control = ControlFsm(root);
             if (control == null)
             {
-                return Fail($"'{root.name}' has no PlayMakerFSM '{ControlFsmName}'");
+                return Fallback($"'{root.name}' has no PlayMakerFSM '{ControlFsmName}'");
             }
 
             string state = ActiveState(control);
-            if (OwnWindowPolicy.IsNotReadyYet(state))
-            {
-                return Defer(state, out deferred);
-            }
-
             if (state != IdleState)
             {
-                // Leaving the clone switched off cuts a close chain short, so the FSM can
-                // rest outside idle. Ask the FSM for its resting state and wait for it.
-                if (!HasEvent(control, ResetEvent))
-                {
-                    return Fail($"'{ControlFsmName}' is in state '{state}', not '{IdleState}'");
-                }
-
-                if (_resetState != state)
-                {
-                    _resetState = state;
-                    Plugin.Log.LogInfo($"[OWN] reset '{ControlFsmName}' from state '{state}'");
-                    control.SendEvent(ResetEvent);
-                }
-
-                return Defer(ActiveState(control), out deferred);
+                return Fallback($"'{ControlFsmName}' is in state '{state}', not '{IdleState}'");
             }
 
             if (!HasEvent(control, OpenEvent))
             {
-                return Fail($"'{ControlFsmName}' has no '{OpenEvent}' transition");
+                return Fallback($"'{ControlFsmName}' has no '{OpenEvent}' transition");
+            }
+
+            ShopItem[]? origStock = StockArrayField?.GetValue(stock) as ShopItem[];
+            if (origStock == null || origStock.Length == 0)
+            {
+                return Fallback("live shop has no stock array");
             }
 
             _stock = stock;
@@ -296,21 +232,16 @@ internal static class ShopCrestMenu
             _control = control;
             BeginTeardown(root.transform);
             _origPosition = root.transform.position;
-            _crests = new List<ToolCrest>(_pendingCrests ?? new List<ToolCrest>());
-            _fromDialogue = _pendingFromDialogue;
+            _crests = new List<ToolCrest>(crests);
+            _fromDialogue = fromDialogue;
             SuppressDialogue = true;
-
-            if (OwnShopWindow.Title is { Length: > 0 } title)
-            {
-                stock.Title = title;
-            }
 
             SwapStock(BuildItems());
             BuildLists();
             _stockReady = Time.realtimeSinceStartup;
             if (stock.GetItemCount() == 0)
             {
-                return Fail("own shop built an empty item list");
+                return Fallback("live shop built an empty item list");
             }
 
             // The open event runs FSM actions that read ShopObject, and that getter
@@ -329,113 +260,21 @@ internal static class ShopCrestMenu
 
             ShopCosmetics.Begin(root.transform);
             root.AddComponent<ShopCrestSession>();
-            Plugin.Log.LogInfo(
-                $"[OWN] session opened items={count} state='{ActiveState(control)}'");
-            if (retry)
-            {
-                Plugin.Log.LogInfo($"[OWN] open retry ok after {_openRetryFrames} frames");
-            }
-
             LogState($"opened with {count} crest entries");
             return true;
         }
         catch (Exception ex)
         {
             Restore("open exception");
-            return Fail($"{ex.GetType().Name}: {ex.Message}");
+            return Fallback($"{ex.GetType().Name}: {ex.Message}");
         }
         finally
         {
-            // A deferred attempt owns the clone: tearing the session down here would
-            // drop the pending retry before the FSM ever ticks.
-            if (!IsOpen && !deferred)
+            if (!IsOpen)
             {
                 Restore("open failed");
             }
         }
-    }
-
-    /// <summary>
-    /// Keeps the open pending instead of failing: a fresh clone's FSM is still in its
-    /// first state. The deadline is set once, so retries never extend the wait.
-    /// </summary>
-    /// <param name="state">State the FSM reported, written to the log once.</param>
-    /// <param name="deferred">Set to true: the attempt stays pending.</param>
-    /// <returns>Always false: nothing was opened by this call.</returns>
-    private static bool Defer(string state, out bool deferred)
-    {
-        deferred = true;
-        float now = Time.unscaledTime;
-        if (_openRetryAt <= 0f)
-        {
-            _openRetryAt = now + OpenRetryInterval;
-            _openDeadlineAt = now + OpenRetryDeadline;
-            _openRetryFrames = 0;
-            Plugin.Log.LogInfo($"[OWN] open deferred: state='{state}'");
-        }
-
-        return false;
-    }
-
-    /// <summary>
-    /// Drives a pending open: retries every <see cref="OpenRetryInterval"/> until the
-    /// clone's FSM leaves its first state, and hands over to the custom menu once the
-    /// deadline passes. Called every frame from <see cref="Plugin.Update"/>.
-    /// </summary>
-    internal static void TickOpenRetry()
-    {
-        if (_openRetryAt <= 0f)
-        {
-            return;
-        }
-
-        List<ToolCrest>? crests = _pendingCrests;
-        if (IsOpen || CrestSelectMenu.IsOpen || crests == null)
-        {
-            ClearOpenRetry();
-            return;
-        }
-
-        // The clone is released on a scene change; there is nothing left to wait for.
-        if (OwnShopWindow.Current == null)
-        {
-            Plugin.Log.LogInfo("[OWN] open retry cancelled: clone gone");
-            ClearOpenRetry();
-            return;
-        }
-
-        _openRetryFrames++;
-        float now = Time.unscaledTime;
-        if (now < _openRetryAt)
-        {
-            return;
-        }
-
-        if (now >= _openDeadlineAt)
-        {
-            bool fromDialogue = _pendingFromDialogue;
-            ClearOpenRetry();
-            Plugin.Log.LogWarning("[OWN] open retry timeout");
-            CrestSelectMenu.OpenCustom(crests, fromDialogue);
-            return;
-        }
-
-        _openRetryAt = now + OpenRetryInterval;
-        if (AttemptOpen(true, out bool deferred) || !deferred)
-        {
-            ClearOpenRetry();
-        }
-    }
-
-    /// <summary>Drops the pending open, if any.</summary>
-    private static void ClearOpenRetry()
-    {
-        _openRetryAt = 0f;
-        _openDeadlineAt = 0f;
-        _openRetryFrames = 0;
-        _pendingCrests = null;
-        _pendingFromDialogue = false;
-        _resetState = string.Empty;
     }
 
     /// <summary>Crest behind a temp shop entry; null for any other item.</summary>
@@ -566,8 +405,8 @@ internal static class ShopCrestMenu
     }
 
     /// <summary>
-    /// Puts <paramref name="items"/> on the window root and on every nested stock
-    /// list of our clone, so no list keeps the prefab array.
+    /// Puts <paramref name="items"/> on the root window and on every nested stock
+    /// list, so no list keeps a vanilla array. Original arrays are kept for restore.
     /// </summary>
     private static void SwapStock(ShopItem[] items)
     {
@@ -579,6 +418,11 @@ internal static class ShopCrestMenu
 
         foreach (ShopMenuStock stock in _root.GetComponentsInChildren<ShopMenuStock>(true))
         {
+            if (!Swapped.ContainsKey(stock) && StockArrayField?.GetValue(stock) is ShopItem[] original)
+            {
+                Swapped[stock] = original;
+            }
+
             stock.SetStock(items);
             stock.SetWasItemPurchased(false);
             Plugin.Log.LogInfo(
@@ -599,9 +443,9 @@ internal static class ShopCrestMenu
         }
 
         bool lost = false;
-        foreach (ShopMenuStock stock in _root.GetComponentsInChildren<ShopMenuStock>(true))
+        foreach (KeyValuePair<ShopMenuStock, ShopItem[]> pair in Swapped)
         {
-            if (stock != null && StockArrayField?.GetValue(stock) != _swapItems)
+            if (pair.Key != null && StockArrayField?.GetValue(pair.Key) != _swapItems)
             {
                 lost = true;
                 break;
@@ -730,7 +574,7 @@ internal static class ShopCrestMenu
         }
     }
 
-    /// <summary>Puts <c>shop_control</c> back to idle and tears the session down.</summary>
+    /// <summary>Puts <c>shop_control</c> back to idle and restores the vanilla window.</summary>
     /// <param name="reason">What forced the state, written to the log.</param>
     private static void ForceIdle(string reason)
     {
@@ -1254,6 +1098,7 @@ internal static class ShopCrestMenu
 
         _hideStarted = true;
         ShopCrestSchema.Hide();
+        HideSharedPanels();
         Plugin.Log.LogInfo($"[SHOP] schema hidden at close start state='{state}'");
     }
 
@@ -1284,7 +1129,53 @@ internal static class ShopCrestMenu
 
         _hideStarted = true;
         ShopCrestSchema.Hide();
+        HideSharedPanels();
         Plugin.Log.LogInfo($"[SHOP] window fading, hiding schema alpha={alpha:F2}");
+    }
+
+    /// <summary>
+    /// Fades out the window panels the vanilla close timer never touches: the rows, the
+    /// selector, the confirm text and both action prompts keep <c>AlphaSelf</c> at 1 and
+    /// stay on screen after the window is gone. Nothing is remembered: the vanilla open
+    /// chain raises these groups itself on the next open.
+    /// </summary>
+    private static void HideSharedPanels()
+    {
+        if (_panelsHidden || _root == null)
+        {
+            return;
+        }
+
+        _panelsHidden = true;
+        int list = HideAlpha(ListGroup());
+        int details = HideAlpha(FindChild(_root, "Item Details"));
+        int confirm = HideAlpha(FindChild(_root, "Item Confirm Group"));
+        int cancel = HideAlpha(FindChild(_root, "Action Cancel"));
+        int confirmPrompt = HideAlpha(FindChild(_root, "Action Confirm"));
+        Plugin.Log.LogInfo(
+            $"[SHOP] panels hidden list={list} details={details} confirm={confirm}" +
+            $" cancel={cancel} promptGroups={cancel + confirmPrompt}");
+    }
+
+    /// <summary>Zeroes every fade group on a node and below; returns how many were touched.</summary>
+    private static int HideAlpha(Transform? node)
+    {
+        if (node == null)
+        {
+            return 0;
+        }
+
+        int hidden = 0;
+        foreach (NestedFadeGroupBase group in node.GetComponentsInChildren<NestedFadeGroupBase>(true))
+        {
+            if (group != null)
+            {
+                group.AlphaSelf = 0f;
+                hidden++;
+            }
+        }
+
+        return hidden;
     }
 
     /// <summary>
@@ -1311,8 +1202,7 @@ internal static class ShopCrestMenu
         _root.position = next;
         _boundShift = next.y - _origPosition.y;
         ShiftRowBounds(_boundShift);
-        Plugin.Log.LogInfo(
-            $"[OWN] window placed at hero={Vec(hero)} panel={Vec(panelCentre)} root={Vec(next)}");
+        LogState($"placed at hero={Vec(hero)} panel={Vec(panelCentre)}");
     }
 
     /// <summary>
@@ -1381,7 +1271,7 @@ internal static class ShopCrestMenu
         }
     }
 
-    /// <summary>Ends our session: the window FSM already closed the clone, we drop our state.</summary>
+    /// <summary>Puts the vanilla stock and the original window position back.</summary>
     /// <param name="reason">Where the session ended; logged with the input release.</param>
     /// <param name="emergency">
     /// True when the vanilla close chain never ran, so the fade and the prompts must be
@@ -1396,9 +1286,6 @@ internal static class ShopCrestMenu
         // The confirmation lives no longer than the window: every restore ends it.
         ShopCrestSchema.ConfirmActive = false;
 
-        // A pending open dies with the session: nothing is left to retry.
-        ClearOpenRetry();
-
         // A newer session already owns the window: this call is a leftover. Same for a
         // call with no live session and nothing left to put back.
         bool foreign = IsOpen && session >= 0 && session != _session;
@@ -1411,11 +1298,6 @@ internal static class ShopCrestMenu
             }
 
             RestorePrompts();
-            if (!foreign)
-            {
-                OwnShopWindow.Hide();
-            }
-
             Plugin.Log.LogInfo($"[SHOP] restore skipped, no session of ours (reason={reason} ours={session} now={_session} open={IsOpen})");
             return;
         }
@@ -1429,7 +1311,6 @@ internal static class ShopCrestMenu
         {
             IsOpen = false;
             RestorePrompts();
-            OwnShopWindow.Hide();
             ResetSession();
             _closing = false;
             return;
@@ -1438,15 +1319,39 @@ internal static class ShopCrestMenu
         try
         {
             Step("cosmetics", ShopCosmetics.End);
+            Step("stock", () =>
+            {
+                foreach (KeyValuePair<ShopMenuStock, ShopItem[]> pair in Swapped)
+                {
+                    if (pair.Key != null)
+                    {
+                        pair.Key.SetStock(pair.Value);
+                        pair.Key.SetWasItemPurchased(false);
+                    }
+                }
+            });
+            Step("stock lists", () =>
+            {
+                Swapped.Clear();
+                BuildLists();
+            });
             Step("teardown", () => TeardownShop(emergency));
             Step("alpha", RestoreAlpha);
             Step("prompts", RestorePrompts);
-            int items = _swapItems.Length;
-            Plugin.Log.LogInfo($"[OWN] session closed items={items}");
+            Step("position", () =>
+            {
+                if (_root != null)
+                {
+                    ShiftRowBounds(-_boundShift);
+                    _root.position = _origPosition;
+                }
+            });
+
+            Plugin.Log.LogInfo($"[SHOP] live shop restored to vanilla stock and position (reason={reason}).");
         }
         catch (Exception ex)
         {
-            Plugin.Log.LogWarning($"[SHOP] session close failed: {ex.Message}");
+            Plugin.Log.LogWarning($"[SHOP] live shop restore failed: {ex.Message}");
         }
         finally
         {
@@ -1454,7 +1359,6 @@ internal static class ShopCrestMenu
             CrestSelectMenu.IsOpen = false;
             ResetSession();
             _closing = false;
-            OwnShopWindow.Hide();
         }
     }
 
@@ -1480,6 +1384,7 @@ internal static class ShopCrestMenu
         LogResetDiag();
         TempItems.Clear();
         DestroyTempItems();
+        Swapped.Clear();
         _swapItems = Array.Empty<ShopItem>();
         _crests = new List<ToolCrest>();
         _stock = null;
@@ -1490,6 +1395,7 @@ internal static class ShopCrestMenu
         _sawOpenState = false;
         _openReachedLogged = false;
         _hideStarted = false;
+        _panelsHidden = false;
         _windowSeenOpen = false;
         _closeDetectedLogged = false;
         SuppressDialogue = false;
@@ -1524,6 +1430,34 @@ internal static class ShopCrestMenu
         }
 
         _tempItems.Clear();
+    }
+
+    /// <summary>The spawned shop window of the scene, even while it is hidden.</summary>
+    private static ShopMenuStock? SpawnedStock()
+    {
+        try
+        {
+            return SpawnedShopField?.GetValue(null) as ShopMenuStock;
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>Owner property fallback; it re-applies the owner stock before we read it.</summary>
+    private static ShopMenuStock? FallbackStock(ShopOwnerBase owner)
+    {
+        try
+        {
+            GameObject? shopObject = owner.ShopObject;
+            return shopObject != null ? shopObject.GetComponent<ShopMenuStock>() : null;
+        }
+        catch (Exception ex)
+        {
+            Plugin.Log.LogWarning($"[SHOP] owner shop lookup failed: {ex.Message}");
+            return null;
+        }
     }
 
     /// <summary>The <c>shop_control</c> FSM on the window root.</summary>
@@ -1839,13 +1773,6 @@ internal static class ShopCrestMenu
         return false;
     }
 
-    /// <summary>Logs why our own shop window could not be opened, then falls back.</summary>
-    private static bool Fail(string reason)
-    {
-        Plugin.Log.LogWarning($"[OWN] open failed: {reason}");
-        return Fallback(reason);
-    }
-
     private static string Vec(Vector3 value)
     {
         return $"({value.x:F2},{value.y:F2},{value.z:F2})";
@@ -1853,8 +1780,9 @@ internal static class ShopCrestMenu
 }
 
 /// <summary>
-/// Lives on our shop window clone while our stock is shown: closes the session as
-/// soon as <c>shop_control</c> returns to idle. A timeout ends a stuck session too.
+/// Lives on the live shop root while our stock is shown: restores the vanilla stock
+/// and position as soon as <c>shop_control</c> returns to idle. A timeout restores
+/// it too, so a stuck window cannot keep foreign stock forever.
 /// </summary>
 internal sealed class ShopCrestSession : MonoBehaviour
 {
@@ -1912,7 +1840,7 @@ internal sealed class ShopCrestSession : MonoBehaviour
 
             if (ShopCrestMenu.ClosedByFsm())
             {
-                Plugin.Log.LogInfo("[SHOP] shop FSM returned to idle, ending the session.");
+                Plugin.Log.LogInfo("[SHOP] shop FSM returned to idle, restoring vanilla shop.");
                 ShopCrestMenu.Restore("fsm idle", false, _session);
                 Destroy(this);
                 return;
@@ -1920,7 +1848,7 @@ internal sealed class ShopCrestSession : MonoBehaviour
 
             if (Time.unscaledTime > _deadline)
             {
-                Plugin.Log.LogWarning("[SHOP] live shop session timed out, closing it.");
+                Plugin.Log.LogWarning("[SHOP] live shop session timed out, restoring vanilla shop.");
                 ShopCrestMenu.Restore("timeout", false, _session);
                 Destroy(this);
             }
