@@ -26,9 +26,15 @@
 | `Pure/CrestLabel.cs` | `CrestPicker.Tests/CrestLabelTests.cs` | пустое, пробельное и null-имя → имя ассета; кириллица без изменений |
 | `Pure/CrestCardLook.cs` | `CrestPicker.Tests/CrestCardLookTests.cs` | `SlotScale` 1 для текущей карточки и 0.7 для остальных (ванильная `_slotScaleOther`); `UseSilhouette` только для невыбранной; правило карточки 0.7 и правило закрытого слота 0.8 перемножаются, давая 0.56 |
 | `Pure/CloneFilter.cs` | `CrestPicker.Tests/CloneFilterTests.cs` | силуэт и слот важнее правила эффектов; `Crest Submit Effects` в любом регистре, `Burst Effect`, `White Flash` выключаются; `Crest Glow` и `Crest Sprite` остаются; пустое и `null` имя остаются без исключения |
+| `Pure/OwnWindowPolicy.cs` | `CrestPicker.Tests/OwnWindowPolicyTests.cs` | `IsNotReadyYet` истинно для `null`, `""`, `Init` и ложно для любого другого состояния: сравнение точное, поэтому `Init Shop` и `init` уже «готовы» (регресс `03fd419`); `RootName` равен `CrestPicker Shop Menu` и не совпадает с ванильными `Shop Menu` / `Shop Menu(Clone)`; `ShouldRebuild` даёт `false` только при той же сцене и том же живом владельце, а чужая сцена, нулевой записанный владелец, смерть владельца и смена владельца дают `true` (9 случаев); `ShouldPause` повторяет флаг ванильного окна |
+| `Pure/WindowPinPolicy.cs` | `CrestPicker.Tests/WindowPinPolicyTests.cs` | `RootTarget` даёт 1 для `Open`, 0 для `Idle`, `null` для всех переходных состояний, пустой строки и `null`; `StepTowards` идёт вверх и вниз, за `0.2 с` проходит весь отрезок `0..1`, не перелетает цель и садится на неё точно, при `duration <= 0` сразу возвращает цель, при `current == target` не двигается, работает с отрицательными альфой и целью |
 
-Всего 82 теста. Тестовый проект `CrestPicker.Tests` собирается отдельно от мода
+Всего 111 тестов. Тестовый проект `CrestPicker.Tests` собирается отдельно от мода
 и подключает `Pure/*.cs` как исходники: ссылок на DLL игры в нём нет.
+
+`Pure/WindowPinPolicy.cs` пока жив и покрыт тестом, хотя план
+`plans/003-own-shop-window.md` (T14) его удаляет. Когда файл исчезнет, строку
+таблицы и `CrestPicker.Tests/WindowPinPolicyTests.cs` удаляет `tester`.
 
 Связка «правило карточки 0.7 × правило закрытого слота 0.8 = 0.56» в тесте
 проверена как арифметика констант: `ShopCrestSchema.AddDots` перемножает те же
