@@ -44,6 +44,16 @@ public class CrestPoolRulesTests
             isBase: false, isHidden: false, isUnlocked: true, CrestPoolMode.Unlocked));
     }
 
+    [Theory]
+    [InlineData(true, false, true)]
+    [InlineData(true, true, false)]
+    [InlineData(false, false, false)]
+    [InlineData(false, true, false)]
+    public void IsNormal_OnlyBaseVisibleCrests(bool isBase, bool isHidden, bool expected)
+    {
+        Assert.Equal(expected, CrestPoolRules.IsNormal(isBase, isHidden));
+    }
+
     [Fact]
     public void EquippedCrest_IsExcluded()
     {

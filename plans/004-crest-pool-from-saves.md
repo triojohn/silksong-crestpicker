@@ -322,3 +322,25 @@ verify: pending
 - T2: `Pure/CrossSavePool.cs` (новый) — `enum CrestPoolEmpty { None, AllNormalsUnlockedHere, NothingAnywhere, NothingNewElsewhere }`, `readonly record struct CrestPoolSelection(List<CrestFacts> Crests, CrestPoolEmpty Empty, int NormalTotal, int UnlockedHere)`, `static CrestPoolSelection Build(IEnumerable<CrestFacts> all, IEnumerable<IEnumerable<string>> otherSlots, bool includeEquipped)`. Типов Unity в файле нет; `Pure/*.cs` подхватывается тестовым csproj без правок.
 - Проверка: `dotnet test CrestPicker.Tests` — 111/111 пройдено; `dotnet build -c Release` — 0 предупреждений, 0 ошибок; DLL скопирован в `BepInEx/plugins` (SHA256 `220448D420CC3A066A9AB9E7361645078E9EB089D007E8E295E48B7B9CA04E9F`). Код — коммит `7fd224c`.
 - Статус: `not_run` — тесты T1-T2 по разделу 6 пишет `tester`, живое поведение этим кодом не затронуто.
+
+### 2026-11-11 — тесты T1-T2 (tester)
+
+- T1: `CrestPicker.Tests/CrestPoolRulesTests.cs` — `IsNormal_OnlyBaseVisibleCrests`, теория из 4 случаев
+  (`true/false`, скрытый, апгрейд, оба флага).
+- T2: `CrestPicker.Tests/CrossSavePoolTests.cs` (новый) — 11 тестов по списку раздела 6:
+  `Build_SubtractsUnlockedHere`, `Build_KeepsOnlyNormal`, `Build_PreservesListOrder`,
+  `Union_DedupesAcrossSlots`, `Build_AllNormalsUnlockedHere_ReturnsAllNormalsUnlockedHere`,
+  `Build_NothingAnywhere_ReturnsAllNormalWithReason`,
+  `Build_NothingNewElsewhere_ReturnsAllNormalWithReason`,
+  `Build_ExcludesEquipped_OnlyWhenAsked` (остаток и фолбэк), `Build_MissingSlot_IsJustEmpty`,
+  `Build_UnlockedHere_ButNotInAnySave_NotInPool`, `Build_EmptyInput_IsEmptyWithAllNormalsUnlockedHere`.
+- `TESTING.md`: строка таблицы для `Pure/CrossSavePool.cs`, уточнение строки `CrestPoolRules`,
+  счётчик 111 → 126.
+- Команды: `dotnet test CrestPicker.Tests -c Release` — 111/111 до работы, 126/126 после
+  (0 предупреждений сборки).
+- Красного прогона нет и быть не могло: `CrossSavePool` и `IsNormal` появились коммитом
+  `7fd224c`, тесты пишутся после (раздел 4, режим `after`); прогон против кода до фикса не
+  компилируется. Проверка чувствительности на временной копии с мутацией не выполнена:
+  права shell отклоняют `Copy-Item`/`Set-Content`.
+- Статус: `passed` — критерии T1–T2 покрыты, набор зелёный; живое чтение слотов и FSM
+  остаются в ручном чек-листе (T3, T6–T8).

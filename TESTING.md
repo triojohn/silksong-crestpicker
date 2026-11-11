@@ -13,7 +13,7 @@
 
 | Модуль | Тест-файл | Что фиксирует |
 |---|---|---|
-| `Pure/CrestPoolRules.cs` | `CrestPicker.Tests/CrestPoolRulesTests.cs` | `All` включает закрытые знаки, `Unlocked` исключает; скрытые и не-base исключены всегда; надетый знак исключён |
+| `Pure/CrestPoolRules.cs` | `CrestPicker.Tests/CrestPoolRulesTests.cs` | `All` включает закрытые знаки, `Unlocked` исключает; скрытые и не-base исключены всегда; надетый знак исключён; `IsNormal` даёт `true` только для base-версии без скрытости (4 случая) |
 | `Pure/CrestPoolRules.cs` | `CrestPicker.Tests/CrestPoolSelectTests.cs` | `Select` при `ignoreUnlock` + `includeEquipped` даёт 7 из 12 в порядке списка; скрытые и не-base апгрейды не попадают ни при каких флагах; дубликаты имён сохраняются, пустой вход → пустой список |
 | `Pure/ConfigRules.cs` | `CrestPicker.Tests/ConfigRulesTests.cs` | `CrestSchemaScale > 2` → 1; `CrestDotSize > 0.5` → ×0.11; значения в норме не трогаются |
 | `Pure/PurchaseClose.cs` | `CrestPicker.Tests/PurchaseCloseTests.cs` | закрытие через 0.5 с после сообщения о покупке; 3 с без сообщения; `ForceIdle` через 5 с после отправки; до порогов — `None` |
@@ -28,8 +28,9 @@
 | `Pure/CloneFilter.cs` | `CrestPicker.Tests/CloneFilterTests.cs` | силуэт и слот важнее правила эффектов; `Crest Submit Effects` в любом регистре, `Burst Effect`, `White Flash` выключаются; `Crest Glow` и `Crest Sprite` остаются; пустое и `null` имя остаются без исключения |
 | `Pure/OwnWindowPolicy.cs` | `CrestPicker.Tests/OwnWindowPolicyTests.cs` | `IsNotReadyYet` истинно для `null`, `""`, `Init` и ложно для любого другого состояния: сравнение точное, поэтому `Init Shop` и `init` уже «готовы» (регресс `03fd419`); `RootName` равен `CrestPicker Shop Menu` и не совпадает с ванильными `Shop Menu` / `Shop Menu(Clone)`; `ShouldRebuild` даёт `false` только при той же сцене и том же живом владельце, а чужая сцена, нулевой записанный владелец, смерть владельца и смена владельца дают `true` (9 случаев); `ShouldPause` повторяет флаг ванильного окна |
 | `Pure/WindowPinPolicy.cs` | `CrestPicker.Tests/WindowPinPolicyTests.cs` | `RootTarget` даёт 1 для `Open`, 0 для `Idle`, `null` для всех переходных состояний, пустой строки и `null`; `StepTowards` идёт вверх и вниз, за `0.2 с` проходит весь отрезок `0..1`, не перелетает цель и садится на неё точно, при `duration <= 0` сразу возвращает цель, при `current == target` не двигается, работает с отрицательными альфой и целью |
+| `Pure/CrossSavePool.cs` | `CrestPicker.Tests/CrossSavePoolTests.cs` | `Build` вычитает открытое здесь, берёт только нормальные гребни (скрытые и апгрейды не попадают, даже если открыты в другом слоте), сохраняет порядок `all`, дедуплицирует имена между слотами; ветки `None`, `AllNormalsUnlockedHere` (пустой список), `NothingAnywhere` и `NothingNewElsewhere` (все нормальные) с числами `NormalTotal`/`UnlockedHere`; `includeEquipped` режет надетый гребень в остатке и в фолбэке; `null` и пустой слот не ломают результат; пустой вход → пустой список (11 тестов) |
 
-Всего 111 тестов. Тестовый проект `CrestPicker.Tests` собирается отдельно от мода
+Всего 126 тестов. Тестовый проект `CrestPicker.Tests` собирается отдельно от мода
 и подключает `Pure/*.cs` как исходники: ссылок на DLL игры в нём нет.
 
 `Pure/WindowPinPolicy.cs` пока жив и покрыт тестом, хотя план
