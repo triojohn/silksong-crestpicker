@@ -67,10 +67,18 @@ internal sealed class CrestSelectMenu : MonoBehaviour
 
         try
         {
-            List<ToolCrest> crests = CrestPickerService.GetSelectableCrests();
+            List<ToolCrest> crests = CrestPickerService.GetSelectableCrests(out bool waiting);
             if (crests.Count == 0)
             {
-                Plugin.Log.LogWarning("[CREST] No selectable crests to show, menu not opened.");
+                if (waiting)
+                {
+                    Plugin.Log.LogInfo("[CREST] crest pool is still loading, menu not opened.");
+                }
+                else
+                {
+                    Plugin.Log.LogWarning("[CREST] No selectable crests to show, menu not opened.");
+                }
+
                 return false;
             }
 

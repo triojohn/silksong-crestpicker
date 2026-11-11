@@ -87,11 +87,12 @@ public sealed class Plugin : BaseUnityPlugin
 
         _grantAllCrests = Config.Bind("General", "GrantAllCrests", false,
             "Устаревший ключ: true трактуется как CrestPool=All");
-        _crestPool = Config.Bind("General", "CrestPool", CrestPoolMode.All,
-            "Пул знаков для выбора: All — все 7 нормальных, Unlocked — только открытые в сейве");
-        IgnoreUnlockState = Config.Bind("General", "IgnoreUnlockState", true,
-            "Временно показывать все нормальные знаки независимо от сейва. " +
-            "false — снова фильтровать по CrestPool/IsUnlocked. Читается на лету.");
+        _crestPool = Config.Bind("General", "CrestPool", CrestPoolMode.FromSaves,
+            "Пул знаков для выбора: FromSaves — открытые в любом слоте сейва минус открытые " +
+            "в текущем прохождении, All — все нормальные, Unlocked — только открытые в текущем сейве");
+        IgnoreUnlockState = Config.Bind("General", "IgnoreUnlockState", false,
+            "Устаревший ключ: true — показывать все нормальные знаки независимо от сейва, " +
+            "false — фильтровать по CrestPool. При CrestPool=FromSaves игнорируется. Читается на лету.");
         IncludeEquippedCrest = Config.Bind("General", "IncludeEquippedCrest", true,
             "Оставлять надетый знак в списке выбора. true — знак не вырезается, " +
             "false — прежнее поведение (надетый знак исключён). Читается на лету.");
@@ -180,8 +181,11 @@ public sealed class Plugin : BaseUnityPlugin
         ShopCosmetics.RowLabelOffsetX = _rowLabelOffsetX;
         ShopCosmetics.RowLabelOffsetY = _rowLabelOffsetY;
         ShopCosmetics.CentreSourceConfig = _textCentreSource;
-        Logger.LogInfo($"[CREST] crest pool mode: {CrestPickerService.PoolMode}" +
-            $" (GrantAllCrests={_grantAllCrests.Value}, CrestPool={_crestPool.Value}).");
+        Logger.LogInfo(CrestPickerService.PoolMode == CrestPoolMode.FromSaves
+            ? "[CREST] pool mode: FromSaves (IgnoreUnlockState ignored)."
+            : $"[CREST] pool mode: {CrestPickerService.PoolMode}" +
+              $" (IgnoreUnlockState={IgnoreUnlockState.Value}, GrantAllCrests={_grantAllCrests.Value}," +
+              $" CrestPool={_crestPool.Value}).");
         CrestSelectMenu.Closed += OnMenuClosed;
         CrestSelectMenu.RunSelfCheck();
         CrestOfferState.RunSelfCheck();

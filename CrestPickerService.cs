@@ -19,17 +19,21 @@ internal static class CrestPickerService
 
     /// <summary>
     /// Returns the crests the player may pick: base versions that are not hidden.
-    /// Unlock state is ignored while <c>IgnoreUnlockState</c> is true; otherwise
+    /// <see cref="CrestPoolMode.FromSaves"/> builds the pool from crests unlocked in the
+    /// other save slots, and reports <paramref name="waiting"/> instead of falling back to
+    /// every crest while those slots are still being read. The other modes keep the config
+    /// rules: unlock state is ignored while <c>IgnoreUnlockState</c> is true, and
     /// <see cref="CrestPoolMode.Unlocked"/> limits the pool to unlocked crests.
     /// The currently equipped crest is excluded only while <c>IncludeEquippedCrest</c>
     /// is false.
     /// </summary>
-    /// <returns>Selectable crests in crest-list order; empty on failure.</returns>
-    internal static List<ToolCrest> GetSelectableCrests()
+    /// <param name="waiting">True when the cross-save read has not finished; the list is empty.</param>
+    /// <returns>Selectable crests in crest-list order; empty on failure or while waiting.</returns>
+    internal static List<ToolCrest> GetSelectableCrests(out bool waiting)
     {
+        waiting = false;
         try
         {
-            bool ignoreUnlock = Plugin.IgnoreUnlockState.Value;
             bool includeEquipped = Plugin.IncludeEquippedCrest.Value;
             List<ToolCrest> all = ToolItemManager.GetAllCrests();
             var byName = new Dictionary<string, ToolCrest>();
@@ -46,16 +50,44 @@ internal static class CrestPickerService
                     crest.name, crest.IsBaseVersion, crest.IsHidden, crest.IsUnlocked, SafeIsEquipped(crest)));
             }
 
-            List<CrestFacts> selected = CrestPoolRules.Select(facts, PoolMode, ignoreUnlock, includeEquipped);
+            List<CrestFacts> selected;
+            if (PoolMode == CrestPoolMode.FromSaves)
+            {
+                if (CrestPoolFromSaves.State != CrestPoolFromSaves.LoadState.Ready)
+                {
+                    waiting = true;
+                    Plugin.Log.LogInfo(
+                        $"[CREST] pool source=saves state={CrestPoolFromSaves.State}" +
+                        $" slots={CrestPoolFromSaves.SlotsRead} waiting.");
+                    return new List<ToolCrest>();
+                }
+
+                CrestPoolSelection selection = CrossSavePool.Build(
+                    facts, new[] { CrestPoolFromSaves.Elsewhere }, includeEquipped);
+                selected = selection.Crests;
+                Plugin.Log.LogInfo(
+                    $"[CREST] pool source=saves slots={CrestPoolFromSaves.SlotsRead}" +
+                    $" elsewhere={CrestPoolFromSaves.Elsewhere.Count} here={selection.UnlockedHere}" +
+                    $" pool={selected.Count} reason={ReasonName(selection.Empty)}" +
+                    $" names={string.Join(",", selected.Select(fact => fact.Name))}");
+            }
+            else
+            {
+                bool ignoreUnlock = Plugin.IgnoreUnlockState.Value;
+                selected = CrestPoolRules.Select(facts, PoolMode, ignoreUnlock, includeEquipped);
+                int excluded = includeEquipped
+                    ? 0
+                    : CrestPoolRules.Select(facts, PoolMode, ignoreUnlock, includeEquipped: true).Count
+                        - selected.Count;
+                Plugin.Log.LogInfo(
+                    $"[CREST] pool source=config pool={selected.Count} mode={PoolMode}" +
+                    $" ignoreUnlock={ignoreUnlock} includeEquipped={includeEquipped}" +
+                    $" all={all.Count}" +
+                    $" names={string.Join(",", selected.Select(fact => fact.Name))}" +
+                    $" (equipped excluded={excluded}).");
+            }
+
             List<ToolCrest> pool = selected.Select(fact => byName[fact.Name]).ToList();
-            int excluded = includeEquipped
-                ? 0
-                : CrestPoolRules.Select(facts, PoolMode, ignoreUnlock, includeEquipped: true).Count - pool.Count;
-            Plugin.Log.LogInfo(
-                $"[CREST] pool={pool.Count} ignoreUnlock={ignoreUnlock} includeEquipped={includeEquipped}" +
-                $" all={all.Count}" +
-                $" names={string.Join(",", pool.Select(crest => crest.name))}" +
-                $" (mode={PoolMode}, equipped excluded={excluded}).");
             foreach (ToolCrest? crest in all)
             {
                 Plugin.Log.LogInfo(crest == null
@@ -70,6 +102,24 @@ internal static class CrestPickerService
         {
             Plugin.Log.LogError($"[CREST] GetSelectableCrests failed: {ex}");
             return new List<ToolCrest>();
+        }
+    }
+
+    /// <summary>Log name for the reason the cross-save pool fell back, if it did.</summary>
+    /// <param name="empty">Reason reported by <see cref="CrossSavePool.Build"/>.</param>
+    /// <returns>Single lowercase word for the log line.</returns>
+    private static string ReasonName(CrestPoolEmpty empty)
+    {
+        switch (empty)
+        {
+            case CrestPoolEmpty.AllNormalsUnlockedHere:
+                return "all-normals-unlocked-here";
+            case CrestPoolEmpty.NothingAnywhere:
+                return "nothing-anywhere";
+            case CrestPoolEmpty.NothingNewElsewhere:
+                return "nothing-new-elsewhere";
+            default:
+                return "none";
         }
     }
 

@@ -18,6 +18,12 @@ internal enum CrestPoolMode
 
     /// <summary>Only crests already unlocked in the current save.</summary>
     Unlocked,
+
+    /// <summary>
+    /// Union of crests unlocked in every save slot, minus the ones unlocked here.
+    /// Built by <see cref="CrossSavePool.Build"/>, not by <see cref="CrestPoolRules.Select"/>.
+    /// </summary>
+    FromSaves,
 }
 
 /// <summary>Selectable-crest rules, free of any game types so they can be unit tested.</summary>
@@ -68,7 +74,8 @@ internal static class CrestPoolRules
     /// equipped crest only when <paramref name="includeEquipped"/> is false.
     /// </summary>
     /// <param name="all">Crests in crest-list order.</param>
-    /// <param name="mode">Configured pool source, ignored when <paramref name="ignoreUnlock"/> is true.</param>
+    /// <param name="mode">Configured pool source; <paramref name="ignoreUnlock"/> is skipped for
+    /// <see cref="CrestPoolMode.FromSaves"/>.</param>
     /// <param name="ignoreUnlock">Offer crests regardless of unlock state.</param>
     /// <param name="includeEquipped">Keep the currently equipped crest in the pool.</param>
     /// <returns>Selectable crests in input order.</returns>
@@ -78,7 +85,9 @@ internal static class CrestPoolRules
         bool ignoreUnlock,
         bool includeEquipped)
     {
-        CrestPoolMode effectiveMode = ignoreUnlock ? CrestPoolMode.All : mode;
+        CrestPoolMode effectiveMode = ignoreUnlock && mode != CrestPoolMode.FromSaves
+            ? CrestPoolMode.All
+            : mode;
         var selected = new List<CrestFacts>();
         foreach (CrestFacts crest in all)
         {
