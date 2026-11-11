@@ -51,6 +51,16 @@ internal static class ShopCrestSchema
     /// <summary>Sorting orders the confirm schema is lifted above the backboard by.</summary>
     private const int ConfirmOrderOffset = 2;
 
+    /// <summary>Room kept above the confirmation text, as a fraction of its height.</summary>
+    private const float ConfirmGap = 0.15f;
+
+    /// <summary>Smallest confirm schema scale left when the crest name leaves no room.</summary>
+    private const float ConfirmFitMin = 0.5f;
+
+    /// <summary>Names of the two confirmation texts: the question and the purchase line.</summary>
+    private const string ConfirmMessageName = "Confirm msg";
+    private const string PurchaseMessageName = "Thankyou";
+
     /// <summary>Silhouette renderer inside the vanilla crest card the clone is fitted by.</summary>
     private const string SilhouetteName = "crestSilhouette";
 
@@ -86,6 +96,7 @@ internal static class ShopCrestSchema
     private static TMP_Text? _descLabel;
     private static Transform? _confirmGroup;
     private static TMP_Text? _confirmMessage;
+    private static TMP_Text? _confirmThanks;
 
     /// <summary>Schema objects created for the current crest; destroyed on rebuild.</summary>
     private static Schema? _detailsSchema;
@@ -143,6 +154,9 @@ internal static class ShopCrestSchema
 
     /// <summary>True once the y offset clamp was logged for this window.</summary>
     private static bool _offsetClampedLogged;
+
+    /// <summary>Last logged confirm fit scale; negative before the first fit.</summary>
+    private static float _confirmFitLogged = -1f;
 
     /// <summary>Flags for the private fields read off the vanilla crest widgets.</summary>
     private const BindingFlags PrivateInstance = BindingFlags.Instance | BindingFlags.NonPublic;
@@ -218,6 +232,7 @@ internal static class ShopCrestSchema
             _descLabel = null;
             _confirmGroup = null;
             _confirmMessage = null;
+            _confirmThanks = null;
             _builtFor = null;
             _missingLogged = false;
             _detailsHiddenLogged = false;
@@ -314,6 +329,7 @@ internal static class ShopCrestSchema
         _descLabel = null;
         _confirmGroup = null;
         _confirmMessage = null;
+        _confirmThanks = null;
         _builtFor = null;
         _detailsHiddenLogged = false;
         _detailsShownLogged = false;
@@ -323,6 +339,7 @@ internal static class ShopCrestSchema
         _detailsBounds = default;
         _offsetLogged = false;
         _offsetClampedLogged = false;
+        _confirmFitLogged = -1f;
         _selectedIndex = -1;
         _pickSource = string.Empty;
         _pickIndex = -1;
@@ -572,9 +589,12 @@ internal static class ShopCrestSchema
     }
 
     /// <summary>
-    /// Puts the confirm schema on the details schema, scaled by <see cref="ConfirmScale"/>,
-    /// and keeps it inside the window backboard. The position comes from the drawn bounds
-    /// of the container itself, so no parent scale chain is assumed.
+    /// Puts the confirm schema right above the confirmation text: the schema bottom sits
+    /// <see cref="ConfirmGap"/> text heights over the top of the visible text, and the
+    /// bought item name floors it - the schema shrinks down to <see cref="ConfirmFitMin"/>
+    /// when the name leaves less room than that. Only X is clamped, so nothing can push
+    /// the schema back down onto the text. The position comes from the drawn bounds of
+    /// the container itself, so no parent scale chain is assumed.
     /// </summary>
     private static void PlaceConfirm(Schema schema)
     {
@@ -583,29 +603,59 @@ internal static class ShopCrestSchema
             return;
         }
 
+        if (!TryTextBounds(_confirmThanks, out Bounds message) && !TryTextBounds(_confirmMessage, out message))
+        {
+            return;
+        }
+
         Transform container = schema.Container.transform;
         Bounds detailsBounds = DetailsSchemaBounds();
         float wanted = detailsBounds.size.y * ConfirmScale;
+        float schemaBottom = message.max.y + ConfirmGap * message.size.y;
+        float nameBottom = ConfirmNameBottom();
+        float room = schemaBottom - nameBottom;
+        float fit = 1f;
+        if (wanted > 0.0001f && !float.IsNaN(room))
+        {
+            fit = Mathf.Clamp(room / wanted, ConfirmFitMin, 1f);
+        }
+
+        float target = wanted * fit;
         float current = ContainerBounds(container).size.y;
         Transform content = schema.Content.transform;
-        if (current > 0.0001f && wanted > 0.0001f && Mathf.Abs(current - wanted) > wanted * 0.001f)
+        if (current > 0.0001f && target > 0.0001f && Mathf.Abs(current - target) > target * 0.001f)
         {
-            float factor = wanted / current;
+            float factor = target / current;
             Vector3 local = content.localScale;
             content.localScale = new Vector3(local.x * factor, local.y * factor, local.z);
         }
 
-        PlaceAt(schema, detailsBounds.center);
+        if (Mathf.Abs(fit - _confirmFitLogged) > 0.0001f)
+        {
+            _confirmFitLogged = fit;
+            Plugin.Log.LogInfo($"[SCHEMA] confirm fit scale={fit:F3} room={room:F3}");
+        }
+
+        Bounds inner = ContainerBounds(container);
+        Vector3 shift = new Vector3(
+            detailsBounds.center.x - inner.center.x,
+            schemaBottom + inner.extents.y - inner.center.y,
+            0f);
+        if (shift.sqrMagnitude > 0.0000001f)
+        {
+            container.position += shift;
+        }
 
         if (_root != null)
         {
             Transform? board = _root.Find("Window/Shop_Backboard");
-            if (board != null && TryBounds(container, out Bounds inner) && TryBounds(board, out Bounds outer))
+            if (board != null && TryBounds(board, out Bounds outer))
             {
-                Vector3 shift = ClampShift(inner, outer);
-                if (shift != Vector3.zero)
+                Bounds placed = ContainerBounds(container);
+                float dx = ClampAxis(placed.center.x, placed.extents.x, outer.min.x, outer.max.x);
+                if (Mathf.Abs(dx) > 0.0001f)
                 {
-                    container.position += shift;
+                    container.position += new Vector3(dx, 0f, 0f);
                 }
             }
         }
@@ -613,19 +663,41 @@ internal static class ShopCrestSchema
         if (!schema.PlacedLogged)
         {
             schema.PlacedLogged = true;
-            Plugin.Log.LogInfo($"[SCHEMA] confirm placed at bounds centre={Vec(container.position)}" +
-                $" h={ContainerBounds(container).size.y:F3} detailsH={detailsBounds.size.y:F3}" +
-                $" confirmScale={ConfirmScale:F3}");
+            Bounds placed = ContainerBounds(container);
+            Plugin.Log.LogInfo($"[SCHEMA] confirm placed y={placed.min.y:F3} msgTop={message.max.y:F3}" +
+                $" nameBottom={nameBottom:F3} scale={fit:F3}");
         }
     }
 
-    /// <summary>Shift that moves <paramref name="inner"/> fully inside <paramref name="outer"/>.</summary>
-    private static Vector3 ClampShift(Bounds inner, Bounds outer)
+    /// <summary>World bounds of a confirmation text that is shown with a non-empty string.</summary>
+    private static bool TryTextBounds(TMP_Text? text, out Bounds bounds)
     {
-        return new Vector3(
-            ClampAxis(inner.center.x, inner.extents.x, outer.min.x, outer.max.x),
-            ClampAxis(inner.center.y, inner.extents.y, outer.min.y, outer.max.y),
-            0f);
+        bounds = default;
+        if (text == null || !text.gameObject.activeInHierarchy || string.IsNullOrEmpty(SafeText(text)))
+        {
+            return false;
+        }
+
+        Renderer? renderer = text.GetComponent<Renderer>();
+        if (renderer == null || renderer.bounds.size.sqrMagnitude <= 0.0000001f)
+        {
+            return false;
+        }
+
+        bounds = renderer.bounds;
+        return true;
+    }
+
+    /// <summary>Lowest point of the bought item name; NaN when no name is shown.</summary>
+    private static float ConfirmNameBottom()
+    {
+        TMP_Text? name = _confirmGroup != null ? FindText(_confirmGroup, "Item name") : null;
+        if (!TryTextBounds(name, out Bounds bounds) && !TryTextBounds(_nameLabel, out bounds))
+        {
+            return float.NaN;
+        }
+
+        return bounds.min.y;
     }
 
     /// <summary>Delta that pulls one axis centre inside the outer bounds, zero when it does not fit.</summary>
@@ -637,11 +709,6 @@ internal static class ShopCrestSchema
         }
 
         return Geometry.ClampAxis(centre, half, min, max) - centre;
-    }
-
-    private static string Vec(Vector3 value)
-    {
-        return $"({value.x:F2},{value.y:F2})";
     }
 
     /// <summary>Retries the fit of a schema whose renderers had no bounds when built.</summary>
@@ -2048,7 +2115,8 @@ internal static class ShopCrestSchema
             Transform? picture = _confirmGroup.Find("Item Sprite");
             // The vanilla FSM draws the item icon here; our schema replaces it.
             HideObject(picture != null ? picture.gameObject : null);
-            _confirmMessage = FindText(_confirmGroup, "Confirm msg");
+            _confirmMessage = FindText(_confirmGroup, ConfirmMessageName);
+            _confirmThanks = FindText(_confirmGroup, PurchaseMessageName);
         }
 
         return _confirmGroup;
