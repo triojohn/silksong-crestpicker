@@ -378,3 +378,22 @@ verify: pending
 - Проверка: `dotnet build -c Release` — 0 предупреждений, 0 ошибок; `dotnet test CrestPicker.Tests -c Release` — 126/126; DLL скопирован в `BepInEx/plugins` (SHA256 `E84A234B91B017549DCCF6466F68CED66A851CF79E94BFE6D9D95F869E3F84ED`). Код — коммит `53a3211`, запушен в `origin/master`.
 - Статус: `not_run` — маркеры проверяются вручную в игре; чек-лист для `tester` передан в отчёте.
 
+### 2026-11-11 — ручной чек-лист `[POOL]` (tester)
+
+- `TESTING.md`: раздел 2 получил подраздел «Пул по сейвам (`CrestPool = FromSaves`, default)» —
+  9 пунктов: лог режима при запуске, строки по слотам и финальный `[POOL] source=saves`,
+  отказ при полном наборе здесь, чужой пул без надетого, `reason=nothing-anywhere`,
+  таймаут 2 с с фолбэком, смена слота/сцены, `cache hit`, `F9` при незавершённом чтении.
+  Пункты оффера уточнены под асинхронное чтение и `IncludeEquippedCrest` (default `true`).
+  Лог-проверки переведены с `[CREST] crest pool` на `[POOL] source=`, `[POOL] read done`,
+  `[POOL] slot <n>`; в разделе 6 добавлен `CrossSavePool.Build` и оговорка, что чтение
+  чужих слотов тестом не покрывается.
+- Маркеры сверены с кодом: `Plugin.cs:185` (`mode=FromSaves`), `CrestPoolFromSaves.cs:116`
+  (`read reset`), `:216` (`read done`), `:224` (`read failed`), `:230` (`slot <n>`),
+  `CrestPickerService.cs:87` (`source=saves`), `:64` (`waiting`), `:79` (`fallback`),
+  `CrestSelectMenu.cs:99` (`offer skipped`).
+- Команда: `dotnet test CrestPicker.Tests -c Release` — 126 пройдено, 0 не пройдено,
+  0 пропущено.
+- Статус: `passed` — чек-лист и счётчик тестов совпадают с кодом на HEAD `368833f`;
+  живое поведение слотов, таймаут и отказ от меню проверяются вручную по разделу 2.
+
