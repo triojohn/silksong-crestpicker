@@ -315,3 +315,10 @@ verify: pending
 - команды и точный вывод: —
 - замечания: план составлен по коду на 11.11.2026 (HEAD `af149e0`) и декомпилу игры;
   число тестов до работы — 111 (`TESTING.md:32`).
+
+### 2026-11-11 — реализация T1-T2
+
+- T1: `Pure/CrestPoolRules.cs` — добавлен `internal static bool IsNormal(bool isBase, bool isHidden)`, условие `isBase && !isHidden`; `IsSelectable` вызывает его вместо повторённой проверки, поведение режимов `All`/`Unlocked` не изменилось.
+- T2: `Pure/CrossSavePool.cs` (новый) — `enum CrestPoolEmpty { None, AllNormalsUnlockedHere, NothingAnywhere, NothingNewElsewhere }`, `readonly record struct CrestPoolSelection(List<CrestFacts> Crests, CrestPoolEmpty Empty, int NormalTotal, int UnlockedHere)`, `static CrestPoolSelection Build(IEnumerable<CrestFacts> all, IEnumerable<IEnumerable<string>> otherSlots, bool includeEquipped)`. Типов Unity в файле нет; `Pure/*.cs` подхватывается тестовым csproj без правок.
+- Проверка: `dotnet test CrestPicker.Tests` — 111/111 пройдено; `dotnet build -c Release` — 0 предупреждений, 0 ошибок; DLL скопирован в `BepInEx/plugins` (SHA256 `220448D420CC3A066A9AB9E7361645078E9EB089D007E8E295E48B7B9CA04E9F`). Код — коммит `7fd224c`.
+- Статус: `not_run` — тесты T1-T2 по разделу 6 пишет `tester`, живое поведение этим кодом не затронуто.
