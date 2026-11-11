@@ -136,6 +136,9 @@ internal static class ShopCrestMenu
     /// <summary>True when the pending open came from the maid dialogue.</summary>
     private static bool _pendingFromDialogue;
 
+    /// <summary>State the clone FSM was already reset from, so one reset is sent per state.</summary>
+    private static string _resetState = string.Empty;
+
     /// <summary>Frame counter of the last diagnostic tick line; zero before the first session frame.</summary>
     private static int _diagFrames;
 
@@ -273,8 +276,13 @@ internal static class ShopCrestMenu
                     return Fail($"'{ControlFsmName}' is in state '{state}', not '{IdleState}'");
                 }
 
-                Plugin.Log.LogInfo($"[OWN] reset '{ControlFsmName}' from state '{state}'");
-                control.SendEvent(ResetEvent);
+                if (_resetState != state)
+                {
+                    _resetState = state;
+                    Plugin.Log.LogInfo($"[OWN] reset '{ControlFsmName}' from state '{state}'");
+                    control.SendEvent(ResetEvent);
+                }
+
                 return Defer(ActiveState(control), out deferred);
             }
 
@@ -427,6 +435,7 @@ internal static class ShopCrestMenu
         _openRetryFrames = 0;
         _pendingCrests = null;
         _pendingFromDialogue = false;
+        _resetState = string.Empty;
     }
 
     /// <summary>Crest behind a temp shop entry; null for any other item.</summary>
