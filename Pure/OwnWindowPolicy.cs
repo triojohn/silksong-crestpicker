@@ -12,6 +12,20 @@ public static class OwnWindowPolicy
     /// </summary>
     public const string RootName = "CrestPicker Shop Menu";
 
+    /// <summary>State a freshly instantiated clone's control FSM rests in until it ticks.</summary>
+    public const string InitState = "Init";
+
+    /// <summary>
+    /// True when the state only says "not started yet", not "refused": a clone spawned by
+    /// <c>Instantiate</c> has not ticked its FSM, so the state is null, empty, or
+    /// <see cref="InitState"/>. The caller waits for a frame instead of giving up.
+    /// </summary>
+    /// <param name="fsmState">Active state name of the shop control FSM; may be null.</param>
+    public static bool IsNotReadyYet(string? fsmState)
+    {
+        return string.IsNullOrEmpty(fsmState) || fsmState == InitState;
+    }
+
     /// <summary>
     /// True when the cached clone no longer fits: the scene changed, the owner the
     /// clone was spawned for is gone, or another owner took its place.

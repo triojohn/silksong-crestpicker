@@ -45,6 +45,12 @@ internal static class ShopCrestMenu
     /// <summary>Prefix of the states that fade the window out.</summary>
     private const string CloseStatePrefix = "Close";
 
+    /// <summary>Seconds between open retries while the clone's FSM has not ticked yet.</summary>
+    private const float OpenRetryInterval = 0.05f;
+
+    /// <summary>Upper bound on that wait; after it the custom menu takes over.</summary>
+    private const float OpenRetryDeadline = 2f;
+
     /// <summary>Panel centre is lifted this far above the hero so the window reads centred.</summary>
     private const float UiLift = 0.8f;
 
@@ -109,9 +115,23 @@ internal static class ShopCrestMenu
 
     /// <summary>Monotonic session counter; incremented by <see cref="TryOpen"/>.</summary>
     private static int _session;
-
     /// <summary>Current session number, captured by every live <see cref="ShopCrestSession"/>.</summary>
     internal static int Session => _session;
+
+    /// <summary>Unscaled time of the next open retry; zero when no attempt is pending.</summary>
+    private static float _openRetryAt;
+
+    /// <summary>Unscaled time the pending open gives up and the custom menu takes over.</summary>
+    private static float _openDeadlineAt;
+
+    /// <summary>Frames the pending open has waited, for the retry log line.</summary>
+    private static int _openRetryFrames;
+
+    /// <summary>Crests of the pending open, so the fallback still has them.</summary>
+    private static List<ToolCrest>? _pendingCrests;
+
+    /// <summary>True when the pending open came from the maid dialogue.</summary>
+    private static bool _pendingFromDialogue;
 
     /// <summary>Frame counter of the last diagnostic tick line; zero before the first session frame.</summary>
     private static int _diagFrames;
@@ -158,21 +178,52 @@ internal static class ShopCrestMenu
 
     /// <summary>
     /// Swaps the live shop stock for <paramref name="crests"/> and opens the window.
-    /// Falls back to the custom menu on any failure.
+    /// Falls back to the custom menu on any real failure; a clone whose FSM has not
+    /// ticked yet only defers the attempt, see <see cref="TickOpenRetry"/>.
     /// </summary>
     /// <param name="crests">Crests to show; must not be empty.</param>
     /// <param name="fromDialogue">True when the choice came from the maid dialogue.</param>
+    /// <param name="deferred">True when the clone is not ready and the open stays pending.</param>
     /// <returns>True when the live window was opened.</returns>
-    internal static bool TryOpen(List<ToolCrest> crests, bool fromDialogue)
+    internal static bool TryOpen(List<ToolCrest> crests, bool fromDialogue, out bool deferred)
     {
+        deferred = false;
         if (IsOpen || crests.Count == 0)
         {
             return false;
         }
 
+        // A repeated press replaces the pending attempt: the wait restarts, no second clone.
+        ClearOpenRetry();
+        _pendingCrests = new List<ToolCrest>(crests);
+        _pendingFromDialogue = fromDialogue;
         ResetSession();
         _session++;
-        _openStart = Time.realtimeSinceStartup;
+        bool opened = AttemptOpen(false, out deferred);
+        if (opened)
+        {
+            ClearOpenRetry();
+        }
+
+        return opened;
+    }
+
+    /// <summary>
+    /// One open attempt against the clone: arms the session, swaps the stock and sends
+    /// the open event. A clone whose FSM has not ticked yet leaves the attempt pending
+    /// instead of failing.
+    /// </summary>
+    /// <param name="retry">True when this attempt follows an earlier pending one.</param>
+    /// <param name="deferred">True when the clone was not ready and the attempt stays pending.</param>
+    /// <returns>True when the live window was opened.</returns>
+    private static bool AttemptOpen(bool retry, out bool deferred)
+    {
+        deferred = false;
+        if (!retry)
+        {
+            _openStart = Time.realtimeSinceStartup;
+        }
+
         try
         {
             ShopMenuStock? stock = OwnShopWindow.Current;
@@ -201,6 +252,11 @@ internal static class ShopCrestMenu
             }
 
             string state = ActiveState(control);
+            if (OwnWindowPolicy.IsNotReadyYet(state))
+            {
+                return Defer(state, out deferred);
+            }
+
             if (state != IdleState)
             {
                 return Fail($"'{ControlFsmName}' is in state '{state}', not '{IdleState}'");
@@ -216,8 +272,8 @@ internal static class ShopCrestMenu
             _control = control;
             BeginTeardown(root.transform);
             _origPosition = root.transform.position;
-            _crests = new List<ToolCrest>(crests);
-            _fromDialogue = fromDialogue;
+            _crests = new List<ToolCrest>(_pendingCrests ?? new List<ToolCrest>());
+            _fromDialogue = _pendingFromDialogue;
             SuppressDialogue = true;
 
             if (OwnShopWindow.Title is { Length: > 0 } title)
@@ -251,6 +307,11 @@ internal static class ShopCrestMenu
             root.AddComponent<ShopCrestSession>();
             Plugin.Log.LogInfo(
                 $"[OWN] session opened items={count} state='{ActiveState(control)}'");
+            if (retry)
+            {
+                Plugin.Log.LogInfo($"[OWN] open retry ok after {_openRetryFrames} frames");
+            }
+
             LogState($"opened with {count} crest entries");
             return true;
         }
@@ -261,11 +322,95 @@ internal static class ShopCrestMenu
         }
         finally
         {
-            if (!IsOpen)
+            // A deferred attempt owns the clone: tearing the session down here would
+            // drop the pending retry before the FSM ever ticks.
+            if (!IsOpen && !deferred)
             {
                 Restore("open failed");
             }
         }
+    }
+
+    /// <summary>
+    /// Keeps the open pending instead of failing: a fresh clone's FSM is still in its
+    /// first state. The deadline is set once, so retries never extend the wait.
+    /// </summary>
+    /// <param name="state">State the FSM reported, written to the log once.</param>
+    /// <param name="deferred">Set to true: the attempt stays pending.</param>
+    /// <returns>Always false: nothing was opened by this call.</returns>
+    private static bool Defer(string state, out bool deferred)
+    {
+        deferred = true;
+        float now = Time.unscaledTime;
+        if (_openRetryAt <= 0f)
+        {
+            _openRetryAt = now + OpenRetryInterval;
+            _openDeadlineAt = now + OpenRetryDeadline;
+            _openRetryFrames = 0;
+            Plugin.Log.LogInfo($"[OWN] open deferred: state='{state}'");
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Drives a pending open: retries every <see cref="OpenRetryInterval"/> until the
+    /// clone's FSM leaves its first state, and hands over to the custom menu once the
+    /// deadline passes. Called every frame from <see cref="Plugin.Update"/>.
+    /// </summary>
+    internal static void TickOpenRetry()
+    {
+        if (_openRetryAt <= 0f)
+        {
+            return;
+        }
+
+        List<ToolCrest>? crests = _pendingCrests;
+        if (IsOpen || CrestSelectMenu.IsOpen || crests == null)
+        {
+            ClearOpenRetry();
+            return;
+        }
+
+        // The clone is released on a scene change; there is nothing left to wait for.
+        if (OwnShopWindow.Current == null)
+        {
+            Plugin.Log.LogInfo("[OWN] open retry cancelled: clone gone");
+            ClearOpenRetry();
+            return;
+        }
+
+        _openRetryFrames++;
+        float now = Time.unscaledTime;
+        if (now < _openRetryAt)
+        {
+            return;
+        }
+
+        if (now >= _openDeadlineAt)
+        {
+            bool fromDialogue = _pendingFromDialogue;
+            ClearOpenRetry();
+            Plugin.Log.LogWarning("[OWN] open retry timeout");
+            CrestSelectMenu.OpenCustom(crests, fromDialogue);
+            return;
+        }
+
+        _openRetryAt = now + OpenRetryInterval;
+        if (AttemptOpen(true, out bool deferred) || !deferred)
+        {
+            ClearOpenRetry();
+        }
+    }
+
+    /// <summary>Drops the pending open, if any.</summary>
+    private static void ClearOpenRetry()
+    {
+        _openRetryAt = 0f;
+        _openDeadlineAt = 0f;
+        _openRetryFrames = 0;
+        _pendingCrests = null;
+        _pendingFromDialogue = false;
     }
 
     /// <summary>Crest behind a temp shop entry; null for any other item.</summary>
@@ -1225,6 +1370,9 @@ internal static class ShopCrestMenu
     {
         // The confirmation lives no longer than the window: every restore ends it.
         ShopCrestSchema.ConfirmActive = false;
+
+        // A pending open dies with the session: nothing is left to retry.
+        ClearOpenRetry();
 
         // A newer session already owns the window: this call is a leftover. Same for a
         // call with no live session and nothing left to put back.

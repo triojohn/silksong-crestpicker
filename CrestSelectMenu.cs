@@ -74,11 +74,38 @@ internal sealed class CrestSelectMenu : MonoBehaviour
                 return false;
             }
 
-            if (Plugin.UseLiveShop && ShopCrestMenu.TryOpen(crests, fromDialogue))
+            bool deferred = false;
+            if (Plugin.UseLiveShop)
             {
-                return true;
+                // A deferred open is a success for this call: the custom menu must not
+                // take over while the clone's FSM is still starting.
+                if (ShopCrestMenu.TryOpen(crests, fromDialogue, out deferred) || deferred)
+                {
+                    return true;
+                }
             }
 
+            return OpenCustom(crests, fromDialogue);
+        }
+        catch (Exception ex)
+        {
+            Plugin.Log.LogError($"[CREST] Failed to open the crest menu: {ex}");
+            IsOpen = false;
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Builds the custom crest menu. Used when the live window is switched off, has
+    /// really failed, or its open attempt timed out. Never throws.
+    /// </summary>
+    /// <param name="crests">Crests to show; must not be empty.</param>
+    /// <param name="fromDialogue">True when the choice came from the maid dialogue.</param>
+    /// <returns>True when the menu was created and is on screen.</returns>
+    internal static bool OpenCustom(List<ToolCrest> crests, bool fromDialogue)
+    {
+        try
+        {
             UIManager? ui = UIManager.instance;
             if (ui == null || ui.UICanvas == null)
             {

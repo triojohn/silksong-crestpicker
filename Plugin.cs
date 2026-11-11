@@ -213,6 +213,7 @@ public sealed class Plugin : BaseUnityPlugin
         InventoryDiag.Poll();
         UpdatePendingOffer();
         OwnShopWindow.Tick();
+        ShopCrestMenu.TickOpenRetry();
 
         if (_shopDumpHotkey.Value.IsDown())
         {
