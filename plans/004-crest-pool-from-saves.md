@@ -362,3 +362,13 @@ verify: pending
 - `CrestSelectMenu.TryOpen` — пул с `waiting=true` не пишет предупреждение, а сообщает `[CREST] crest pool is still loading, menu not opened.`; для настоящего пустого пула предупреждение прежнее.
 - Проверка: `dotnet build -c Release` — 0 предупреждений, 0 ошибок; `dotnet test CrestPicker.Tests -c Release` — 126/126; DLL скопирован в `BepInEx/plugins` (SHA256 `87BCD34E7FC426CF7D644E234E28A56235AC425C9BE4519F265474244943B2B6`). Код — коммит `1c80888`.
 - Статус: `not_run` — чтение слотов ещё не запускается (`Begin` подключает T6), поэтому в игре `FromSaves` пока ждёт; живая проверка раздела 6 — после T6–T7.
+
+### 2026-11-11 — реализация T6-T7
+
+- T6: `Plugin.RequestOffer` вызывает `CrestPoolFromSaves.Begin(slot)` после проверок слота и флага однократности; `Plugin.UpdatePendingOffer` вызывает `CrestPoolFromSaves.Tick()` каждый кадр (до всех ранних выходов) и не пытается открыть окно, пока `State == Loading` — оффер просто остаётся отложенным, повтор идёт каждый кадр, верхняя граница — прежний `OfferGrace = 2f`.
+- T6: `CrestPickerService.GetSelectableCrests(bool waitForSaves, out bool waiting)` — режим `waiting` теперь только при `Loading` и `waitForSaves=true` (диалоговый оффер); при `Failed` и `Idle` (а также при `waitForSaves=false`, то есть `F9`) пул строится с пустым объединением чужих слотов, что даёт `NothingAnywhere` → все нормальные, лог `[CREST] pool fallback reason=<failed|idle|loading>`; `elsewhere=` в итоговой строке печатает 0 при фолбэке.
+- T6: `CrestSelectMenu.TryOpen` возвращает `OpenResult { Opened, Retry, Waiting, NoPool }`; пустой пул в диалоговом оффере при `PoolMode=FromSaves` даёт `NoPool` и ровно одну строку `[CREST] offer ended: all normal crests unlocked here (slot <n>)`, `CrestOfferState` не трогается, `Plugin` снимает отложенный оффер (без `Offer dropped`).
+- T7: ключ кэша — «слот + сцена», сравнение в `Begin` (`saves cache hit slot=N` / `Reset()` + новый проход); `CrestPoolFromSaves.Tick` дополнительно проверяет `Stale()` — сменился слот (`Plugin.CurrentSlotId`, стал `internal`) или сцена во время `Loading` — и делает `Reset()` с логом `[CREST] saves read reset: slot/scene changed (slot=<n>)`; `Plugin.OnDestroy` вызывает `CrestPoolFromSaves.Reset()` в конце сессии.
+- Проверка: `dotnet build -c Release` — 0 предупреждений, 0 ошибок; `dotnet test CrestPicker.Tests -c Release` — 126/126; DLL скопирован в `BepInEx/plugins` (SHA256 `CC8669002E978DC42A561536E270DB3C48A79F071C6C0EAE1A80FA4B6A93BA6C`). Код — коммит `6ec80ad`.
+- Статус: `not_run` — живое чтение слотов, таймаут и поведение FSM проверяются вручную (раздел 6, ручной чек-лист `tester`).
+
