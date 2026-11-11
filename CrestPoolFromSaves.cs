@@ -112,6 +112,13 @@ internal static class CrestPoolFromSaves
             return;
         }
 
+        if (Stale())
+        {
+            Plugin.Log.LogInfo($"[CREST] saves read reset: slot/scene changed (slot={_slot}).");
+            Reset();
+            return;
+        }
+
         if (Time.unscaledTime > _deadline)
         {
             _state = LoadState.Failed;
@@ -241,5 +248,21 @@ internal static class CrestPoolFromSaves
     {
         GameManager? manager = GameManager.instance;
         return manager != null ? manager.sceneName : null;
+    }
+
+    /// <summary>
+    /// True when the running pass belongs to another save slot or scene: the cache is keyed
+    /// by both, so the pass is dropped instead of being finished under the wrong key.
+    /// </summary>
+    private static bool Stale()
+    {
+        int slot = Plugin.CurrentSlotId();
+        if (slot >= 0 && slot != _slot)
+        {
+            return true;
+        }
+
+        string? scene = CurrentScene();
+        return scene != null && _scene != null && scene != _scene;
     }
 }

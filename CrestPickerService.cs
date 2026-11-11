@@ -27,9 +27,13 @@ internal static class CrestPickerService
     /// The currently equipped crest is excluded only while <c>IncludeEquippedCrest</c>
     /// is false.
     /// </summary>
+    /// <param name="waitForSaves">
+    /// True for the dialogue offer: an unfinished read defers the pool instead of falling back.
+    /// False for direct opens (the test hotkey), which fall back to every normal crest.
+    /// </param>
     /// <param name="waiting">True when the cross-save read has not finished; the list is empty.</param>
     /// <returns>Selectable crests in crest-list order; empty on failure or while waiting.</returns>
-    internal static List<ToolCrest> GetSelectableCrests(out bool waiting)
+    internal static List<ToolCrest> GetSelectableCrests(bool waitForSaves, out bool waiting)
     {
         waiting = false;
         try
@@ -53,21 +57,37 @@ internal static class CrestPickerService
             List<CrestFacts> selected;
             if (PoolMode == CrestPoolMode.FromSaves)
             {
-                if (CrestPoolFromSaves.State != CrestPoolFromSaves.LoadState.Ready)
+                CrestPoolFromSaves.LoadState state = CrestPoolFromSaves.State;
+                if (state == CrestPoolFromSaves.LoadState.Loading && waitForSaves)
                 {
                     waiting = true;
                     Plugin.Log.LogInfo(
-                        $"[CREST] pool source=saves state={CrestPoolFromSaves.State}" +
+                        $"[CREST] pool source=saves state={state}" +
                         $" slots={CrestPoolFromSaves.SlotsRead} waiting.");
                     return new List<ToolCrest>();
                 }
 
-                CrestPoolSelection selection = CrossSavePool.Build(
-                    facts, new[] { CrestPoolFromSaves.Elsewhere }, includeEquipped);
+                IEnumerable<IEnumerable<string>> slots;
+                int elsewhere;
+                if (state == CrestPoolFromSaves.LoadState.Ready)
+                {
+                    slots = new[] { CrestPoolFromSaves.Elsewhere };
+                    elsewhere = CrestPoolFromSaves.Elsewhere.Count;
+                }
+                else
+                {
+                    // No saves to read: the pool is built as if no other slot owns anything.
+                    Plugin.Log.LogInfo(
+                        $"[CREST] pool fallback reason={state.ToString().ToLowerInvariant()}");
+                    slots = Array.Empty<IEnumerable<string>>();
+                    elsewhere = 0;
+                }
+
+                CrestPoolSelection selection = CrossSavePool.Build(facts, slots, includeEquipped);
                 selected = selection.Crests;
                 Plugin.Log.LogInfo(
                     $"[CREST] pool source=saves slots={CrestPoolFromSaves.SlotsRead}" +
-                    $" elsewhere={CrestPoolFromSaves.Elsewhere.Count} here={selection.UnlockedHere}" +
+                    $" elsewhere={elsewhere} here={selection.UnlockedHere}" +
                     $" pool={selected.Count} reason={ReasonName(selection.Empty)}" +
                     $" names={string.Join(",", selected.Select(fact => fact.Name))}");
             }

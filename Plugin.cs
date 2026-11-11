@@ -284,6 +284,7 @@ public sealed class Plugin : BaseUnityPlugin
                 return;
             }
 
+            CrestPoolFromSaves.Begin(slot);
             _offerDeadline = Time.unscaledTime + OfferGrace;
             Log.LogInfo($"[CREST] Offer requested for slot {slot}.");
         }
@@ -296,15 +297,31 @@ public sealed class Plugin : BaseUnityPlugin
     /// <summary>Opens a pending offer once the game is playable; drops it after a grace period.</summary>
     private void UpdatePendingOffer()
     {
+        CrestPoolFromSaves.Tick();
+
         if (_offerDeadline <= 0f || CrestSelectMenu.IsOpen)
         {
             return;
         }
 
-        if (IsInGame() && CrestSelectMenu.TryOpen(fromDialogue: true))
+        // While the other save slots are being read the offer simply stays pending: the
+        // read finishes (or times out to the all-normals fallback) inside its own budget,
+        // which matches the grace below.
+        bool savesPending = CrestPickerService.PoolMode == CrestPoolMode.FromSaves
+            && CrestPoolFromSaves.State == CrestPoolFromSaves.LoadState.Loading;
+
+        if (IsInGame() && !savesPending)
         {
-            _offerDeadline = 0f;
-            return;
+            switch (CrestSelectMenu.TryOpen(fromDialogue: true))
+            {
+                case CrestSelectMenu.OpenResult.Opened:
+                    _offerDeadline = 0f;
+                    return;
+
+                case CrestSelectMenu.OpenResult.NoPool:
+                    _offerDeadline = 0f;
+                    return;
+            }
         }
 
         if (Time.unscaledTime > _offerDeadline)
@@ -328,7 +345,7 @@ public sealed class Plugin : BaseUnityPlugin
     }
 
     /// <summary>Game save slot index, taken from the fields the save system uses.</summary>
-    private static int CurrentSlotId()
+    internal static int CurrentSlotId()
     {
         GameManager? manager = GameManager.instance;
         if (manager != null && manager.profileID >= 0)
@@ -356,6 +373,7 @@ public sealed class Plugin : BaseUnityPlugin
 
     private void OnDestroy()
     {
+        CrestPoolFromSaves.Reset();
         CrestSelectMenu.Closed -= OnMenuClosed;
         _harmony?.UnpatchSelf();
     }
