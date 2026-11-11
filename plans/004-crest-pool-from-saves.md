@@ -372,3 +372,9 @@ verify: pending
 - Проверка: `dotnet build -c Release` — 0 предупреждений, 0 ошибок; `dotnet test CrestPicker.Tests -c Release` — 126/126; DLL скопирован в `BepInEx/plugins` (SHA256 `CC8669002E978DC42A561536E270DB3C48A79F071C6C0EAE1A80FA4B6A93BA6C`). Код — коммит `6ec80ad`.
 - Статус: `not_run` — живое чтение слотов, таймаут и поведение FSM проверяются вручную (раздел 6, ручной чек-лист `tester`).
 
+### 2026-11-11 — реализация T8
+
+- T8: `CrestPoolFromSaves.cs`, `CrestPickerService.cs`, `CrestSelectMenu.cs`, `Plugin.cs` — маркеры сведены к префиксу `[POOL]` (по прямому указанию оркестратора; в тексте T8 было `[CREST]`): `slot <n>: crests=<m> err=<...>`, `read done slots=<k> unique=<m> ms=<n>`, `cache hit slot=<n> unique=<m>`, `read reset: ...`, `read failed: <reason>`, `waiting slots=<k>`, `fallback reason=<idle|loading|failed>`, `source=saves|all|unlocked ...`, `offer skipped: ...`, `mode=...`. Убраны `saves read start` и построчный дамп всех гребней (`[CREST]   <name> base=...`); `fallback` теперь одна строка перед строкой выбора пула; лог «меню ещё грузится» в `CrestSelectMenu` убран как дубль `[POOL] waiting`.
+- Проверка: `dotnet build -c Release` — 0 предупреждений, 0 ошибок; `dotnet test CrestPicker.Tests -c Release` — 126/126; DLL скопирован в `BepInEx/plugins` (SHA256 `E84A234B91B017549DCCF6466F68CED66A851CF79E94BFE6D9D95F869E3F84ED`). Код — коммит `53a3211`, запушен в `origin/master`.
+- Статус: `not_run` — маркеры проверяются вручную в игре; чек-лист для `tester` передан в отчёте.
+
