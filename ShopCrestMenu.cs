@@ -12,16 +12,14 @@ using UnityEngine;
 namespace CrestPicker;
 
 /// <summary>
-/// Shows the crest choice in the game's own live shop window: the shop object the
-/// scene's <see cref="ShopOwnerBase"/> already spawned. The window is moved to the
-/// hero, its stock is swapped for free temp entries, and the shop FSM is asked to
-/// open. Vanilla stock and position are restored when the FSM returns to idle.
-/// Never throws.
+/// Shows the crest choice in our own clone of the shop prefab
+/// (<see cref="OwnShopWindow"/>). The clone is moved to the hero, its stock is swapped
+/// for free temp entries, and its shop FSM is asked to open. The vanilla window of the
+/// scene's <see cref="ShopOwnerBase"/> is never touched. Never throws.
 /// </summary>
 internal static class ShopCrestMenu
 {
     private const BindingFlags PrivateInstance = BindingFlags.Instance | BindingFlags.NonPublic;
-    private const BindingFlags PrivateStatic = BindingFlags.Static | BindingFlags.NonPublic;
 
     /// <summary>FSM on the shop root that drives the window.</summary>
     private const string ControlFsmName = "shop_control";
@@ -50,9 +48,6 @@ internal static class ShopCrestMenu
     /// <summary>Panel centre is lifted this far above the hero so the window reads centred.</summary>
     private const float UiLift = 0.8f;
 
-    private static readonly FieldInfo? SpawnedShopField =
-        typeof(ShopOwnerBase).GetField("_spawnedShop", PrivateStatic);
-
     private static readonly FieldInfo? StockArrayField =
         typeof(ShopMenuStock).GetField("stock", PrivateInstance);
 
@@ -72,9 +67,6 @@ internal static class ShopCrestMenu
     private static Transform? _root;
     private static PlayMakerFSM? _control;
 
-    /// <summary>Vanilla stock per swapped stock component, restored on close.</summary>
-    private static readonly Dictionary<ShopMenuStock, ShopItem[]> Swapped =
-        new Dictionary<ShopMenuStock, ShopItem[]>();
     private static Vector3 _origPosition;
     private static float _boundShift;
     private static bool _fromDialogue;
@@ -146,7 +138,7 @@ internal static class ShopCrestMenu
     private static int _purchaseFrame;
     private static int _purchaseLines;
 
-    /// <summary>True from the moment the close is sent until the full restore finished.</summary>
+    /// <summary>True from the moment the close is sent until the session state is dropped.</summary>
     internal static bool _closing;
 
     /// <summary>True while the live shop window is showing our crests.</summary>
@@ -404,8 +396,8 @@ internal static class ShopCrestMenu
     }
 
     /// <summary>
-    /// Puts <paramref name="items"/> on the root window and on every nested stock
-    /// list, so no list keeps a vanilla array. Original arrays are kept for restore.
+    /// Puts <paramref name="items"/> on the window root and on every nested stock
+    /// list of our clone, so no list keeps the prefab array.
     /// </summary>
     private static void SwapStock(ShopItem[] items)
     {
@@ -417,11 +409,6 @@ internal static class ShopCrestMenu
 
         foreach (ShopMenuStock stock in _root.GetComponentsInChildren<ShopMenuStock>(true))
         {
-            if (!Swapped.ContainsKey(stock) && StockArrayField?.GetValue(stock) is ShopItem[] original)
-            {
-                Swapped[stock] = original;
-            }
-
             stock.SetStock(items);
             stock.SetWasItemPurchased(false);
             Plugin.Log.LogInfo(
@@ -442,9 +429,9 @@ internal static class ShopCrestMenu
         }
 
         bool lost = false;
-        foreach (KeyValuePair<ShopMenuStock, ShopItem[]> pair in Swapped)
+        foreach (ShopMenuStock stock in _root.GetComponentsInChildren<ShopMenuStock>(true))
         {
-            if (pair.Key != null && StockArrayField?.GetValue(pair.Key) != _swapItems)
+            if (stock != null && StockArrayField?.GetValue(stock) != _swapItems)
             {
                 lost = true;
                 break;
@@ -573,7 +560,7 @@ internal static class ShopCrestMenu
         }
     }
 
-    /// <summary>Puts <c>shop_control</c> back to idle and restores the vanilla window.</summary>
+    /// <summary>Puts <c>shop_control</c> back to idle and tears the session down.</summary>
     /// <param name="reason">What forced the state, written to the log.</param>
     private static void ForceIdle(string reason)
     {
@@ -1154,7 +1141,8 @@ internal static class ShopCrestMenu
         _root.position = next;
         _boundShift = next.y - _origPosition.y;
         ShiftRowBounds(_boundShift);
-        LogState($"placed at hero={Vec(hero)} panel={Vec(panelCentre)}");
+        Plugin.Log.LogInfo(
+            $"[OWN] window placed at hero={Vec(hero)} panel={Vec(panelCentre)} root={Vec(next)}");
     }
 
     /// <summary>
@@ -1223,7 +1211,7 @@ internal static class ShopCrestMenu
         }
     }
 
-    /// <summary>Puts the vanilla stock and the original window position back.</summary>
+    /// <summary>Ends our session: the window FSM already closed the clone, we drop our state.</summary>
     /// <param name="reason">Where the session ended; logged with the input release.</param>
     /// <param name="emergency">
     /// True when the vanilla close chain never ran, so the fade and the prompts must be
@@ -1271,39 +1259,15 @@ internal static class ShopCrestMenu
         try
         {
             Step("cosmetics", ShopCosmetics.End);
-            Step("stock", () =>
-            {
-                foreach (KeyValuePair<ShopMenuStock, ShopItem[]> pair in Swapped)
-                {
-                    if (pair.Key != null)
-                    {
-                        pair.Key.SetStock(pair.Value);
-                        pair.Key.SetWasItemPurchased(false);
-                    }
-                }
-            });
-            Step("stock lists", () =>
-            {
-                Swapped.Clear();
-                BuildLists();
-            });
             Step("teardown", () => TeardownShop(emergency));
             Step("alpha", RestoreAlpha);
             Step("prompts", RestorePrompts);
-            Step("position", () =>
-            {
-                if (_root != null)
-                {
-                    ShiftRowBounds(-_boundShift);
-                    _root.position = _origPosition;
-                }
-            });
-
-            Plugin.Log.LogInfo($"[SHOP] live shop restored to vanilla stock and position (reason={reason}).");
+            int items = _swapItems.Length;
+            Plugin.Log.LogInfo($"[OWN] session closed items={items}");
         }
         catch (Exception ex)
         {
-            Plugin.Log.LogWarning($"[SHOP] live shop restore failed: {ex.Message}");
+            Plugin.Log.LogWarning($"[SHOP] session close failed: {ex.Message}");
         }
         finally
         {
@@ -1336,7 +1300,6 @@ internal static class ShopCrestMenu
         LogResetDiag();
         TempItems.Clear();
         DestroyTempItems();
-        Swapped.Clear();
         _swapItems = Array.Empty<ShopItem>();
         _crests = new List<ToolCrest>();
         _stock = null;
@@ -1381,34 +1344,6 @@ internal static class ShopCrestMenu
         }
 
         _tempItems.Clear();
-    }
-
-    /// <summary>The spawned shop window of the scene, even while it is hidden.</summary>
-    private static ShopMenuStock? SpawnedStock()
-    {
-        try
-        {
-            return SpawnedShopField?.GetValue(null) as ShopMenuStock;
-        }
-        catch (Exception)
-        {
-            return null;
-        }
-    }
-
-    /// <summary>Owner property fallback; it re-applies the owner stock before we read it.</summary>
-    private static ShopMenuStock? FallbackStock(ShopOwnerBase owner)
-    {
-        try
-        {
-            GameObject? shopObject = owner.ShopObject;
-            return shopObject != null ? shopObject.GetComponent<ShopMenuStock>() : null;
-        }
-        catch (Exception ex)
-        {
-            Plugin.Log.LogWarning($"[SHOP] owner shop lookup failed: {ex.Message}");
-            return null;
-        }
     }
 
     /// <summary>The <c>shop_control</c> FSM on the window root.</summary>
@@ -1738,9 +1673,8 @@ internal static class ShopCrestMenu
 }
 
 /// <summary>
-/// Lives on the live shop root while our stock is shown: restores the vanilla stock
-/// and position as soon as <c>shop_control</c> returns to idle. A timeout restores
-/// it too, so a stuck window cannot keep foreign stock forever.
+/// Lives on our shop window clone while our stock is shown: closes the session as
+/// soon as <c>shop_control</c> returns to idle. A timeout ends a stuck session too.
 /// </summary>
 internal sealed class ShopCrestSession : MonoBehaviour
 {
@@ -1798,7 +1732,7 @@ internal sealed class ShopCrestSession : MonoBehaviour
 
             if (ShopCrestMenu.ClosedByFsm())
             {
-                Plugin.Log.LogInfo("[SHOP] shop FSM returned to idle, restoring vanilla shop.");
+                Plugin.Log.LogInfo("[SHOP] shop FSM returned to idle, ending the session.");
                 ShopCrestMenu.Restore("fsm idle", false, _session);
                 Destroy(this);
                 return;
@@ -1806,7 +1740,7 @@ internal sealed class ShopCrestSession : MonoBehaviour
 
             if (Time.unscaledTime > _deadline)
             {
-                Plugin.Log.LogWarning("[SHOP] live shop session timed out, restoring vanilla shop.");
+                Plugin.Log.LogWarning("[SHOP] live shop session timed out, closing it.");
                 ShopCrestMenu.Restore("timeout", false, _session);
                 Destroy(this);
             }
