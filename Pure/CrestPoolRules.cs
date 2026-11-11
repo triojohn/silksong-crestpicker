@@ -23,10 +23,7 @@ internal enum CrestPoolMode
 /// <summary>Selectable-crest rules, free of any game types so they can be unit tested.</summary>
 internal static class CrestPoolRules
 {
-    /// <summary>
-    /// Tells whether one crest counts as normal: a base version that is not hidden.
-    /// The same filter the game uses in ToolItemManager.GetUnlockedCrestsCount.
-    /// </summary>
+    /// <summary>Tells whether one crest counts as normal: a base version that is not hidden.</summary>
     /// <param name="isBase">Crest is the base version, not an upgrade.</param>
     /// <param name="isHidden">Crest is hidden from the vanilla crest list.</param>
     /// <returns>True when the crest is a normal crest.</returns>
@@ -36,8 +33,8 @@ internal static class CrestPoolRules
     }
 
     /// <summary>
-    /// Tells whether one crest may appear in the picker: normal crests, and unlocked
-    /// ones only in <see cref="CrestPoolMode.Unlocked"/>.
+    /// Tells whether one crest may appear in the picker: base versions that are not
+    /// hidden, and unlocked ones only in <see cref="CrestPoolMode.Unlocked"/>.
     /// </summary>
     /// <param name="isBase">Crest is the base version, not a tool variant.</param>
     /// <param name="isHidden">Crest is hidden from the vanilla crest list.</param>
@@ -46,7 +43,7 @@ internal static class CrestPoolRules
     /// <returns>True when the crest may be offered.</returns>
     internal static bool IsSelectable(bool isBase, bool isHidden, bool isUnlocked, CrestPoolMode mode)
     {
-        if (!IsNormal(isBase, isHidden))
+        if (!isBase || isHidden)
         {
             return false;
         }
