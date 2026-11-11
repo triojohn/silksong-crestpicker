@@ -147,6 +147,43 @@ internal static class OwnShopWindow
         }
     }
 
+    /// <summary>
+    /// Switches the whole clone off, so nothing of it stays on screen between sessions.
+    /// The clone object is kept: the next session reuses it.
+    /// </summary>
+    internal static void Hide()
+    {
+        try
+        {
+            if (_container != null && _container.activeSelf)
+            {
+                _container.SetActive(false);
+                Plugin.Log.LogInfo("[OWN] window hidden");
+            }
+        }
+        catch (Exception ex)
+        {
+            Plugin.Log.LogWarning($"[OWN] hide failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>Switches the clone back on before a session uses it; a no-op when it is already on.</summary>
+    internal static void EnsureActive()
+    {
+        try
+        {
+            if (_container != null && !_container.activeSelf)
+            {
+                _container.SetActive(true);
+                Plugin.Log.LogInfo("[OWN] window reactivated");
+            }
+        }
+        catch (Exception ex)
+        {
+            Plugin.Log.LogWarning($"[OWN] reactivate failed: {ex.Message}");
+        }
+    }
+
     /// <summary>Destroys the clone root and clears the cached references.</summary>
     private static void Release(string reason)
     {

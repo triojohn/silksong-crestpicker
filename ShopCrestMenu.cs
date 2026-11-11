@@ -30,6 +30,9 @@ internal static class ShopCrestMenu
     /// <summary>Event that closes the window again.</summary>
     private const string CloseEvent = "CLOSE SHOP WINDOW";
 
+    /// <summary>Event that puts a clone left mid-chain back to its resting state.</summary>
+    private const string ResetEvent = "RESET SHOP WINDOW";
+
     /// <summary>Event the window FSM needs to fade its borders and prompts back in.</summary>
     private const string BordesUpEvent = "FLUERS UP";
 
@@ -240,6 +243,10 @@ internal static class ShopCrestMenu
             }
 
             GameObject root = stock.gameObject;
+
+            // The clone is switched off between sessions; the FSM does not tick while it
+            // is off, so nothing but its saved state can be stale here.
+            OwnShopWindow.EnsureActive();
             if (!root.activeInHierarchy)
             {
                 return Fail($"own shop window '{root.name}' is inactive");
@@ -259,7 +266,16 @@ internal static class ShopCrestMenu
 
             if (state != IdleState)
             {
-                return Fail($"'{ControlFsmName}' is in state '{state}', not '{IdleState}'");
+                // Leaving the clone switched off cuts a close chain short, so the FSM can
+                // rest outside idle. Ask the FSM for its resting state and wait for it.
+                if (!HasEvent(control, ResetEvent))
+                {
+                    return Fail($"'{ControlFsmName}' is in state '{state}', not '{IdleState}'");
+                }
+
+                Plugin.Log.LogInfo($"[OWN] reset '{ControlFsmName}' from state '{state}'");
+                control.SendEvent(ResetEvent);
+                return Defer(ActiveState(control), out deferred);
             }
 
             if (!HasEvent(control, OpenEvent))
@@ -1386,6 +1402,11 @@ internal static class ShopCrestMenu
             }
 
             RestorePrompts();
+            if (!foreign)
+            {
+                OwnShopWindow.Hide();
+            }
+
             Plugin.Log.LogInfo($"[SHOP] restore skipped, no session of ours (reason={reason} ours={session} now={_session} open={IsOpen})");
             return;
         }
@@ -1399,6 +1420,7 @@ internal static class ShopCrestMenu
         {
             IsOpen = false;
             RestorePrompts();
+            OwnShopWindow.Hide();
             ResetSession();
             _closing = false;
             return;
@@ -1423,6 +1445,7 @@ internal static class ShopCrestMenu
             CrestSelectMenu.IsOpen = false;
             ResetSession();
             _closing = false;
+            OwnShopWindow.Hide();
         }
     }
 
