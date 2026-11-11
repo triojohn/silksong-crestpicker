@@ -90,15 +90,14 @@ internal sealed class CrestSelectMenu : MonoBehaviour
             {
                 if (waiting)
                 {
-                    Plugin.Log.LogInfo("[CREST] crest pool is still loading, menu not opened.");
                     return OpenResult.Waiting;
                 }
 
                 if (fromDialogue && CrestPickerService.PoolMode == CrestPoolMode.FromSaves)
                 {
                     Plugin.Log.LogInfo(
-                        "[CREST] offer ended: all normal crests unlocked here" +
-                        $" (slot {Plugin.CurrentSlotId()}).");
+                        "[POOL] offer skipped: all normal crests unlocked here" +
+                        $" (slot {Plugin.CurrentSlotId()})");
                     return OpenResult.NoPool;
                 }
 

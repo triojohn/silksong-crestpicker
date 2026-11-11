@@ -182,8 +182,8 @@ public sealed class Plugin : BaseUnityPlugin
         ShopCosmetics.RowLabelOffsetY = _rowLabelOffsetY;
         ShopCosmetics.CentreSourceConfig = _textCentreSource;
         Logger.LogInfo(CrestPickerService.PoolMode == CrestPoolMode.FromSaves
-            ? "[CREST] pool mode: FromSaves (IgnoreUnlockState ignored)."
-            : $"[CREST] pool mode: {CrestPickerService.PoolMode}" +
+            ? "[POOL] mode=FromSaves (IgnoreUnlockState ignored)."
+            : $"[POOL] mode={CrestPickerService.PoolMode}" +
               $" (IgnoreUnlockState={IgnoreUnlockState.Value}, GrantAllCrests={_grantAllCrests.Value}," +
               $" CrestPool={_crestPool.Value}).");
         CrestSelectMenu.Closed += OnMenuClosed;

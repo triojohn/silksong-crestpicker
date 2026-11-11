@@ -80,7 +80,7 @@ internal static class CrestPoolFromSaves
         if (_state == LoadState.Ready && _slot == currentSlot && _scene != null && _scene == scene)
         {
             Plugin.Log.LogInfo(
-                $"[CREST] saves cache hit slot={currentSlot} unique={_elsewhere.Count}");
+                $"[POOL] cache hit slot={currentSlot} unique={_elsewhere.Count}");
             return;
         }
 
@@ -98,7 +98,6 @@ internal static class CrestPoolFromSaves
         }
 
         _state = LoadState.Loading;
-        Plugin.Log.LogInfo($"[CREST] saves read start slot={currentSlot} queued={_queue.Count}");
     }
 
     /// <summary>
@@ -114,18 +113,14 @@ internal static class CrestPoolFromSaves
 
         if (Stale())
         {
-            Plugin.Log.LogInfo($"[CREST] saves read reset: slot/scene changed (slot={_slot}).");
+            Plugin.Log.LogInfo($"[POOL] read reset: slot/scene changed (slot={_slot})");
             Reset();
             return;
         }
 
         if (Time.unscaledTime > _deadline)
         {
-            _state = LoadState.Failed;
-            _pending = false;
-            Plugin.Log.LogWarning(
-                $"[CREST] saves read timeout after {TimeoutSeconds:0}s" +
-                $" slots={_slotsRead} unique={_elsewhere.Count}");
+            Fail($"timeout after {TimeoutSeconds:0}s slots={_slotsRead} unique={_elsewhere.Count}");
             return;
         }
 
@@ -218,7 +213,7 @@ internal static class CrestPoolFromSaves
         _state = LoadState.Ready;
         int elapsedMs = (int)((Time.unscaledTime - _startedAt) * 1000f);
         Plugin.Log.LogInfo(
-            $"[CREST] saves read: slots={_slotsRead} unique={_elsewhere.Count} inMs={elapsedMs}");
+            $"[POOL] read done slots={_slotsRead} unique={_elsewhere.Count} ms={elapsedMs}");
     }
 
     /// <summary>Gives up on the pass and logs why.</summary>
@@ -226,13 +221,13 @@ internal static class CrestPoolFromSaves
     {
         _state = LoadState.Failed;
         _pending = false;
-        Plugin.Log.LogError($"[CREST] saves read failed: {reason}");
+        Plugin.Log.LogWarning($"[POOL] read failed: {reason}");
     }
 
     /// <summary>One line per slot: how many crests it added and what went wrong, if anything.</summary>
     private static void LogSlot(int slot, int crests, string error)
     {
-        string line = $"[CREST] save slot {slot}: crests={crests} err={error}";
+        string line = $"[POOL] slot {slot}: crests={crests} err={error}";
         if (error == "none" || error == "empty")
         {
             Plugin.Log.LogInfo(line);

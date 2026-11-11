@@ -61,9 +61,7 @@ internal static class CrestPickerService
                 if (state == CrestPoolFromSaves.LoadState.Loading && waitForSaves)
                 {
                     waiting = true;
-                    Plugin.Log.LogInfo(
-                        $"[CREST] pool source=saves state={state}" +
-                        $" slots={CrestPoolFromSaves.SlotsRead} waiting.");
+                    Plugin.Log.LogInfo($"[POOL] waiting slots={CrestPoolFromSaves.SlotsRead}");
                     return new List<ToolCrest>();
                 }
 
@@ -78,7 +76,7 @@ internal static class CrestPickerService
                 {
                     // No saves to read: the pool is built as if no other slot owns anything.
                     Plugin.Log.LogInfo(
-                        $"[CREST] pool fallback reason={state.ToString().ToLowerInvariant()}");
+                        $"[POOL] fallback reason={state.ToString().ToLowerInvariant()}");
                     slots = Array.Empty<IEnumerable<string>>();
                     elsewhere = 0;
                 }
@@ -86,8 +84,7 @@ internal static class CrestPickerService
                 CrestPoolSelection selection = CrossSavePool.Build(facts, slots, includeEquipped);
                 selected = selection.Crests;
                 Plugin.Log.LogInfo(
-                    $"[CREST] pool source=saves slots={CrestPoolFromSaves.SlotsRead}" +
-                    $" elsewhere={elsewhere} here={selection.UnlockedHere}" +
+                    $"[POOL] source=saves elsewhere={elsewhere} here={selection.UnlockedHere}" +
                     $" pool={selected.Count} reason={ReasonName(selection.Empty)}" +
                     $" names={string.Join(",", selected.Select(fact => fact.Name))}");
             }
@@ -95,28 +92,14 @@ internal static class CrestPickerService
             {
                 bool ignoreUnlock = Plugin.IgnoreUnlockState.Value;
                 selected = CrestPoolRules.Select(facts, PoolMode, ignoreUnlock, includeEquipped);
-                int excluded = includeEquipped
-                    ? 0
-                    : CrestPoolRules.Select(facts, PoolMode, ignoreUnlock, includeEquipped: true).Count
-                        - selected.Count;
                 Plugin.Log.LogInfo(
-                    $"[CREST] pool source=config pool={selected.Count} mode={PoolMode}" +
+                    $"[POOL] source={PoolMode.ToString().ToLowerInvariant()} pool={selected.Count}" +
                     $" ignoreUnlock={ignoreUnlock} includeEquipped={includeEquipped}" +
                     $" all={all.Count}" +
-                    $" names={string.Join(",", selected.Select(fact => fact.Name))}" +
-                    $" (equipped excluded={excluded}).");
+                    $" names={string.Join(",", selected.Select(fact => fact.Name))}");
             }
 
-            List<ToolCrest> pool = selected.Select(fact => byName[fact.Name]).ToList();
-            foreach (ToolCrest? crest in all)
-            {
-                Plugin.Log.LogInfo(crest == null
-                    ? "[CREST]   <null>"
-                    : $"[CREST]   {crest.name} base={crest.IsBaseVersion}" +
-                        $" hidden={crest.IsHidden} unlocked={crest.IsUnlocked}");
-            }
-
-            return pool;
+            return selected.Select(fact => byName[fact.Name]).ToList();
         }
         catch (Exception ex)
         {
