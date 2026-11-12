@@ -338,9 +338,88 @@ internal static class ShopCrestSchema
             _detailsSchema.Container.SetActive(true);
         }
 
+        AnchorSchema(_detailsSchema, bounds);
         FitHeight(_detailsSchema, bounds);
         PlaceAt(_detailsSchema, bounds);
+        LogAnchor(_detailsSchema, bounds);
         LogGeometry(_detailsSchema, bounds);
+    }
+
+    /// <summary>
+    /// Measures the description rect bottom once per build and stores the schema top under it.
+    /// The rect corners come from the object itself, so the anchor does not depend on drawn
+    /// glyphs; a missing rect or a non-finite corner leaves the old panel offset in charge.
+    /// </summary>
+    /// <param name="schema">Schema built for the current crest.</param>
+    /// <param name="panel">World bounds of the details panel.</param>
+    private static void AnchorSchema(Schema schema, Bounds panel)
+    {
+        if (schema.AnchorTried)
+        {
+            return;
+        }
+
+        schema.AnchorTried = true;
+        if (_descLabel != null && _builtFor != null &&
+            WriteText(_descLabel, (string)_builtFor.Description ?? string.Empty))
+        {
+            _descLabel.ForceMeshUpdate();
+        }
+
+        if (!(_descLabel?.rectTransform is RectTransform rect))
+        {
+            Plugin.Log.LogInfo("[SCHEMA] anchor fallback (no rect)");
+            return;
+        }
+
+        Vector3[] corners = new Vector3[4];
+        rect.GetWorldCorners(corners);
+        float bottom = Mathf.Min(corners[0].y, corners[1].y);
+        if (!Geometry.IsSane(bottom))
+        {
+            Plugin.Log.LogInfo("[SCHEMA] anchor fallback (no rect)");
+            return;
+        }
+
+        schema.DescBottom = bottom;
+        schema.Top = SchemaPlacement.TopFromRectBottom(bottom, SchemaPlacement.GapFraction, panel.size.y);
+        schema.AnchorKnown = true;
+    }
+
+    /// <summary>
+    /// World Y of the schema centre under the measured description bottom, pulled back inside
+    /// the panel when the silhouette would leave it. The drawn size is not touched here.
+    /// </summary>
+    /// <param name="schema">Schema to place.</param>
+    /// <param name="panel">World bounds of the details panel.</param>
+    private static float AnchorCentreY(Schema schema, Bounds panel)
+    {
+        float h = WorldHeight(schema.Body);
+        float centre = SchemaPlacement.CentreYFromTop(schema.Top, h);
+        float clamped = SchemaPlacement.ClampCentreY(centre, h / 2f, panel.min.y, panel.max.y);
+        if (SchemaPlacement.IsClamped(centre, h / 2f, panel.min.y, panel.max.y) && !schema.ClampLogged)
+        {
+            schema.ClampLogged = true;
+            Plugin.Log.LogInfo($"[SCHEMA] anchor clamped dy={clamped - centre:F3}");
+        }
+
+        return clamped;
+    }
+
+    /// <summary>One <c>[SCHEMA] anchor</c> line per build with the numbers the placement used.</summary>
+    /// <param name="schema">Details schema that was just placed.</param>
+    /// <param name="panel">World bounds of the details panel.</param>
+    private static void LogAnchor(Schema schema, Bounds panel)
+    {
+        if (!schema.AnchorKnown || schema.AnchorLogged)
+        {
+            return;
+        }
+
+        schema.AnchorLogged = true;
+        Plugin.Log.LogInfo($"[SCHEMA] anchor rectBottom={schema.DescBottom:F3}" +
+            $" gap={SchemaPlacement.GapFraction * panel.size.y:F3} top={schema.Top:F3}" +
+            $" h={WorldHeight(schema.Body):F3} centre={AnchorCentreY(schema, panel):F3}");
     }
 
     /// <summary>
@@ -355,7 +434,9 @@ internal static class ShopCrestSchema
     {
         Transform container = schema.Container.transform;
         float targetX = panel.center.x;
-        float targetY = SchemaPlacement.TargetY(panel.min.y, panel.center.y, panel.size.y, OffsetY);
+        float targetY = schema.AnchorKnown
+            ? AnchorCentreY(schema, panel)
+            : SchemaPlacement.TargetY(panel.min.y, panel.center.y, panel.size.y, OffsetY);
         if (!schema.OffsetKnown)
         {
             Vector3 offset = SilhouetteBounds(schema).center - container.position;
@@ -1754,7 +1835,9 @@ internal static class ShopCrestSchema
             LogVanillaGeometry();
             LogWindowGeometry();
             float measured = WorldHeight(schema.Body);
-            float targetY = SchemaPlacement.TargetY(panel.min.y, panel.center.y, panel.size.y, OffsetY);
+            float targetY = schema.AnchorKnown
+                ? AnchorCentreY(schema, panel)
+                : SchemaPlacement.TargetY(panel.min.y, panel.center.y, panel.size.y, OffsetY);
             Plugin.Log.LogInfo($"[GEO] computed target={targetY:F3} measured={measured:F3}" +
                 $" scale={_geoScale:F4}");
         }
@@ -2158,6 +2241,24 @@ internal static class ShopCrestSchema
 
         /// <summary>True once the container was scaled to the panel fill.</summary>
         internal bool FitApplied { get; set; }
+
+        /// <summary>True once the description rect was measured for this build.</summary>
+        internal bool AnchorTried { get; set; }
+
+        /// <summary>True when the description rect gave a usable bottom.</summary>
+        internal bool AnchorKnown { get; set; }
+
+        /// <summary>World Y of the description rect bottom, measured once per build.</summary>
+        internal float DescBottom { get; set; }
+
+        /// <summary>World Y of the schema top derived from <see cref="DescBottom"/>.</summary>
+        internal float Top { get; set; }
+
+        /// <summary>True once the anchor numbers were logged for this build.</summary>
+        internal bool AnchorLogged { get; set; }
+
+        /// <summary>True once the panel clamp was logged for this build.</summary>
+        internal bool ClampLogged { get; set; }
 
         internal List<SpriteRenderer> Dots { get; } = new List<SpriteRenderer>();
 
