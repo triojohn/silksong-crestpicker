@@ -107,6 +107,16 @@ internal static class ShopCrestMenu
     /// <summary>True after the emergency path hid the prompts, so <see cref="Restore"/> puts them back.</summary>
     private static bool _promptsHidden;
 
+    /// <summary>Confirm group of the clone and the vanilla item picture inside it.</summary>
+    private static Transform? _confirmGroup;
+    private static GameObject? _confirmSprite;
+
+    /// <summary>Vanilla active state of the item picture, captured on the first hide.</summary>
+    private static bool _confirmSpriteWasActive;
+
+    /// <summary>True while both crest pictures are off for the vanilla confirmation.</summary>
+    private static bool _confirmSpritesHidden;
+
     /// <summary>True after the emergency path asked the window FSM to fade its borders out.</summary>
     private static bool _bordesDown;
 
@@ -907,6 +917,91 @@ internal static class ShopCrestMenu
         }
     }
 
+    /// <summary>
+    /// Keeps both crest pictures off while the vanilla purchase confirmation is up: the
+    /// vanilla item sprite inside the confirm group and our schema in the details panel.
+    /// Called every frame of the session; the flag keeps it cheap.
+    /// </summary>
+    internal static void TickConfirmSprites()
+    {
+        if (!IsOpen || _root == null)
+        {
+            return;
+        }
+
+        try
+        {
+            if (_confirmGroup == null)
+            {
+                _confirmGroup = FindChild(_root, "Item Confirm Group");
+                _confirmSprite = _confirmGroup != null
+                    ? FindChild(_confirmGroup, "Item Sprite")?.gameObject
+                    : null;
+            }
+
+            if (_confirmGroup == null)
+            {
+                return;
+            }
+
+            SetConfirmSprites(ConfirmUi.IsShowing(
+                _confirmGroup.gameObject.activeInHierarchy, ConfirmAlpha(_confirmGroup)));
+        }
+        catch (Exception ex)
+        {
+            Plugin.Log.LogWarning($"[SHOPFSM] confirm sprite toggle failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Switches the vanilla item picture and our schema together. The picture's own state
+    /// is captured on the first hide and put back on restore, never assumed to be on.
+    /// </summary>
+    /// <param name="hidden">True to hide both pictures.</param>
+    private static void SetConfirmSprites(bool hidden)
+    {
+        bool changed = _confirmSpritesHidden != hidden;
+        _confirmSpritesHidden = hidden;
+
+        if (_confirmSprite != null)
+        {
+            if (hidden)
+            {
+                if (changed)
+                {
+                    _confirmSpriteWasActive = _confirmSprite.activeSelf;
+                }
+
+                if (_confirmSprite.activeSelf)
+                {
+                    _confirmSprite.SetActive(false);
+                }
+            }
+            else if (changed)
+            {
+                _confirmSprite.SetActive(_confirmSpriteWasActive);
+            }
+        }
+
+        ShopCrestSchema.SetConfirmHidden(hidden);
+        if (!changed)
+        {
+            return;
+        }
+
+        Plugin.Log.LogInfo(hidden
+            ? "[SHOPFSM] confirm sprites hidden"
+            : "[SHOPFSM] confirm sprites restored");
+    }
+
+    /// <summary>Fade alpha of the confirm group; 1 when the group carries no fade component.</summary>
+    private static float ConfirmAlpha(Transform group)
+    {
+        NestedFadeGroupBase? fade = group.GetComponent<NestedFadeGroupBase>()
+            ?? group.GetComponentInChildren<NestedFadeGroupBase>(true);
+        return fade != null ? fade.AlphaSelf : 1f;
+    }
+
     /// <summary>Container of the shop rows and the selector; null when the window has none.</summary>
     private static Transform? ListGroup()
     {
@@ -1423,6 +1518,7 @@ internal static class ShopCrestMenu
         _closing = true;
         LogTickDiag(_diagFrames);
         ShopCrestSchema.Hide();
+        Step("confirm sprites", () => SetConfirmSprites(false));
 
         ShopInputLock.Unblock(reason);
         if (_stock == null)
@@ -1510,6 +1606,10 @@ internal static class ShopCrestMenu
         _windowFsm = null;
         _cancelPrompt = null;
         _confirmPrompt = null;
+        _confirmGroup = null;
+        _confirmSprite = null;
+        _confirmSpriteWasActive = true;
+        _confirmSpritesHidden = false;
     }
 
     /// <summary>Destroys the temp scriptable objects so they do not accumulate.</summary>
@@ -1898,6 +1998,7 @@ internal sealed class ShopCrestSession : MonoBehaviour
 
             ShopCrestMenu.ReassertStock();
             ShopCosmetics.Tick();
+            ShopCrestMenu.TickConfirmSprites();
             ShopCrestMenu.HideSchemaOnFade();
             ShopCrestMenu.GuardTeardown();
             ShopCrestMenu.TraceRootAlpha(_frames);

@@ -108,6 +108,9 @@ internal static class ShopCrestSchema
     /// <summary>True from the close start until the next <see cref="Begin"/>; blocks any re-show.</summary>
     private static bool _closed;
 
+    /// <summary>True while the vanilla confirmation covers the panel; the container stays off.</summary>
+    private static bool _confirmHidden;
+
     /// <summary>Row index the details FSM last asked <c>ShopMenuStock.GetName</c> about; -1 before.</summary>
     private static int _selectedIndex = -1;
 
@@ -201,6 +204,7 @@ internal static class ShopCrestSchema
             _missingLogged = false;
             ConfirmActive = false;
             _closed = false;
+            _confirmHidden = false;
             _closeHiddenLogged = false;
             _selectedIndex = -1;
             _pickSource = string.Empty;
@@ -264,6 +268,20 @@ internal static class ShopCrestSchema
         }
     }
 
+    /// <summary>
+    /// Switches the details schema off while the vanilla purchase confirmation covers the
+    /// panel, and lets <see cref="Place"/> show it again afterwards.
+    /// </summary>
+    /// <param name="hidden">True to keep the container off.</param>
+    internal static void SetConfirmHidden(bool hidden)
+    {
+        _confirmHidden = hidden;
+        if (hidden)
+        {
+            HideContainer(_detailsSchema);
+        }
+    }
+
     /// <summary>Switches one schema container off; false when it was already off or absent.</summary>
     private static bool HideContainer(Schema? schema)
     {
@@ -303,13 +321,14 @@ internal static class ShopCrestSchema
         finally
         {
             _closed = false;
+            _confirmHidden = false;
         }
     }
 
     /// <summary>Keeps the schema in step with the selection; the details texts are left to the vanilla FSM.</summary>
     private static void Apply()
     {
-        if (_closed)
+        if (_closed || _confirmHidden)
         {
             return;
         }
