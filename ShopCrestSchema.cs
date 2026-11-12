@@ -247,10 +247,7 @@ internal static class ShopCrestSchema
             ConfirmActive = false;
             _closed = false;
             _closeHiddenLogged = false;
-            _selectedIndex = ShopCrestMenu.CrestForRow(0) != null ? 0 : -1;
-            Plugin.Log.LogInfo(_selectedIndex >= 0
-                ? "[SCHEMA] default row=0 (no selection at open)"
-                : "[SCHEMA] default row unavailable");
+            _selectedIndex = -1;
             _pickSource = string.Empty;
             _pickIndex = -1;
             _pickName = string.Empty;
