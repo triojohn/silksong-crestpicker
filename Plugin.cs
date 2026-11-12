@@ -60,7 +60,6 @@ public sealed class Plugin : BaseUnityPlugin
     private ConfigEntry<bool> _showCrestSchema = null!;
     private ConfigEntry<SchemaRenderMode> _schemaRender = null!;
     private ConfigEntry<float> _crestSchemaScale = null!;
-    private ConfigEntry<float> _crestSchemaFill = null!;
     private ConfigEntry<float> _crestSchemaOffsetY = null!;
     private ConfigEntry<float> _crestDotSize = null!;
     private ConfigEntry<float> _crestLockedDotSize = null!;
@@ -116,10 +115,8 @@ public sealed class Plugin : BaseUnityPlugin
             "кружки.");
         _crestSchemaScale = Config.Bind("General", "CrestSchemaScale", 1f,
             "Множитель единого масштаба схемы знака: все гребни рисуются в одном масштабе от " +
-            "эталонной высоты, схема занимает CrestSchemaFill панели деталей (1 — ровно вписано)");
-        _crestSchemaFill = Config.Bind("General", "CrestSchemaFill", 0.5f,
-            "Доля высоты панели деталей, которую занимает силуэт схемы знака (0.5 — половина)");
-        _crestSchemaOffsetY = Config.Bind("General", "CrestSchemaOffsetY", -0.16f,
+            "эталонной высоты, схема занимает 80% панели деталей (1 — ровно вписано)");
+        _crestSchemaOffsetY = Config.Bind("General", "CrestSchemaOffsetY", -0.12f,
             "Сдвиг схемы знака по вертикали как доля высоты панели деталей " +
             "(минус — вниз, чтобы схема не наезжала на описание)");
         _crestDotSize = Config.Bind("General", "CrestDotSize", 0.373f,
@@ -161,7 +158,6 @@ public sealed class Plugin : BaseUnityPlugin
         ShopCrestSchema.Enabled = _showCrestSchema.Value;
         ShopCrestSchema.Render = _schemaRender.Value;
         ShopCrestSchema.Scale = ConfigRules.NormalizeSchemaScale(_crestSchemaScale.Value);
-        ShopCrestSchema.Fill = _crestSchemaFill.Value;
         ShopCrestSchema.OffsetY = _crestSchemaOffsetY.Value;
         float dotSizeRaw = _crestDotSize.Value;
         ShopCrestSchema.DotSize = ConfigRules.NormalizeDotSize(dotSizeRaw);

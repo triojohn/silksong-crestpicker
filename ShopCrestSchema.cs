@@ -40,7 +40,7 @@ internal static class ShopCrestSchema
     private const float BaseHeight = 1.2f;
 
     /// <summary>Fraction of the details panel the details schema fills.</summary>
-    internal static float Fill = 0.5f;
+    private const float PanelFill = 0.8f;
 
     /// <summary>Path of the details panel inside the shop window.</summary>
     private const string DetailsPath = "Item List Group/Item Details";
@@ -163,7 +163,7 @@ internal static class ShopCrestSchema
     internal static float Scale = 1f;
 
     /// <summary>Vertical shift of the details schema, as a fraction of the panel height; negative goes down.</summary>
-    internal static float OffsetY = -0.16f;
+    internal static float OffsetY = -0.12f;
 
     /// <summary>Dot diameter for an unlocked slot, as a fraction of the reference height.</summary>
     internal static float DotSize = 0.373f;
@@ -344,12 +344,10 @@ internal static class ShopCrestSchema
     }
 
     /// <summary>
-    /// Puts the centre of the drawn silhouette on the panel centre shifted by
-    /// <see cref="OffsetY"/>, pulled inside the panel when the silhouette would cross its
-    /// top or bottom edge. The container takes an absolute position, so no measurement can
-    /// accumulate into a walk and no parent scale chain is assumed. The silhouette centre
-    /// is expected at the container origin; whatever offset it has is measured once per
-    /// build and subtracted.
+    /// Puts the centre of the drawn silhouette on the panel target in world space: the
+    /// container takes an absolute position, so no measurement can accumulate into a walk
+    /// and no parent scale chain is assumed. The silhouette centre is expected at the
+    /// container origin; whatever offset it has is measured once per build and subtracted.
     /// </summary>
     /// <param name="schema">Schema to move.</param>
     /// <param name="panel">World bounds of the details panel.</param>
@@ -357,10 +355,7 @@ internal static class ShopCrestSchema
     {
         Transform container = schema.Container.transform;
         float targetX = panel.center.x;
-        float height = WorldHeight(schema.Body);
-        float targetY = SchemaPlacement.ClampCentreY(
-            SchemaPlacement.TargetY(panel.min.y, panel.center.y, panel.size.y, OffsetY),
-            height * 0.5f, panel.min.y, panel.max.y);
+        float targetY = SchemaPlacement.TargetY(panel.min.y, panel.center.y, panel.size.y, OffsetY);
         if (!schema.OffsetKnown)
         {
             Vector3 offset = SilhouetteBounds(schema).center - container.position;
@@ -373,14 +368,14 @@ internal static class ShopCrestSchema
         if (!schema.PlaceLogged)
         {
             schema.PlaceLogged = true;
-            Plugin.Log.LogInfo($"[SCHEMA] place centre=({targetX:F3},{targetY:F3})" +
-                $" panel=({panel.min.y:F3},{panel.max.y:F3}) fill={Fill:F3}" +
-                $" offset={OffsetY:F3} height={height:F3}");
+            Plugin.Log.LogInfo($"[SCHEMA] place target=({targetX:F3},{targetY:F3})" +
+                $" panelCentre=({panel.center.x:F3},{panel.center.y:F3})" +
+                $" offset=({schema.Offset.x:F3},{schema.Offset.y:F3})");
         }
     }
 
     /// <summary>
-    /// Fits the drawn silhouette height to <see cref="Fill"/> of the panel once per
+    /// Fits the drawn silhouette height to <see cref="PanelFill"/> of the panel once per
     /// build. One pass and one check: the container scale is multiplied by the measured
     /// ratio, then the drawn height is measured again and corrected when it still misses
     /// the target by more than two percent. Nothing accumulates, because the factor derives
@@ -396,7 +391,7 @@ internal static class ShopCrestSchema
         }
 
         float h = WorldHeight(schema.Body);
-        float target = Fill * panel.size.y * Scale;
+        float target = PanelFill * panel.size.y * Scale;
         if (h <= 0.0001f || target <= 0.0001f)
         {
             return;
@@ -788,7 +783,7 @@ internal static class ShopCrestSchema
         LogSlots(crest);
 
         float reference = ReferenceHeight();
-        float panel = TryPanelSize(out Vector2 panelSize) ? Fill * panelSize.y : BaseHeight;
+        float panel = TryPanelSize(out Vector2 panelSize) ? PanelFill * panelSize.y : BaseHeight;
         float scale = reference > 0.0001f ? panel * Scale / reference : Scale;
         float body = ReferenceBody();
         float cardScale = body > 0.0001f ? panel * Scale / body : Scale;
