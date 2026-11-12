@@ -353,10 +353,11 @@ internal static class ShopCrestSchema
 
     /// <summary>
     /// Measures the drawn description text and puts the schema top a fixed gap under its
-    /// lowest glyph. <see cref="TMP_Text.bounds"/> is the rendered box of every submesh in
-    /// world space, so a wrapped or rich-text description is measured as drawn. Runs again
-    /// every frame until the bounds arrive, because TMP lays out a rewritten text one frame
-    /// later; after <see cref="MaxAnchorAttempts"/> empty frames the panel offset takes over.
+    /// lowest glyph. The label's own <see cref="TMP_Text.bounds"/> reports the wrong numbers
+    /// in this TMP build, so the glyph geometry is taken from the submesh renderer, as the
+    /// shop cosmetics code already does. Runs again every frame until the bounds arrive,
+    /// because TMP lays out a rewritten text one frame later; after
+    /// <see cref="MaxAnchorAttempts"/> empty frames the panel offset takes over.
     /// </summary>
     /// <param name="schema">Schema built for the current crest.</param>
     /// <param name="panel">World bounds of the details panel.</param>
@@ -370,13 +371,21 @@ internal static class ShopCrestSchema
         if (_descLabel == null || _builtFor == null)
         {
             schema.AnchorGivenUp = true;
-            Plugin.Log.LogInfo("[SCHEMA] anchor fallback (no bounds)");
+            Plugin.Log.LogInfo("[SCHEMA] anchor fallback (no renderer)");
             return;
         }
 
         WriteText(_descLabel, (string)_builtFor.Description ?? string.Empty);
         _descLabel.ForceMeshUpdate();
-        Bounds text = _descLabel.bounds;
+        Renderer? renderer = ShopCosmetics.TextRenderer(_descLabel.transform);
+        if (renderer == null)
+        {
+            schema.AnchorGivenUp = true;
+            Plugin.Log.LogInfo("[SCHEMA] anchor fallback (no renderer)");
+            return;
+        }
+
+        Bounds text = renderer.bounds;
         float descBottom = text.min.y;
         if (!Geometry.IsSane(descBottom) || !Geometry.IsSane(text.size.y) ||
             Mathf.Abs(text.size.y) < 0.0001f)
@@ -385,7 +394,7 @@ internal static class ShopCrestSchema
             if (schema.AnchorAttempts >= MaxAnchorAttempts)
             {
                 schema.AnchorGivenUp = true;
-                Plugin.Log.LogInfo("[SCHEMA] anchor fallback (no bounds)");
+                Plugin.Log.LogInfo("[SCHEMA] anchor fallback (bounds empty)");
             }
             else
             {
@@ -396,6 +405,7 @@ internal static class ShopCrestSchema
         }
 
         schema.DescBottom = descBottom;
+        schema.TmpBottom = _descLabel.bounds.min.y;
         schema.Top = descBottom - (AnchorGap * panel.size.y);
         schema.AnchorKnown = true;
     }
@@ -431,10 +441,10 @@ internal static class ShopCrestSchema
         }
 
         schema.AnchorLogged = true;
-        Plugin.Log.LogInfo($"[SCHEMA] anchor descBottom={schema.DescBottom:F3}" +
-            $" top={schema.Top:F3} h={WorldHeight(schema.Body):F3}" +
-            $" centre={AnchorCentreY(schema, panel):F3}" +
-            $" size={PanelFill * panel.size.y * Scale:F3}");
+        Plugin.Log.LogInfo($"[SCHEMA] anchor rendererBottom={schema.DescBottom:F3}" +
+            $" tmpBounds={schema.TmpBottom:F3} top={schema.Top:F3}" +
+            $" h={WorldHeight(schema.Body):F3}" +
+            $" centre={AnchorCentreY(schema, panel):F3}");
     }
 
     /// <summary>
@@ -2268,6 +2278,9 @@ internal static class ShopCrestSchema
 
         /// <summary>World Y of the lowest drawn description glyph, measured once per build.</summary>
         internal float DescBottom { get; set; }
+
+        /// <summary>World Y the label's own <see cref="TMP_Text.bounds"/> reported, for the log.</summary>
+        internal float TmpBottom { get; set; }
 
         /// <summary>World Y of the schema top: the description bottom less the anchor gap.</summary>
         internal float Top { get; set; }

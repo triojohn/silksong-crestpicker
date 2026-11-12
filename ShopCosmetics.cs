@@ -1135,7 +1135,7 @@ internal static class ShopCosmetics
     }
 
     /// <summary>Renderer of the TMP submesh under the label, else the label's own renderer.</summary>
-    private static Renderer? TextRenderer(Transform label)
+    internal static Renderer? TextRenderer(Transform label)
     {
         foreach (Transform sub in label)
         {
