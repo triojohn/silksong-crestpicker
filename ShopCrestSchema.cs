@@ -155,20 +155,11 @@ internal static class ShopCrestSchema
     /// <summary>True once the hide at the close start was logged for this session.</summary>
     private static bool _closeHiddenLogged;
 
-    /// <summary>True once the schema y offset was logged for this window.</summary>
-    private static bool _offsetLogged;
-
-    /// <summary>True once the skipped placement was logged for this window.</summary>
-    private static bool _offsetInvalidLogged;
-
     /// <summary>True once the <c>[GEO]</c> block was written for the current build.</summary>
     private static bool _geoLogged;
 
     /// <summary>Schema scale of the current build, reported by the <c>[GEO]</c> block.</summary>
     private static float _geoScale;
-
-    /// <summary>World position of the details container before any placement shift.</summary>
-    private static Vector3 _schemaBasePosition;
 
     /// <summary>Last logged confirm fit scale; negative before the first fit.</summary>
     private static float _confirmFitLogged = -1f;
@@ -263,8 +254,6 @@ internal static class ShopCrestSchema
             _detailsCorrectedLogged = false;
             _confirmGroupActiveLogged = null;
             _detailsBounds = default;
-            _offsetLogged = false;
-            _offsetInvalidLogged = false;
             _geoLogged = false;
             _geoScale = 0f;
             DestroySchemaRoot();
@@ -354,8 +343,6 @@ internal static class ShopCrestSchema
         ConfirmActive = false;
         _confirmGroupActiveLogged = null;
         _detailsBounds = default;
-        _offsetLogged = false;
-        _offsetInvalidLogged = false;
         _confirmFitLogged = -1f;
         _selectedIndex = -1;
         _pickSource = string.Empty;
@@ -437,14 +424,14 @@ internal static class ShopCrestSchema
             }
         }
 
-        float targetY = SchemaPlacement.TargetY(bounds.min.y, bounds.center.y, bounds.size.y, OffsetY);
         if (_detailsSchema.Container.activeSelf)
         {
-            PlaceAt(_detailsSchema, targetY);
+            FitHeight(_detailsSchema, bounds);
+            PlaceAt(_detailsSchema, bounds);
             _detailsBounds = ContainerBounds(_detailsSchema.Container.transform);
         }
 
-        LogGeometry(_detailsSchema, bounds, targetY);
+        LogGeometry(_detailsSchema, bounds);
 
         if (_confirmSchema == null)
         {
@@ -557,39 +544,76 @@ internal static class ShopCrestSchema
     }
 
     /// <summary>
-    /// Puts the centre of the drawn silhouette on <paramref name="targetY"/> by writing the
-    /// container position as an absolute offset from <see cref="_schemaBasePosition"/>, so a
-    /// bad measurement cannot accumulate into a walk. X and the scale are left alone. A
-    /// silhouette that measures zero is not moved at all, because that measurement carries
-    /// no centre to place.
+    /// Puts the centre of the drawn silhouette on the panel target in world space: the
+    /// container takes an absolute position, so no measurement can accumulate into a walk
+    /// and no parent scale chain is assumed. The silhouette centre is expected at the
+    /// container origin; whatever offset it has is measured once per build and subtracted.
     /// </summary>
     /// <param name="schema">Schema to move.</param>
-    /// <param name="targetY">World Y the silhouette centre should take.</param>
-    private static void PlaceAt(Schema schema, float targetY)
+    /// <param name="panel">World bounds of the details panel.</param>
+    private static void PlaceAt(Schema schema, Bounds panel)
     {
         Transform container = schema.Container.transform;
-        Bounds silhouette = SilhouetteBounds(schema);
-        float centre = silhouette.center.y;
-        if (Mathf.Abs(centre) < 0.001f || Mathf.Abs(silhouette.size.y) < 0.001f)
+        float targetX = panel.center.x;
+        float targetY = SchemaPlacement.TargetY(panel.min.y, panel.center.y, panel.size.y, OffsetY);
+        if (!schema.OffsetKnown)
         {
-            if (!_offsetInvalidLogged)
-            {
-                _offsetInvalidLogged = true;
-                Plugin.Log.LogInfo($"[SCHEMA] placeY skipped (invalid centre), position unchanged" +
-                    $" centre={centre:F3} height={silhouette.size.y:F3}");
-            }
+            Vector3 offset = SilhouetteBounds(schema).center - container.position;
+            schema.Offset = offset.magnitude < 0.001f ? Vector3.zero : offset;
+            schema.OffsetKnown = true;
+        }
 
+        container.position = new Vector3(targetX - schema.Offset.x, targetY - schema.Offset.y,
+            container.position.z);
+        if (!schema.PlaceLogged)
+        {
+            schema.PlaceLogged = true;
+            Plugin.Log.LogInfo($"[SCHEMA] place target=({targetX:F3},{targetY:F3})" +
+                $" panelCentre=({panel.center.x:F3},{panel.center.y:F3})" +
+                $" offset=({schema.Offset.x:F3},{schema.Offset.y:F3})");
+        }
+    }
+
+    /// <summary>
+    /// Fits the drawn silhouette height to <see cref="PanelFill"/> of the panel once per
+    /// build. One pass and one check: the container scale is multiplied by the measured
+    /// ratio, then the drawn height is measured again and corrected when it still misses
+    /// the target by more than two percent. Nothing accumulates, because the factor derives
+    /// from the current scale and the current measurement.
+    /// </summary>
+    /// <param name="schema">Details schema to fit.</param>
+    /// <param name="panel">World bounds of the details panel.</param>
+    private static void FitHeight(Schema schema, Bounds panel)
+    {
+        if (schema.FitApplied)
+        {
             return;
         }
 
-        float shift = targetY - centre;
-        container.position = _schemaBasePosition + (Vector3.up * shift);
-        if (!_offsetLogged)
+        float h = WorldHeight(schema.Body);
+        float target = PanelFill * panel.size.y * Scale;
+        if (h <= 0.0001f || target <= 0.0001f)
         {
-            _offsetLogged = true;
-            Plugin.Log.LogInfo($"[SCHEMA] placeY centre={centre:F3} target={targetY:F3}" +
-                $" shift={shift:F3} absolute=True");
+            return;
         }
+
+        float factor = target / h;
+        Transform container = schema.Container.transform;
+        Vector3 local = container.localScale;
+        container.localScale = new Vector3(local.x * factor, local.y * factor, local.z);
+
+        float after = WorldHeight(schema.Body);
+        if (after > 0.0001f && Mathf.Abs(after - target) > target * 0.02f)
+        {
+            float fix = target / after;
+            Vector3 now = container.localScale;
+            container.localScale = new Vector3(now.x * fix, now.y * fix, now.z);
+            after = WorldHeight(schema.Body);
+        }
+
+        schema.FitApplied = true;
+        Plugin.Log.LogInfo($"[SCHEMA] fit h={h:F3} target={target:F3} factor={factor:F4}" +
+            $" after={after:F3}");
     }
 
     /// <summary>
@@ -1308,10 +1332,6 @@ internal static class ShopCrestSchema
         GameObject container = new GameObject(label);
         container.transform.SetParent(host, false);
         container.transform.localScale = Vector3.one;
-        if (fitDetails)
-        {
-            _schemaBasePosition = container.transform.position;
-        }
 
         GameObject content = new GameObject(ContentName);
         content.transform.SetParent(container.transform, false);
@@ -2122,8 +2142,7 @@ internal static class ShopCrestSchema
     /// </summary>
     /// <param name="schema">Details schema that was just placed.</param>
     /// <param name="panel">World bounds of the details panel.</param>
-    /// <param name="targetY">World Y the placement asked the silhouette centre to take.</param>
-    private static void LogGeometry(Schema schema, Bounds panel, float targetY)
+    private static void LogGeometry(Schema schema, Bounds panel)
     {
         if (_geoLogged)
         {
@@ -2139,6 +2158,7 @@ internal static class ShopCrestSchema
             LogVanillaGeometry();
             LogWindowGeometry();
             float measured = WorldHeight(schema.Body);
+            float targetY = SchemaPlacement.TargetY(panel.min.y, panel.center.y, panel.size.y, OffsetY);
             Plugin.Log.LogInfo($"[GEO] computed target={targetY:F3} measured={measured:F3}" +
                 $" scale={_geoScale:F4}");
         }
@@ -2631,6 +2651,18 @@ internal static class ShopCrestSchema
 
         /// <summary>True once the confirm placement numbers were logged.</summary>
         internal bool PlacedLogged { get; set; }
+
+        /// <summary>True once the details placement numbers were logged.</summary>
+        internal bool PlaceLogged { get; set; }
+
+        /// <summary>Silhouette centre relative to the container origin, measured once per build.</summary>
+        internal Vector3 Offset { get; set; }
+
+        /// <summary>True once <see cref="Offset"/> was measured.</summary>
+        internal bool OffsetKnown { get; set; }
+
+        /// <summary>True once the container was scaled to the panel fill.</summary>
+        internal bool FitApplied { get; set; }
 
         internal List<SpriteRenderer> Dots { get; } = new List<SpriteRenderer>();
 
