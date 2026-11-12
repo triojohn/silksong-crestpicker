@@ -69,6 +69,14 @@ internal static class ShopCrestMenu
     /// <summary>Temp shop entries on screen mapped to their crest index, filled per session.</summary>
     private static readonly Dictionary<ShopItem, int> TempItems = new Dictionary<ShopItem, int>();
 
+    /// <summary>
+    /// Vanilla fade bounds (top, bottom) of every row we have shifted, captured before the
+    /// first shift of the session. Shifting is absolute against these, never incremental,
+    /// or the bounds drift a little with every open.
+    /// </summary>
+    private static readonly Dictionary<ShopItemStats, Vector2> RowBounds =
+        new Dictionary<ShopItemStats, Vector2>();
+
     private static List<ToolCrest> _crests = new List<ToolCrest>();
     private static List<ShopItem> _tempItems = new List<ShopItem>();
     private static ShopItem[] _swapItems = Array.Empty<ShopItem>();
@@ -1444,7 +1452,7 @@ internal static class ShopCrestMenu
             Vector3 before = _root.position;
             _root.position = before + delta;
             _boundShift += delta.y;
-            ShiftRowBounds(delta.y);
+            ShiftRowBounds(_boundShift);
             Plugin.Log.LogInfo(
                 $"[RENDER] recentre root {Vec(before)} -> {Vec(_root.position)}" +
                 $" delta={Vec(delta)} panelVpBefore={Vec(viewport)} cam='{cam.name}'");
@@ -1457,26 +1465,64 @@ internal static class ShopCrestMenu
         }
     }
 
-    /// <summary>Adds <paramref name="dy"/> to every row's world-space fade bounds.</summary>
-    private static void ShiftRowBounds(float dy)
+    /// <summary>
+    /// Puts every row's fade bounds at the vanilla value plus <paramref name="totalShift"/>,
+    /// the total shift of the window from its session start position.
+    /// </summary>
+    private static void ShiftRowBounds(float totalShift)
     {
-        if (_root == null || dy == 0f)
+        if (_root == null || (TopYField == null && BotYField == null))
         {
             return;
         }
 
         foreach (ShopItemStats row in _root.GetComponentsInChildren<ShopItemStats>(true))
         {
-            if (TopYField?.GetValue(row) is float top)
+            if (row == null)
             {
-                TopYField.SetValue(row, top + dy);
+                continue;
             }
 
-            if (BotYField?.GetValue(row) is float bot)
+            if (!RowBounds.TryGetValue(row, out Vector2 original))
             {
-                BotYField.SetValue(row, bot + dy);
+                original = new Vector2(
+                    TopYField?.GetValue(row) is float top ? top : 0f,
+                    BotYField?.GetValue(row) is float bot ? bot : 0f);
+                RowBounds[row] = original;
+            }
+
+            float wantTop = original.x + totalShift;
+            float wantBot = original.y + totalShift;
+            if (TopYField?.GetValue(row) is float currentTop && currentTop != wantTop)
+            {
+                TopYField.SetValue(row, wantTop);
+            }
+
+            if (BotYField?.GetValue(row) is float currentBot && currentBot != wantBot)
+            {
+                BotYField.SetValue(row, wantBot);
             }
         }
+    }
+
+    /// <summary>Puts the vanilla row bounds back and drops the cache; returns how many rows were restored.</summary>
+    private static int RestoreRowBounds()
+    {
+        int count = 0;
+        foreach (KeyValuePair<ShopItemStats, Vector2> pair in RowBounds)
+        {
+            if (pair.Key == null)
+            {
+                continue;
+            }
+
+            TopYField?.SetValue(pair.Key, pair.Value.x);
+            BotYField?.SetValue(pair.Key, pair.Value.y);
+            count++;
+        }
+
+        RowBounds.Clear();
+        return count;
     }
 
     /// <summary>Ends our session: the window FSM already closed the clone, we drop our state.</summary>
@@ -1585,6 +1631,7 @@ internal static class ShopCrestMenu
         _swapItems = Array.Empty<ShopItem>();
         _crests = new List<ToolCrest>();
         _stock = null;
+        Plugin.Log.LogInfo($"[SHOP] row bounds restored n={RestoreRowBounds()}");
         _root = null;
         _control = null;
         _boundShift = 0f;
