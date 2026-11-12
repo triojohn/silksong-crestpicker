@@ -161,6 +161,12 @@ internal static class ShopCrestSchema
     /// <summary>True once the skipped placement was logged for this window.</summary>
     private static bool _offsetInvalidLogged;
 
+    /// <summary>True once the <c>[GEO]</c> block was written for the current build.</summary>
+    private static bool _geoLogged;
+
+    /// <summary>Schema scale of the current build, reported by the <c>[GEO]</c> block.</summary>
+    private static float _geoScale;
+
     /// <summary>World position of the details container before any placement shift.</summary>
     private static Vector3 _schemaBasePosition;
 
@@ -259,6 +265,8 @@ internal static class ShopCrestSchema
             _detailsBounds = default;
             _offsetLogged = false;
             _offsetInvalidLogged = false;
+            _geoLogged = false;
+            _geoScale = 0f;
             DestroySchemaRoot();
             DumpAllCrests();
             Apply();
@@ -435,6 +443,8 @@ internal static class ShopCrestSchema
             PlaceAt(_detailsSchema, targetY);
             _detailsBounds = ContainerBounds(_detailsSchema.Container.transform);
         }
+
+        LogGeometry(_detailsSchema, bounds, targetY);
 
         if (_confirmSchema == null)
         {
@@ -1152,6 +1162,8 @@ internal static class ShopCrestSchema
         float scale = reference > 0.0001f ? panel * Scale / reference : Scale;
         float body = ReferenceBody();
         float cardScale = body > 0.0001f ? panel * Scale / body : Scale;
+        _geoScale = scale;
+        _geoLogged = false;
         Plugin.Log.LogInfo($"[SCHEMA] scale={scale:F4} (reference={reference:F3} panel={panel:F3})" +
             $" cardScale={cardScale:F4} (body={body:F3})");
 
@@ -2100,6 +2112,213 @@ internal static class ShopCrestSchema
         }
 
         return count;
+    }
+
+    /// <summary>
+    /// Writes the one-shot <c>[GEO]</c> block: panel, schema container, clone silhouette, a
+    /// live vanilla card, the window anchors and the numbers the placement computed. Runs
+    /// once per build, so it lands on the first frame after <see cref="Begin"/> and on every
+    /// row change; never more than once per frame.
+    /// </summary>
+    /// <param name="schema">Details schema that was just placed.</param>
+    /// <param name="panel">World bounds of the details panel.</param>
+    /// <param name="targetY">World Y the placement asked the silhouette centre to take.</param>
+    private static void LogGeometry(Schema schema, Bounds panel, float targetY)
+    {
+        if (_geoLogged)
+        {
+            return;
+        }
+
+        _geoLogged = true;
+        try
+        {
+            LogPanelGeometry(panel);
+            LogContainerGeometry(schema.Container.transform);
+            LogSilhouetteGeometry(schema.Body);
+            LogVanillaGeometry();
+            LogWindowGeometry();
+            float measured = WorldHeight(schema.Body);
+            Plugin.Log.LogInfo($"[GEO] computed target={targetY:F3} measured={measured:F3}" +
+                $" scale={_geoScale:F4}");
+        }
+        catch (Exception ex)
+        {
+            Plugin.Log.LogWarning($"[GEO] dump failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>One <c>[GEO] panel</c> line: local rect, pivot, world corners and world scale.</summary>
+    private static void LogPanelGeometry(Bounds panel)
+    {
+        if (_details == null)
+        {
+            Plugin.Log.LogInfo("[GEO] panel none");
+            return;
+        }
+
+        string rect = Bounds4(panel);
+        string pivot = "none";
+        string corners;
+        if (_details is RectTransform rectTransform)
+        {
+            Rect local = rectTransform.rect;
+            rect = $"({local.width:F3},{local.height:F3})";
+            pivot = $"({rectTransform.pivot.x:F3},{rectTransform.pivot.y:F3})";
+            Vector3[] points = new Vector3[4];
+            rectTransform.GetWorldCorners(points);
+            corners = string.Join(" ", Array.ConvertAll(points, Vec3));
+        }
+        else
+        {
+            Vector3 min = panel.min;
+            Vector3 max = panel.max;
+            corners = $"{Vec3(min)} {Vec3(new Vector3(min.x, max.y, min.z))} {Vec3(max)}" +
+                $" {Vec3(new Vector3(max.x, min.y, max.z))}";
+        }
+
+        Plugin.Log.LogInfo($"[GEO] panel path='{PathOf(_details)}' rect={rect} pivot={pivot}" +
+            $" worldCorners=[{corners}] worldCentre=({panel.center.x:F3},{panel.center.y:F3})" +
+            $" lossyScale={Vec3(_details.lossyScale)}");
+    }
+
+    /// <summary>One <c>[GEO] container</c> line: transform and both bounds variants.</summary>
+    private static void LogContainerGeometry(Transform container)
+    {
+        Plugin.Log.LogInfo($"[GEO] container path='{PathOf(container)}'" +
+            $" position={Vec3(container.position)} localScale={Vec3(container.localScale)}" +
+            $" lossyScale={Vec3(container.lossyScale)}" +
+            $" boundsIncludeInactive={Bounds3(ContainerBounds(container))}" +
+            $" boundsActiveOnly={Bounds3(ActiveBounds(container))}");
+    }
+
+    /// <summary>One <c>[GEO] silhouette</c> line for the renderer the placement measures.</summary>
+    private static void LogSilhouetteGeometry(Renderer body)
+    {
+        Sprite? sprite = (body as SpriteRenderer)?.sprite;
+        Plugin.Log.LogInfo($"[GEO] silhouette type={body.GetType().Name}" +
+            $" sprite='{(sprite != null ? sprite.name : "none")}'" +
+            $" spriteBounds={(sprite != null ? Bounds4(sprite.bounds) : "none")}" +
+            $" position={Vec3(body.transform.position)}" +
+            $" lossyScale={Vec3(body.transform.lossyScale)}" +
+            $" rendererBounds={Bounds4(body.bounds)}");
+    }
+
+    /// <summary>Two <c>[GEO] vanilla…</c> lines: a live vanilla crest card and its silhouette.</summary>
+    private static void LogVanillaGeometry()
+    {
+        InventoryToolCrest? vanilla = LiveCrest();
+        if (vanilla == null)
+        {
+            Plugin.Log.LogInfo("[GEO] vanilla none");
+            return;
+        }
+
+        Transform card = vanilla.transform;
+        Plugin.Log.LogInfo($"[GEO] vanilla path='{PathOf(card)}' position={Vec3(card.position)}" +
+            $" localScale={Vec3(card.localScale)} lossyScale={Vec3(card.lossyScale)}");
+
+        Renderer? silhouette = SilhouetteRenderer(card);
+        if (silhouette == null)
+        {
+            Plugin.Log.LogInfo("[GEO] vanillaSilhouette none");
+            return;
+        }
+
+        Sprite? sprite = (silhouette as SpriteRenderer)?.sprite;
+        Plugin.Log.LogInfo($"[GEO] vanillaSilhouette sprite='{(sprite != null ? sprite.name : "none")}'" +
+            $" spriteBounds={(sprite != null ? Bounds4(sprite.bounds) : "none")}" +
+            $" rendererBounds={Bounds4(silhouette.bounds)}" +
+            $" position={Vec3(silhouette.transform.position)} state={CrestState(vanilla)}");
+    }
+
+    /// <summary>Selected or unselected look of a vanilla crest card, read off its two sprites.</summary>
+    private static string CrestState(InventoryToolCrest crest)
+    {
+        NestedFadeGroupSpriteRenderer? sprite =
+            CrestSpriteField?.GetValue(crest) as NestedFadeGroupSpriteRenderer;
+        NestedFadeGroupSpriteRenderer? silhouette =
+            CrestSilhouetteField?.GetValue(crest) as NestedFadeGroupSpriteRenderer;
+        if (sprite != null && sprite.gameObject.activeInHierarchy && sprite.AlphaSelf > 0.5f)
+        {
+            return "selected";
+        }
+
+        if (silhouette != null && silhouette.gameObject.activeInHierarchy && silhouette.AlphaSelf > 0.5f)
+        {
+            return "unselected";
+        }
+
+        return "unknown";
+    }
+
+    /// <summary>Two <c>[GEO]</c> lines for the window root and its backboard.</summary>
+    private static void LogWindowGeometry()
+    {
+        if (_root == null)
+        {
+            return;
+        }
+
+        Plugin.Log.LogInfo($"[GEO] window path='{PathOf(_root)}' position={Vec3(_root.position)}" +
+            $" lossyScale={Vec3(_root.lossyScale)}");
+
+        SpriteRenderer? board = BackboardRenderer();
+        if (board == null)
+        {
+            Plugin.Log.LogInfo("[GEO] backboard none");
+            return;
+        }
+
+        Transform back = board.transform;
+        Plugin.Log.LogInfo($"[GEO] backboard path='{PathOf(back)}' position={Vec3(back.position)}" +
+            $" lossyScale={Vec3(back.lossyScale)}");
+    }
+
+    /// <summary>World bounds of the renderers actually enabled under a root.</summary>
+    private static Bounds ActiveBounds(Transform target)
+    {
+        bool any = false;
+        Bounds bounds = default;
+        foreach (Renderer renderer in target.GetComponentsInChildren<Renderer>(true))
+        {
+            if (renderer == null || !renderer.enabled || !renderer.gameObject.activeInHierarchy ||
+                (renderer is SpriteRenderer sprite && sprite.sprite == null) ||
+                renderer.bounds.size.sqrMagnitude <= 0.0000001f)
+            {
+                continue;
+            }
+
+            if (any)
+            {
+                bounds.Encapsulate(renderer.bounds);
+            }
+            else
+            {
+                bounds = renderer.bounds;
+                any = true;
+            }
+        }
+
+        return any ? bounds : new Bounds(target.position, Vector3.zero);
+    }
+
+    /// <summary>One vector as <c>(x,y,z)</c>.</summary>
+    private static string Vec3(Vector3 value)
+    {
+        return $"({value.x:F3},{value.y:F3},{value.z:F3})";
+    }
+
+    /// <summary>Bounds centre and size as <c>(cx,cy,w,h)</c>.</summary>
+    private static string Bounds4(Bounds bounds)
+    {
+        return $"({bounds.center.x:F3},{bounds.center.y:F3},{bounds.size.x:F3},{bounds.size.y:F3})";
+    }
+
+    /// <summary>Bounds centre and height as <c>(cx,cy,h)</c>.</summary>
+    private static string Bounds3(Bounds bounds)
+    {
+        return $"({bounds.center.x:F3},{bounds.center.y:F3},{bounds.size.y:F3})";
     }
 
     /// <summary>Scene path of an object, for the schema logs.</summary>
