@@ -39,6 +39,9 @@ internal static class ShopCrestSchema
     /// <summary>Panel height in world units used when the details panel cannot be measured.</summary>
     private const float BaseHeight = 1.2f;
 
+    /// <summary>Fraction of the details panel the details schema fills.</summary>
+    private const float PanelFill = 0.8f;
+
     /// <summary>Path of the details panel inside the shop window.</summary>
     private const string DetailsPath = "Item List Group/Item Details";
 
@@ -337,14 +340,12 @@ internal static class ShopCrestSchema
 
         FitHeight(_detailsSchema, bounds);
         PlaceAt(_detailsSchema, bounds);
-        LogAnchor(_detailsSchema, bounds);
         LogGeometry(_detailsSchema, bounds);
     }
 
     /// <summary>
-    /// Puts the centre of the drawn silhouette on the schema target in world space: under the
-    /// description text when it was measured at build time, on the old panel offset otherwise.
-    /// The container takes an absolute position, so no measurement can accumulate into a walk
+    /// Puts the centre of the drawn silhouette on the panel target in world space: the
+    /// container takes an absolute position, so no measurement can accumulate into a walk
     /// and no parent scale chain is assumed. The silhouette centre is expected at the
     /// container origin; whatever offset it has is measured once per build and subtracted.
     /// </summary>
@@ -354,7 +355,7 @@ internal static class ShopCrestSchema
     {
         Transform container = schema.Container.transform;
         float targetX = panel.center.x;
-        float targetY = TargetCentreY(schema, panel);
+        float targetY = SchemaPlacement.TargetY(panel.min.y, panel.center.y, panel.size.y, OffsetY);
         if (!schema.OffsetKnown)
         {
             Vector3 offset = SilhouetteBounds(schema).center - container.position;
@@ -374,41 +375,11 @@ internal static class ShopCrestSchema
     }
 
     /// <summary>
-    /// World Y of the schema centre: half the measured silhouette height below the schema top
-    /// when the description text was measured, the old panel offset otherwise.
-    /// </summary>
-    /// <param name="schema">Schema to place.</param>
-    /// <param name="panel">World bounds of the details panel.</param>
-    private static float TargetCentreY(Schema schema, Bounds panel)
-    {
-        return schema.AnchorKnown
-            ? SchemaPlacement.CentreY(schema.TopY, WorldHeight(schema.Body))
-            : SchemaPlacement.TargetY(panel.min.y, panel.center.y, panel.size.y, OffsetY);
-    }
-
-    /// <summary>One <c>[SCHEMA] anchor</c> line per build with the numbers the placement used.</summary>
-    /// <param name="schema">Details schema that was just placed.</param>
-    /// <param name="panel">World bounds of the details panel.</param>
-    private static void LogAnchor(Schema schema, Bounds panel)
-    {
-        if (schema.AnchorLogged || !schema.AnchorKnown)
-        {
-            return;
-        }
-
-        schema.AnchorLogged = true;
-        Plugin.Log.LogInfo($"[SCHEMA] anchor descBottom={schema.DescBottomY:F3}" +
-            $" gap={SchemaPlacement.GapFraction * panel.size.y:F3}" +
-            $" top={schema.TopY:F3} avail={schema.TopY - panel.min.y:F3}" +
-            $" fitTarget={schema.FitTargetY:F3} centre={TargetCentreY(schema, panel):F3}" +
-            $" h={WorldHeight(schema.Body):F3}");
-    }
-
-    /// <summary>
-    /// Fits the drawn silhouette height once per build to the space between the panel bottom
-    /// and the schema top, capped at <see cref="SchemaPlacement.PanelFill"/> of the panel and
-    /// never below <see cref="SchemaPlacement.MinFill"/>. One pass, no second correction: the
-    /// factor derives from the current scale and the current measurement.
+    /// Fits the drawn silhouette height to <see cref="PanelFill"/> of the panel once per
+    /// build. One pass and one check: the container scale is multiplied by the measured
+    /// ratio, then the drawn height is measured again and corrected when it still misses
+    /// the target by more than two percent. Nothing accumulates, because the factor derives
+    /// from the current scale and the current measurement.
     /// </summary>
     /// <param name="schema">Details schema to fit.</param>
     /// <param name="panel">World bounds of the details panel.</param>
@@ -420,16 +391,8 @@ internal static class ShopCrestSchema
         }
 
         float h = WorldHeight(schema.Body);
-        if (h <= 0.0001f)
-        {
-            return;
-        }
-
-        float target = schema.AnchorKnown
-            ? SchemaPlacement.FitTarget(panel.min.y, panel.size.y, schema.TopY,
-                SchemaPlacement.PanelFill, Scale, SchemaPlacement.MinFill)
-            : SchemaPlacement.PanelFill * panel.size.y * Scale;
-        if (target <= 0.0001f)
+        float target = PanelFill * panel.size.y * Scale;
+        if (h <= 0.0001f || target <= 0.0001f)
         {
             return;
         }
@@ -438,11 +401,19 @@ internal static class ShopCrestSchema
         Transform container = schema.Container.transform;
         Vector3 local = container.localScale;
         container.localScale = new Vector3(local.x * factor, local.y * factor, local.z);
-        schema.OffsetKnown = false;
+
+        float after = WorldHeight(schema.Body);
+        if (after > 0.0001f && Mathf.Abs(after - target) > target * 0.02f)
+        {
+            float fix = target / after;
+            Vector3 now = container.localScale;
+            container.localScale = new Vector3(now.x * fix, now.y * fix, now.z);
+            after = WorldHeight(schema.Body);
+        }
+
         schema.FitApplied = true;
-        schema.FitTargetY = target;
         Plugin.Log.LogInfo($"[SCHEMA] fit h={h:F3} target={target:F3} factor={factor:F4}" +
-            $" after={WorldHeight(schema.Body):F3}");
+            $" after={after:F3}");
     }
 
     /// <summary>
@@ -812,8 +783,7 @@ internal static class ShopCrestSchema
         LogSlots(crest);
 
         float reference = ReferenceHeight();
-        float panelHeight = TryPanelSize(out Vector2 panelSize) ? panelSize.y : BaseHeight;
-        float panel = SchemaPlacement.PanelFill * panelHeight;
+        float panel = TryPanelSize(out Vector2 panelSize) ? PanelFill * panelSize.y : BaseHeight;
         float scale = reference > 0.0001f ? panel * Scale / reference : Scale;
         float body = ReferenceBody();
         float cardScale = body > 0.0001f ? panel * Scale / body : Scale;
@@ -824,45 +794,9 @@ internal static class ShopCrestSchema
 
         Color bodyColor = InventoryToolCrest.DeselectedColor;
         _detailsSchema = BuildSchema(crest, silhouette, bodyColor, scale, cardScale, "Crest Schema");
-        if (_detailsSchema != null)
-        {
-            AnchorSchema(_detailsSchema, crest, panelHeight);
-        }
-
         int slots = crest.Slots?.Length ?? 0;
         Plugin.Log.LogInfo($"[SCHEMA] built '{crest.name}' slots={slots}" +
             $" slotScale={CrestCardLook.SlotScale(false):F2}");
-    }
-
-    /// <summary>
-    /// Measures the description bottom once per build and stores the schema top under it.
-    /// The text is written first, so the bounds belong to this crest and not to the previous
-    /// one; zero or non-finite bounds leave the old offset formula in charge.
-    /// </summary>
-    /// <param name="schema">Schema built for the current crest.</param>
-    /// <param name="crest">Crest whose description is measured.</param>
-    /// <param name="panelHeight">World height of the details panel.</param>
-    private static void AnchorSchema(Schema schema, ToolCrest crest, float panelHeight)
-    {
-        WriteText(_descLabel, (string)crest.Description ?? string.Empty);
-        if (_descLabel != null)
-        {
-            _descLabel.ForceMeshUpdate();
-        }
-
-        Bounds bounds = _descLabel != null ? _descLabel.bounds : default;
-        float bottom = bounds.min.y;
-        if (_descLabel == null || bounds.size.y <= 0.0001f ||
-            float.IsNaN(bottom) || float.IsInfinity(bottom))
-        {
-            schema.AnchorKnown = false;
-            Plugin.Log.LogInfo("[SCHEMA] anchor fallback (invalid desc bounds)");
-            return;
-        }
-
-        schema.DescBottomY = bottom;
-        schema.TopY = SchemaPlacement.TopFromText(bottom, SchemaPlacement.GapFraction, panelHeight);
-        schema.AnchorKnown = true;
     }
 
     /// <summary>Logs the raw metrics of the silhouette and of <c>CrestSprite</c>, once per build.</summary>
@@ -1820,8 +1754,9 @@ internal static class ShopCrestSchema
             LogVanillaGeometry();
             LogWindowGeometry();
             float measured = WorldHeight(schema.Body);
-            Plugin.Log.LogInfo($"[GEO] computed target={TargetCentreY(schema, panel):F3}" +
-                $" measured={measured:F3} scale={_geoScale:F4}");
+            float targetY = SchemaPlacement.TargetY(panel.min.y, panel.center.y, panel.size.y, OffsetY);
+            Plugin.Log.LogInfo($"[GEO] computed target={targetY:F3} measured={measured:F3}" +
+                $" scale={_geoScale:F4}");
         }
         catch (Exception ex)
         {
@@ -2223,21 +2158,6 @@ internal static class ShopCrestSchema
 
         /// <summary>True once the container was scaled to the panel fill.</summary>
         internal bool FitApplied { get; set; }
-
-        /// <summary>True when the description text was measured and <see cref="TopY"/> is valid.</summary>
-        internal bool AnchorKnown { get; set; }
-
-        /// <summary>World Y of the lowest drawn description character, measured once per build.</summary>
-        internal float DescBottomY { get; set; }
-
-        /// <summary>World Y of the schema top, derived from <see cref="DescBottomY"/>.</summary>
-        internal float TopY { get; set; }
-
-        /// <summary>World height the silhouette was fitted to.</summary>
-        internal float FitTargetY { get; set; }
-
-        /// <summary>True once the anchor numbers were logged for this schema.</summary>
-        internal bool AnchorLogged { get; set; }
 
         internal List<SpriteRenderer> Dots { get; } = new List<SpriteRenderer>();
 
