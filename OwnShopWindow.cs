@@ -1,6 +1,8 @@
 using System;
+using System.Collections.Generic;
 using System.Reflection;
 using CrestPicker.Pure;
+using HutongGames.PlayMaker;
 using TeamCherry.Localization;
 using UnityEngine;
 using UnityEngine.SceneManagement;
@@ -34,6 +36,18 @@ internal static class OwnShopWindow
 
     /// <summary>Name of the scene's own shop window root; our clone carries its own name.</summary>
     private const string VanillaWindowName = "Shop Menu(Clone)";
+
+    /// <summary>Group that holds the list arrows the vanilla close chain switches off.</summary>
+    private const string ArrowGroupName = "Item List Group";
+
+    /// <summary>Scroll arrows revived before every session; the selector is left alone.</summary>
+    private const string ArrowUpName = "Arrow U";
+
+    /// <summary>Second scroll arrow, revived next to <see cref="ArrowUpName"/>.</summary>
+    private const string ArrowDownName = "Arrow D";
+
+    /// <summary>State the arrows rest in; the fallback when re-enabling left the state blank.</summary>
+    private const string ArrowIdleState = "Idle";
 
     /// <summary>Live clone, null when there is none or it was destroyed.</summary>
     internal static ShopMenuStock? Current { get; private set; }
@@ -240,12 +254,68 @@ internal static class OwnShopWindow
             {
                 _container.SetActive(true);
                 Plugin.Log.LogInfo("[OWN] window reactivated");
+
+                // The vanilla close chain leaves the list arrows switched off and their FSMs
+                // stopped; a reused clone would open with dead arrows.
+                ReviveArrows(_container.transform);
             }
         }
         catch (Exception ex)
         {
             Plugin.Log.LogWarning($"[OWN] reactivate failed: {ex.Message}");
         }
+    }
+
+    /// <summary>
+    /// Switches the list arrows back on and restarts their FSMs, so the vanilla open
+    /// animation finds them alive. The selector is not touched.
+    /// </summary>
+    private static void ReviveArrows(Transform root)
+    {
+        Transform? group = root.Find(ArrowGroupName);
+        List<string> states = new();
+        bool up = ReviveArrow(group, ArrowUpName, states);
+        bool down = ReviveArrow(group, ArrowDownName, states);
+        Plugin.Log.LogInfo(
+            $"[ARROWS] restored U={(up ? "true" : "false")} D={(down ? "true" : "false")}" +
+            $" states={string.Join(",", states)}");
+    }
+
+    /// <summary>
+    /// Activates one arrow and restarts its FSM. Returns false when the arrow is missing.
+    /// </summary>
+    private static bool ReviveArrow(Transform? group, string name, List<string> states)
+    {
+        Transform? node = group != null ? group.Find(name) : null;
+        if (node == null)
+        {
+            states.Add($"{name}:-");
+            return false;
+        }
+
+        if (!node.gameObject.activeSelf)
+        {
+            node.gameObject.SetActive(true);
+        }
+
+        PlayMakerFSM? fsm = node.GetComponent<PlayMakerFSM>()
+            ?? node.GetComponentInChildren<PlayMakerFSM>(true);
+        if (fsm == null)
+        {
+            states.Add($"{name}:-");
+            return true;
+        }
+
+        // Toggling the component runs OnEnable, which starts the FSM again.
+        fsm.enabled = false;
+        fsm.enabled = true;
+        if (string.IsNullOrEmpty(fsm.ActiveStateName))
+        {
+            fsm.Fsm.SetState(ArrowIdleState);
+        }
+
+        states.Add($"{name}:{fsm.ActiveStateName}");
+        return true;
     }
 
     /// <summary>Destroys the clone root and clears the cached references.</summary>
