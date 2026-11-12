@@ -87,6 +87,10 @@ internal static class ShopCrestSchema
 
     /// <summary>Schema object created for the current crest; destroyed on rebuild.</summary>
     private static Schema? _detailsSchema;
+
+    /// <summary>Container of the current details schema, null when none is built.</summary>
+    internal static GameObject? DetailsContainer =>
+        _detailsSchema != null ? _detailsSchema.Container : null;
     private static ToolCrest? _builtFor;
     private static Sprite? _dotSprite;
 

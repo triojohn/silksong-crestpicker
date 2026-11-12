@@ -75,6 +75,8 @@ internal static class OwnShopWindow
             return;
         }
 
+        ShopFsmDiag.Poll();
+
         int ownerId = Owner != null ? Owner.GetInstanceID() : 0;
         bool stale = OwnWindowPolicy.ShouldRebuild(
             SceneHandle, SceneManager.GetActiveScene().handle, OwnerId, ownerId);
