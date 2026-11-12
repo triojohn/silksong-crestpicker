@@ -24,6 +24,12 @@ internal static class ShopFsmDiag
     /// <summary>Item picture inside the confirmation group.</summary>
     private const string ItemSpriteName = "Item Sprite";
 
+    /// <summary>Group that holds the list selector and the two scroll arrows.</summary>
+    private const string ArrowGroupName = "Item List Group";
+
+    /// <summary>Selector and arrows traced under the list group.</summary>
+    private static readonly string[] ArrowNames = { "selector", "Arrow U", "Arrow D" };
+
     /// <summary>States that mean the window just opened.</summary>
     private static readonly string[] OpenStates = { "Open Window", "Open" };
 
@@ -55,6 +61,12 @@ internal static class ShopFsmDiag
     /// <summary>Last logged schema fields; null before the first sample of a clone.</summary>
     private static string? _lastSchema;
 
+    /// <summary>Last logged state line per selector/arrow name.</summary>
+    private static readonly Dictionary<string, string> _lastArrows = new();
+
+    /// <summary>Last logged FSM state per selector/arrow name.</summary>
+    private static readonly Dictionary<string, string> _lastArrowFsms = new();
+
     /// <summary>Samples the shop FSMs and the clone; call every frame.</summary>
     internal static void Poll()
     {
@@ -68,6 +80,8 @@ internal static class ShopFsmDiag
                 _windowId = 0;
                 _lastConfirm = null;
                 _lastSchema = null;
+                _lastArrows.Clear();
+                _lastArrowFsms.Clear();
                 return;
             }
 
@@ -78,10 +92,13 @@ internal static class ShopFsmDiag
                 _windowId = id;
                 _lastConfirm = null;
                 _lastSchema = null;
+                _lastArrows.Clear();
+                _lastArrowFsms.Clear();
             }
 
             NoteConfirm(root);
             NoteSchema();
+            NoteArrows(root);
         }
         catch (Exception ex)
         {
@@ -247,6 +264,90 @@ internal static class ShopFsmDiag
 
         _lastSchema = line;
         Plugin.Log.LogInfo($"[SHOPFSM] schema {line}");
+    }
+
+    /// <summary>
+    /// Writes one <c>[ARROWS]</c> line per selector/arrow when its active flags, alpha or
+    /// renderer changed, and one line per FSM state change on those objects. Read-only.
+    /// </summary>
+    private static void NoteArrows(Transform root)
+    {
+        Transform? group = root.Find(ArrowGroupName) ?? FindChild(root, ArrowGroupName);
+        foreach (string name in ArrowNames)
+        {
+            Transform? node = group != null ? group.Find(name) ?? FindChild(group, name) : null;
+            NoteArrow(name, node);
+        }
+    }
+
+    /// <summary>Writes the state line and the FSM line of one selector/arrow on change.</summary>
+    private static void NoteArrow(string name, Transform? node)
+    {
+        GameObject? go = node != null ? node.gameObject : null;
+        Renderer? renderer = node != null
+            ? node.GetComponent<Renderer>() ?? node.GetComponentInChildren<Renderer>(true)
+            : null;
+        NestedFadeGroupBase? fade = node != null ? node.GetComponent<NestedFadeGroupBase>() : null;
+        string rendererFlag = renderer != null
+            ? renderer.enabled.ToString()
+            : fade != null ? fade.enabled.ToString() : "-";
+        string line = $"active={(go != null && go.activeSelf ? "true" : "false")}" +
+            $" inHierarchy={(go != null && go.activeInHierarchy ? "true" : "false")}" +
+            $" alpha={ArrowAlpha(node):F2} renderer={rendererFlag}";
+        if (!_lastArrows.TryGetValue(name, out string? wasLine) || wasLine != line)
+        {
+            _lastArrows[name] = line;
+            Plugin.Log.LogInfo($"[ARROWS] {name} {line}");
+        }
+
+        NoteArrowFsm(name, node);
+    }
+
+    /// <summary>Writes the FSM state of a selector/arrow when it changed.</summary>
+    private static void NoteArrowFsm(string name, Transform? node)
+    {
+        if (node == null)
+        {
+            return;
+        }
+
+        PlayMakerFSM? fsm = node.GetComponent<PlayMakerFSM>()
+            ?? node.GetComponentInChildren<PlayMakerFSM>(true);
+        if (fsm == null)
+        {
+            return;
+        }
+
+        string state = fsm.ActiveStateName ?? string.Empty;
+        if (_lastArrowFsms.TryGetValue(name, out string? was) && was == state)
+        {
+            return;
+        }
+
+        _lastArrowFsms[name] = state;
+        Plugin.Log.LogInfo($"[ARROWS] {name} fsm '{was ?? "<none>"}' -> '{state}'");
+    }
+
+    /// <summary>
+    /// Fade alpha of a selector/arrow: its own fade group, else the first sprite alpha
+    /// below it; <c>-1</c> when neither is present.
+    /// </summary>
+    private static float ArrowAlpha(Transform? node)
+    {
+        if (node == null)
+        {
+            return -1f;
+        }
+
+        NestedFadeGroupBase? group = node.GetComponent<NestedFadeGroupBase>();
+        if (group != null)
+        {
+            return group.AlphaSelf;
+        }
+
+        SpriteRenderer? sprite = node.GetComponent<SpriteRenderer>()
+            ?? node.GetComponentInChildren<SpriteRenderer>(true);
+        return sprite != null ? sprite.color.a : -1f;
     }
 
     /// <summary>
