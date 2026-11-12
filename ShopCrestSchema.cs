@@ -411,6 +411,21 @@ internal static class ShopCrestSchema
             return;
         }
 
+        // A stale confirm group left active by the game must not keep the details hidden.
+        if (!ConfirmActive)
+        {
+            if (!_detailsSchema.Container.activeSelf)
+            {
+                ShowDetails();
+            }
+
+            if (_detailsSchema.Container.activeSelf && !_detailsShownLogged)
+            {
+                _detailsShownLogged = true;
+                Plugin.Log.LogInfo("[SCHEMA] details shown (confirm inactive)");
+            }
+        }
+
         float lowerCentreY = Mathf.Lerp(bounds.min.y, bounds.center.y, 0.5f);
         Vector3 target = new Vector3(bounds.center.x, lowerCentreY, bounds.center.z);
         if (_detailsSchema.Container.activeSelf)
@@ -434,7 +449,7 @@ internal static class ShopCrestSchema
         }
 
         string anchor = ConfirmVisualVisible(out Bounds anchorBounds);
-        bool showing = anchor != AnchorNone;
+        bool showing = anchor == AnchorQuestion || (anchor == AnchorThanks && ConfirmActive);
         if (_confirmSchema.Container.activeSelf != showing)
         {
             _confirmSchema.Container.SetActive(showing);
@@ -761,13 +776,18 @@ internal static class ShopCrestSchema
     }
 
     /// <summary>
-    /// Empty when the confirm schema belongs on screen, otherwise why it does not. Only
-    /// the visible confirmation text decides: <see cref="ConfirmActive"/> gates the
-    /// purchase, and the game asks its question before that flag is set.
+    /// Empty when the confirm schema belongs on screen, otherwise why it does not. The
+    /// question text always counts; the purchase line only once <see cref="ConfirmActive"/>
+    /// is set, because the game leaves it active with stale text after a window closes.
     /// </summary>
     /// <param name="anchor">Result of <see cref="ConfirmVisualVisible"/>.</param>
     private static string ConfirmHiddenReason(string anchor)
     {
+        if (!ConfirmActive)
+        {
+            return "confirm inactive";
+        }
+
         if (anchor != AnchorNone)
         {
             return string.Empty;
