@@ -75,12 +75,6 @@ internal static class ShopCrestSchema
     /// <summary>Vanilla local scale of the silhouette child inside a crest card.</summary>
     private const float SilhouetteScale = 2f;
 
-    /// <summary>Scale error left alone by the silhouette fit.</summary>
-    private const float FitTolerance = 0.02f;
-
-    /// <summary>Corrective scale passes: one fit and one recheck.</summary>
-    private const int FitMaxPasses = 2;
-
     /// <summary>Fallback colours when the game's tool type palette is unavailable.</summary>
     private static readonly Dictionary<ToolItemType, Color> FallbackColors =
         new Dictionary<ToolItemType, Color>
@@ -161,8 +155,11 @@ internal static class ShopCrestSchema
     /// <summary>True once the hide at the close start was logged for this session.</summary>
     private static bool _closeHiddenLogged;
 
-    /// <summary>True once the details schema anchor was logged for this window.</summary>
-    private static bool _anchoredLogged;
+    /// <summary>True once the schema y offset was logged for this window.</summary>
+    private static bool _offsetLogged;
+
+    /// <summary>True once the y offset clamp was logged for this window.</summary>
+    private static bool _offsetClampedLogged;
 
     /// <summary>Last logged confirm fit scale; negative before the first fit.</summary>
     private static float _confirmFitLogged = -1f;
@@ -257,7 +254,8 @@ internal static class ShopCrestSchema
             _detailsCorrectedLogged = false;
             _confirmGroupActiveLogged = null;
             _detailsBounds = default;
-            _anchoredLogged = false;
+            _offsetLogged = false;
+            _offsetClampedLogged = false;
             DestroySchemaRoot();
             DumpAllCrests();
             Apply();
@@ -345,7 +343,8 @@ internal static class ShopCrestSchema
         ConfirmActive = false;
         _confirmGroupActiveLogged = null;
         _detailsBounds = default;
-        _anchoredLogged = false;
+        _offsetLogged = false;
+        _offsetClampedLogged = false;
         _confirmFitLogged = -1f;
         _selectedIndex = -1;
         _pickSource = string.Empty;
@@ -398,16 +397,16 @@ internal static class ShopCrestSchema
     }
 
     /// <summary>
-    /// Puts the details schema on the panel centre shifted by <see cref="OffsetY"/> and the
-    /// confirm schema in the space above the confirmation text. Runs every frame because
-    /// the panel's layout group keeps moving its children.
+    /// Puts the details schema in the middle of the lower half of the details panel and
+    /// the confirm schema in the space above the confirmation text. Runs every frame
+    /// because the panel's layout group keeps moving its children.
     /// </summary>
     private static void Place()
     {
         LogConfirmGroupState();
         FitPending();
 
-        if (_detailsSchema == null || _details == null)
+        if (_detailsSchema == null || _details == null || !TryBounds(_details, out Bounds bounds))
         {
             return;
         }
@@ -427,9 +426,18 @@ internal static class ShopCrestSchema
             }
         }
 
+        float targetY = SchemaPlacement.TargetY(bounds.min.y, bounds.center.y, bounds.size.y, OffsetY);
         if (_detailsSchema.Container.activeSelf)
         {
-            AnchorDetails(_detailsSchema);
+            if (!_offsetLogged)
+            {
+                _offsetLogged = true;
+                Plugin.Log.LogInfo($"[SCHEMA] placeY target={targetY:F3}" +
+                    $" panel=(min={bounds.min.y:F3},centre={bounds.center.y:F3},max={bounds.max.y:F3})" +
+                    $" offset={OffsetY:F3}");
+            }
+
+            PlaceAt(_detailsSchema, targetY, bounds);
             _detailsBounds = ContainerBounds(_detailsSchema.Container.transform);
         }
 
@@ -544,35 +552,51 @@ internal static class ShopCrestSchema
     }
 
     /// <summary>
-    /// Keeps the details schema on the panel centre shifted by <see cref="OffsetY"/> of the
-    /// panel height. The container is a child of the panel, so the panel centre comes for
-    /// free and only the local offset has to be written. Runs every frame, so a layout
-    /// pass that moved the panel leaves the schema in place.
+    /// Moves a schema in world space so the centre of its drawn silhouette lands on
+    /// <paramref name="targetY"/>, kept inside <paramref name="panel"/> by the silhouette
+    /// half height. X is left on the panel centre as before. The bounds are measured on
+    /// every call, so the shift never accumulates.
     /// </summary>
-    /// <param name="schema">Details schema to anchor.</param>
-    private static void AnchorDetails(Schema schema)
+    /// <param name="schema">Schema to move.</param>
+    /// <param name="targetY">World Y the silhouette centre should take.</param>
+    /// <param name="panel">Panel the schema must stay inside.</param>
+    private static void PlaceAt(Schema schema, float targetY, Bounds panel)
     {
-        if (_details == null)
-        {
-            return;
-        }
-
         Transform container = schema.Container.transform;
-        float height = _details is RectTransform rect ? rect.rect.height : 0f;
-        container.localPosition = new Vector3(0f, OffsetY * height, 0f);
-        container.localRotation = Quaternion.identity;
-
-        if (_anchoredLogged)
+        Bounds silhouette = SilhouetteBounds(schema);
+        float half = silhouette.extents.y;
+        float clamped = SchemaPlacement.ClampCentreY(targetY, half, panel.min.y, panel.max.y);
+        if (SchemaPlacement.IsClamped(targetY, half, panel.min.y, panel.max.y) && !_offsetClampedLogged)
         {
-            return;
+            _offsetClampedLogged = true;
+            Plugin.Log.LogInfo($"[SCHEMA] placeY clamped from={targetY:F3} to={clamped:F3}");
         }
 
-        _anchoredLogged = true;
-        Vector3 local = container.localPosition;
-        Vector3 parentScale = _details.lossyScale;
-        Plugin.Log.LogInfo($"[SCHEMA] anchored parent='{PathOf(_details)}'" +
-            $" local=({local.x:F3},{local.y:F3})" +
-            $" parentScale=({parentScale.x:F3},{parentScale.y:F3},{parentScale.z:F3})");
+        Vector3 shift = new Vector3(
+            panel.center.x - ContainerBounds(container).center.x,
+            clamped - silhouette.center.y,
+            0f);
+        if (shift.sqrMagnitude > 0.0000001f)
+        {
+            container.position += shift;
+        }
+    }
+
+    /// <summary>
+    /// World bounds of the drawn silhouette, the only thing the vertical placement measures:
+    /// the union of the container falls back when the silhouette draws nothing.
+    /// </summary>
+    /// <param name="schema">Schema whose silhouette is measured.</param>
+    private static Bounds SilhouetteBounds(Schema schema)
+    {
+        Renderer? body = schema.Body;
+        if (body != null && body.bounds.size.sqrMagnitude > 0.0000001f)
+        {
+            return body.bounds;
+        }
+
+        LogOnce("[SCHEMA] silhouette bounds unavailable, using container");
+        return ContainerBounds(schema.Container.transform);
     }
 
     /// <summary>
@@ -1248,14 +1272,14 @@ internal static class ShopCrestSchema
     /// <summary>
     /// Creates one schema instance: the sprite fallback is drawn at <paramref name="scale"/>,
     /// the cloned vanilla card at the constant <paramref name="cardScale"/>, which already
-    /// covers the silhouette child scale. The details schema is parented to the details
-    /// panel, the confirm schema to the neutral schema root; either way the container
-    /// cancels the inherited scale and the content carries the scale divided by it.
+    /// covers the silhouette child scale. Neither depends on the selected crest, so a taller
+    /// silhouette simply draws taller instead of being fitted per crest. The container stays
+    /// at scale 1 and the content carries the scale divided by the inherited one.
     /// </summary>
     private static Schema? BuildSchema(ToolCrest crest, Sprite silhouette, Color bodyColor,
         float scale, float cardScale, bool fitDetails, string label)
     {
-        Transform? host = fitDetails && _details != null ? _details : SchemaHost();
+        Transform? host = SchemaHost();
         if (host == null)
         {
             if (!_missingLogged)
@@ -1271,13 +1295,7 @@ internal static class ShopCrestSchema
 
         GameObject container = new GameObject(label);
         container.transform.SetParent(host, false);
-        container.transform.localPosition = Vector3.zero;
-        container.transform.localRotation = Quaternion.identity;
-        Vector3 hostScale = host.lossyScale;
-        container.transform.localScale = new Vector3(
-            hostScale.x != 0f ? 1f / hostScale.x : 1f,
-            hostScale.y != 0f ? 1f / hostScale.y : 1f,
-            hostScale.z != 0f ? 1f / hostScale.z : 1f);
+        container.transform.localScale = Vector3.one;
 
         GameObject content = new GameObject(ContentName);
         content.transform.SetParent(container.transform, false);
@@ -1292,7 +1310,7 @@ internal static class ShopCrestSchema
             // the card scale is the same for every crest, so only the body differs.
             float cardLocal = inherited > 0.0001f ? cardScale / inherited : cardScale;
             content.transform.localScale = new Vector3(cardLocal, cardLocal, 1f);
-            Schema? clone = CloneSchema(crest, container, content, label, fitDetails);
+            Schema? clone = CloneSchema(crest, container, content, label);
             if (clone != null)
             {
                 LiftConfirm(clone, fitDetails);
@@ -1309,7 +1327,6 @@ internal static class ShopCrestSchema
         body.color = bodyColor;
 
         Schema schema = new Schema(label, container, content, body);
-        schema.FitToPanel = fitDetails;
         AddDots(schema, crest, reference);
         schema.DotsTemplate = DotsFromTemplate(crest);
         Fit(schema);
@@ -1319,30 +1336,19 @@ internal static class ShopCrestSchema
     }
 
     /// <summary>
-    /// Fits the details schema to the panel by its measured world height, then applies the
-    /// dot drop once a real height is there. The confirm schema is sized by
-    /// <see cref="PlaceConfirm"/> instead, so only the details schema is fitted here.
+    /// Applies the dot drop once the silhouette draws a real height. The dot diameter and
+    /// the container scale are fixed at build time, so nothing here is measured against
+    /// the selected crest and every crest keeps the same scale.
     /// </summary>
     private static void Fit(Schema schema)
     {
-        float measured = WorldHeight(schema.Body);
-        if (measured <= 0.0001f)
+        float h2 = WorldHeight(schema.Body);
+        if (h2 <= 0.0001f)
         {
             return;
         }
 
-        if (schema.FitToPanel)
-        {
-            FitHeight(schema, measured);
-        }
-
-        float drawn = WorldHeight(schema.Body);
-        if (drawn <= 0.0001f)
-        {
-            return;
-        }
-
-        ApplyDotOffset(schema, drawn);
+        ApplyDotOffset(schema, h2);
 
         if (!schema.BoundsLogged)
         {
@@ -1351,44 +1357,9 @@ internal static class ShopCrestSchema
             Transform content = schema.Content.transform;
             Plugin.Log.LogInfo($"[SCHEMA] {schema.Label} silhouette" +
                 $" bounds={bounds.size.x:F3}x{bounds.size.y:F3}x{bounds.size.z:F3}" +
-                $" h2={drawn:F3} lossyScale={content.lossyScale.y:F3}" +
+                $" h2={h2:F3} lossyScale={content.lossyScale.y:F3}" +
                 $" contentScale={content.localScale.x:F3}");
         }
-    }
-
-    /// <summary>
-    /// Scales the container by the measured height ratio, once and once more to confirm.
-    /// The factor is derived from the current drawn height, so repeated frames cannot
-    /// accumulate. A ratio within <see cref="FitTolerance"/> counts as fitted.
-    /// </summary>
-    /// <param name="schema">Schema to scale.</param>
-    /// <param name="measured">Drawn silhouette height in world units.</param>
-    private static void FitHeight(Schema schema, float measured)
-    {
-        if (schema.FitPasses >= FitMaxPasses)
-        {
-            return;
-        }
-
-        float panel = TryPanelSize(out Vector2 size) ? size.y : BaseHeight;
-        float target = PanelFill * panel * Scale;
-        if (target <= 0.0001f)
-        {
-            return;
-        }
-
-        float factor = target / measured;
-        if (Mathf.Abs(factor - 1f) <= FitTolerance)
-        {
-            schema.FitPasses = FitMaxPasses;
-            return;
-        }
-
-        Transform container = schema.Container.transform;
-        container.localScale *= factor;
-        schema.FitPasses++;
-        Plugin.Log.LogInfo($"[SCHEMA] fit measured={measured:F3} target={target:F3}" +
-            $" factor={factor:F3} pass={schema.FitPasses}");
     }
 
     /// <summary>
@@ -1681,7 +1652,7 @@ internal static class ShopCrestSchema
     /// Null when no crest card is in the scene.
     /// </summary>
     private static Schema? CloneSchema(ToolCrest crest, GameObject container, GameObject content,
-        string label, bool fitDetails)
+        string label)
     {
         try
         {
@@ -1750,7 +1721,6 @@ internal static class ShopCrestSchema
             }
 
             Schema schema = new Schema(label, container, content, body);
-            schema.FitToPanel = fitDetails;
             Fit(schema);
             Plugin.Log.LogInfo($"[SCHEMA] clone '{crest.name}' silhouette='{silhouetteName}'" +
                 $" crestSprite='{crestSpriteName}' extras={extras} slots={slots.Length}");
@@ -2452,12 +2422,6 @@ internal static class ShopCrestSchema
 
         /// <summary>True once the silhouette bounds were logged for this schema.</summary>
         internal bool BoundsLogged { get; set; }
-
-        /// <summary>True for the details schema, the one fitted to the panel height.</summary>
-        internal bool FitToPanel { get; set; }
-
-        /// <summary>Corrective scale passes already applied to the container.</summary>
-        internal int FitPasses { get; set; }
     }
 
     /// <summary>
@@ -2492,9 +2456,6 @@ internal static class ShopCrestSchema
         string path = PathOf(container.transform);
         int fade = FadeAncestors(container.transform);
         container.SetActive(false);
-        // The details schema lives under the panel, so a fade group there walks it: detach
-        // before the deferred destroy so no group keeps a reference to a destroyed child.
-        container.transform.SetParent(null, false);
         UnityEngine.Object.Destroy(container);
         Plugin.Log.LogInfo($"[SCHEMA] container retired live={LiveContainers()}" +
             $" parent='{path}' fadeAncestors={fade}");
