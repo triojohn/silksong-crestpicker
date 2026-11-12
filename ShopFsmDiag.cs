@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Reflection;
+using System.Runtime.CompilerServices;
 using HutongGames.PlayMaker;
 using TeamCherry.NestedFadeGroup;
 using UnityEngine;
@@ -36,6 +38,10 @@ internal static class ShopFsmDiag
 
     /// <summary>Frame of the last full rescan.</summary>
     private static int _scanFrame = -ScanInterval;
+
+    /// <summary><c>Fsm.Id</c> as a property or field; null when the game build has neither.</summary>
+    private static readonly PropertyInfo? _fsmIdProperty = typeof(Fsm).GetProperty("Id");
+    private static readonly FieldInfo? _fsmIdField = typeof(Fsm).GetField("Id");
 
     /// <summary>Clone instance id the current FSM list was scanned for.</summary>
     private static int _scanWindowId;
@@ -134,6 +140,55 @@ internal static class ShopFsmDiag
             {
                 _fsms.Add(fsm);
             }
+        }
+
+        NoteIdentity();
+    }
+
+    /// <summary>
+    /// Writes one identity line per FSM on every rescan: the shared <c>Fsm</c> object shows up
+    /// as the same <c>fsmHash</c> under two paths. Duplicates of a path/hash pair are skipped.
+    /// </summary>
+    private static void NoteIdentity()
+    {
+        HashSet<string> seen = new();
+        foreach (PlayMakerFSM fsm in _fsms)
+        {
+            if (fsm == null)
+            {
+                continue;
+            }
+
+            string path = OwnShopWindow.PathOf(fsm.transform);
+            int hash = fsm.Fsm != null ? RuntimeHelpers.GetHashCode(fsm.Fsm) : 0;
+            if (!seen.Add($"{path}|{hash}"))
+            {
+                continue;
+            }
+
+            bool ours = IsOurs(fsm);
+            string template = fsm.FsmTemplate != null ? fsm.FsmTemplate.name : "-";
+            Plugin.Log.LogInfo($"[SHOPFSM] identity path='{path}' ours={(ours ? "true" : "false")}" +
+                $" fsmHash={hash} template='{template}' fsmId={FsmId(fsm)}");
+        }
+    }
+
+    /// <summary><c>Fsm.Id</c> value, or <c>-</c> when the game build has no such member.</summary>
+    private static string FsmId(PlayMakerFSM fsm)
+    {
+        try
+        {
+            Fsm? fsmObject = fsm.Fsm;
+            object? value = fsmObject == null
+                ? null
+                : _fsmIdProperty != null
+                    ? _fsmIdProperty.GetValue(fsmObject)
+                    : _fsmIdField?.GetValue(fsmObject);
+            return value?.ToString() ?? "-";
+        }
+        catch (Exception)
+        {
+            return "-";
         }
     }
 
