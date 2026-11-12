@@ -32,6 +32,9 @@ internal static class OwnShopWindow
     /// <summary>Scene container the clone is parented to, so it stays a separate root.</summary>
     private const string ContainerName = "CrestPicker Shop Window";
 
+    /// <summary>Name of the scene's own shop window root; our clone carries its own name.</summary>
+    private const string VanillaWindowName = "Shop Menu(Clone)";
+
     /// <summary>Live clone, null when there is none or it was destroyed.</summary>
     internal static ShopMenuStock? Current { get; private set; }
 
@@ -66,6 +69,65 @@ internal static class OwnShopWindow
     }
 
     private static GameObject? _container;
+
+    /// <summary>Vanilla window we switched off, null while we did not.</summary>
+    private static GameObject? _vanillaWindow;
+
+    /// <summary>Active state the vanilla window had before we switched it off.</summary>
+    private static bool _vanillaWasActive;
+
+    /// <summary>
+    /// Switches the scene's own shop window off for the whole session: its FSM keeps
+    /// ticking otherwise and reacts to the same global cancel event as our clone.
+    /// </summary>
+    internal static void SuspendVanilla()
+    {
+        if (_vanillaWindow != null)
+        {
+            return;
+        }
+
+        try
+        {
+            GameObject? window = GameObject.Find(VanillaWindowName);
+            if (window == null)
+            {
+                Plugin.Log.LogInfo("[SHOP] vanilla window not found");
+                return;
+            }
+
+            _vanillaWindow = window;
+            _vanillaWasActive = window.activeSelf;
+            window.SetActive(false);
+            Plugin.Log.LogInfo("[SHOP] vanilla window disabled");
+        }
+        catch (Exception ex)
+        {
+            _vanillaWindow = null;
+            Plugin.Log.LogWarning($"[SHOP] vanilla window suspend failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>Puts the vanilla window back to the state it had when the session started.</summary>
+    internal static void RestoreVanilla()
+    {
+        GameObject? window = _vanillaWindow;
+        _vanillaWindow = null;
+        if (window == null)
+        {
+            return;
+        }
+
+        try
+        {
+            window.SetActive(_vanillaWasActive);
+            Plugin.Log.LogInfo($"[SHOP] vanilla window restored active={_vanillaWasActive}");
+        }
+        catch (Exception ex)
+        {
+            Plugin.Log.LogWarning($"[SHOP] vanilla window restore failed: {ex.Message}");
+        }
+    }
 
     /// <summary>Drops the reference once the clone is gone; call every frame.</summary>
     internal static void Tick()

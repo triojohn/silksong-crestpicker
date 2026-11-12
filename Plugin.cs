@@ -349,6 +349,7 @@ public sealed class Plugin : BaseUnityPlugin
     private void OnDestroy()
     {
         CrestSelectMenu.Closed -= OnMenuClosed;
+        OwnShopWindow.RestoreVanilla();
         _harmony?.UnpatchSelf();
     }
 }

@@ -323,6 +323,10 @@ internal static class ShopCrestMenu
                 return Fail("own shop built an empty item list");
             }
 
+            // The scene's own window keeps its FSM ticking and would react to the same
+            // cancel event as our clone, so it is switched off for the whole session.
+            OwnShopWindow.SuspendVanilla();
+
             // Arm the session before the open event so a close during the first
             // frame is still attributed to it. ReassertStock() keeps our stock.
             IsOpen = true;
@@ -1507,6 +1511,7 @@ internal static class ShopCrestMenu
             RestorePrompts();
             if (!foreign)
             {
+                OwnShopWindow.RestoreVanilla();
                 OwnShopWindow.Hide();
             }
 
@@ -1524,6 +1529,7 @@ internal static class ShopCrestMenu
         {
             IsOpen = false;
             RestorePrompts();
+            OwnShopWindow.RestoreVanilla();
             OwnShopWindow.Hide();
             ResetSession();
             _closing = false;
@@ -1549,6 +1555,7 @@ internal static class ShopCrestMenu
             CrestSelectMenu.IsOpen = false;
             ResetSession();
             _closing = false;
+            OwnShopWindow.RestoreVanilla();
             OwnShopWindow.Hide();
         }
     }
