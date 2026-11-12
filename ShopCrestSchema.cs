@@ -426,19 +426,18 @@ internal static class ShopCrestSchema
             }
         }
 
-        float lowerCentreY = Mathf.Lerp(bounds.min.y, bounds.center.y, 0.5f);
-        Vector3 target = new Vector3(bounds.center.x, lowerCentreY, bounds.center.z);
+        float targetY = SchemaPlacement.TargetY(bounds.min.y, bounds.center.y, bounds.size.y, OffsetY);
         if (_detailsSchema.Container.activeSelf)
         {
-            float offsetWorld = OffsetY * bounds.size.y;
-            if (!_offsetLogged && Mathf.Abs(offsetWorld) > 0.0001f)
+            if (!_offsetLogged)
             {
                 _offsetLogged = true;
-                Plugin.Log.LogInfo($"[SCHEMA] offsetY={OffsetY:F3} world={offsetWorld:F3}" +
-                    $" ({Mathf.Abs(OffsetY):F2} of panel)");
+                Plugin.Log.LogInfo($"[SCHEMA] placeY target={targetY:F3}" +
+                    $" panel=(min={bounds.min.y:F3},centre={bounds.center.y:F3},max={bounds.max.y:F3})" +
+                    $" offset={OffsetY:F3}");
             }
 
-            PlaceAt(_detailsSchema, target, offsetWorld, bounds);
+            PlaceAt(_detailsSchema, targetY, bounds);
             _detailsBounds = ContainerBounds(_detailsSchema.Container.transform);
         }
 
@@ -553,49 +552,51 @@ internal static class ShopCrestSchema
     }
 
     /// <summary>
-    /// Moves a schema in world space so its own drawn centre lands on <paramref name="target"/>,
-    /// shifted down by <paramref name="offsetY"/>; with a <paramref name="panel"/> the shifted
-    /// schema is kept inside the panel edges. The shift is measured against the drawn bounds on
-    /// every call, so it never accumulates.
+    /// Moves a schema in world space so the centre of its drawn silhouette lands on
+    /// <paramref name="targetY"/>, kept inside <paramref name="panel"/> by the silhouette
+    /// half height. X is left on the panel centre as before. The bounds are measured on
+    /// every call, so the shift never accumulates.
     /// </summary>
     /// <param name="schema">Schema to move.</param>
-    /// <param name="target">World position the drawn centre should take.</param>
-    /// <param name="offsetY">Extra world shift along Y; negative goes down.</param>
-    /// <param name="panel">Panel the schema must stay inside, when known.</param>
-    private static void PlaceAt(Schema schema, Vector3 target, float offsetY = 0f, Bounds? panel = null)
+    /// <param name="targetY">World Y the silhouette centre should take.</param>
+    /// <param name="panel">Panel the schema must stay inside.</param>
+    private static void PlaceAt(Schema schema, float targetY, Bounds panel)
     {
         Transform container = schema.Container.transform;
-        Bounds bounds = ContainerBounds(container);
-        Vector3 shift = target - bounds.center;
-        shift.z = 0f;
-        shift.y += offsetY;
-
-        if (panel.HasValue && Mathf.Abs(offsetY) > 0.0001f)
+        Bounds silhouette = SilhouetteBounds(schema);
+        float half = silhouette.extents.y;
+        float clamped = SchemaPlacement.ClampCentreY(targetY, half, panel.min.y, panel.max.y);
+        if (SchemaPlacement.IsClamped(targetY, half, panel.min.y, panel.max.y) && !_offsetClampedLogged)
         {
-            Bounds outer = panel.Value;
-            float centre = bounds.center.y + shift.y;
-            float half = bounds.extents.y;
-            float min = outer.min.y + half;
-            float max = outer.max.y - half;
-            if (min <= max)
-            {
-                float clamped = Mathf.Clamp(centre, min, max);
-                if (Mathf.Abs(clamped - centre) > 0.0001f)
-                {
-                    shift.y += clamped - centre;
-                    if (!_offsetClampedLogged)
-                    {
-                        _offsetClampedLogged = true;
-                        Plugin.Log.LogInfo("[SCHEMA] offsetY clamped");
-                    }
-                }
-            }
+            _offsetClampedLogged = true;
+            Plugin.Log.LogInfo($"[SCHEMA] placeY clamped from={targetY:F3} to={clamped:F3}");
         }
 
+        Vector3 shift = new Vector3(
+            panel.center.x - ContainerBounds(container).center.x,
+            clamped - silhouette.center.y,
+            0f);
         if (shift.sqrMagnitude > 0.0000001f)
         {
             container.position += shift;
         }
+    }
+
+    /// <summary>
+    /// World bounds of the drawn silhouette, the only thing the vertical placement measures:
+    /// the union of the container falls back when the silhouette draws nothing.
+    /// </summary>
+    /// <param name="schema">Schema whose silhouette is measured.</param>
+    private static Bounds SilhouetteBounds(Schema schema)
+    {
+        Renderer? body = schema.Body;
+        if (body != null && body.bounds.size.sqrMagnitude > 0.0000001f)
+        {
+            return body.bounds;
+        }
+
+        LogOnce("[SCHEMA] silhouette bounds unavailable, using container");
+        return ContainerBounds(schema.Container.transform);
     }
 
     /// <summary>
