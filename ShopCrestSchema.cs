@@ -42,6 +42,12 @@ internal static class ShopCrestSchema
     /// <summary>Fraction of the details panel the details schema fills.</summary>
     private const float PanelFill = 0.8f;
 
+    /// <summary>Gap between the lowest description glyph and the schema top, as a panel fraction.</summary>
+    private const float AnchorGap = 0.02f;
+
+    /// <summary>Frames the description bounds may stay empty before the panel offset takes over.</summary>
+    private const int MaxAnchorAttempts = 5;
+
     /// <summary>Path of the details panel inside the shop window.</summary>
     private const string DetailsPath = "Item List Group/Item Details";
 
@@ -338,7 +344,7 @@ internal static class ShopCrestSchema
             _detailsSchema.Container.SetActive(true);
         }
 
-        AnchorSchema(_detailsSchema);
+        AnchorSchema(_detailsSchema, bounds);
         FitHeight(_detailsSchema, bounds);
         PlaceAt(_detailsSchema, bounds);
         LogAnchor(_detailsSchema, bounds);
@@ -346,74 +352,56 @@ internal static class ShopCrestSchema
     }
 
     /// <summary>
-    /// Measures the bottom of the description block once per build and stores it as the schema
-    /// top, so the silhouette hangs directly under the text container. The block is the first
-    /// ancestor of the description label with a real rect, never above the details panel; a
-    /// missing block or a non-finite corner leaves the old panel offset in charge.
+    /// Measures the drawn description text and puts the schema top a fixed gap under its
+    /// lowest glyph. <see cref="TMP_Text.bounds"/> is the rendered box of every submesh in
+    /// world space, so a wrapped or rich-text description is measured as drawn. Runs again
+    /// every frame until the bounds arrive, because TMP lays out a rewritten text one frame
+    /// later; after <see cref="MaxAnchorAttempts"/> empty frames the panel offset takes over.
     /// </summary>
     /// <param name="schema">Schema built for the current crest.</param>
-    private static void AnchorSchema(Schema schema)
+    /// <param name="panel">World bounds of the details panel.</param>
+    private static void AnchorSchema(Schema schema, Bounds panel)
     {
-        if (schema.AnchorTried)
+        if (schema.AnchorKnown || schema.AnchorGivenUp)
         {
             return;
         }
 
-        schema.AnchorTried = true;
-        if (_descLabel != null && _builtFor != null &&
-            WriteText(_descLabel, (string)_builtFor.Description ?? string.Empty))
+        if (_descLabel == null || _builtFor == null)
         {
-            _descLabel.ForceMeshUpdate();
-        }
-
-        RectTransform? block = DescriptionBlock();
-        if (block == null)
-        {
-            Plugin.Log.LogInfo("[SCHEMA] anchor fallback (no block)");
+            schema.AnchorGivenUp = true;
+            Plugin.Log.LogInfo("[SCHEMA] anchor fallback (no bounds)");
             return;
         }
 
-        Vector3[] corners = new Vector3[4];
-        block.GetWorldCorners(corners);
-        float bottom = Mathf.Min(corners[0].y, corners[1].y);
-        if (!Geometry.IsSane(bottom))
+        WriteText(_descLabel, (string)_builtFor.Description ?? string.Empty);
+        _descLabel.ForceMeshUpdate();
+        Bounds text = _descLabel.bounds;
+        float descBottom = text.min.y;
+        if (!Geometry.IsSane(descBottom) || !Geometry.IsSane(text.size.y) ||
+            Mathf.Abs(text.size.y) < 0.0001f)
         {
-            Plugin.Log.LogInfo("[SCHEMA] anchor fallback (no block)");
+            schema.AnchorAttempts++;
+            if (schema.AnchorAttempts >= MaxAnchorAttempts)
+            {
+                schema.AnchorGivenUp = true;
+                Plugin.Log.LogInfo("[SCHEMA] anchor fallback (no bounds)");
+            }
+            else
+            {
+                Plugin.Log.LogInfo("[SCHEMA] anchor deferred (bounds empty)");
+            }
+
             return;
         }
 
-        schema.BlockPath = PathOf(block);
-        schema.BlockBottom = bottom;
-        schema.Top = bottom;
+        schema.DescBottom = descBottom;
+        schema.Top = descBottom - (AnchorGap * panel.size.y);
         schema.AnchorKnown = true;
     }
 
     /// <summary>
-    /// Rect the description text is laid out in: the parent of the description label, climbing
-    /// while the rect is empty, and stopping at the details panel itself.
-    /// </summary>
-    private static RectTransform? DescriptionBlock()
-    {
-        if (!(_descLabel?.rectTransform is RectTransform label))
-        {
-            return null;
-        }
-
-        for (Transform? current = label.parent;
-            current != null && current != _details;
-            current = current.parent)
-        {
-            if (current is RectTransform candidate && candidate.rect.height > 0.0001f)
-            {
-                return candidate;
-            }
-        }
-
-        return _details is RectTransform panel && panel.rect.height > 0.0001f ? panel : null;
-    }
-
-    /// <summary>
-    /// World Y of the schema centre under the measured description block bottom, pulled back
+    /// World Y of the schema centre under the measured description text bottom, pulled back
     /// inside the panel when the silhouette would leave it. The drawn size is not touched here.
     /// </summary>
     /// <param name="schema">Schema to place.</param>
@@ -443,9 +431,10 @@ internal static class ShopCrestSchema
         }
 
         schema.AnchorLogged = true;
-        Plugin.Log.LogInfo($"[SCHEMA] anchor block='{schema.BlockPath}'" +
-            $" blockBottom={schema.BlockBottom:F3} top={schema.Top:F3}" +
-            $" h={WorldHeight(schema.Body):F3} centre={AnchorCentreY(schema, panel):F3}");
+        Plugin.Log.LogInfo($"[SCHEMA] anchor descBottom={schema.DescBottom:F3}" +
+            $" top={schema.Top:F3} h={WorldHeight(schema.Body):F3}" +
+            $" centre={AnchorCentreY(schema, panel):F3}" +
+            $" size={PanelFill * panel.size.y * Scale:F3}");
     }
 
     /// <summary>
@@ -2268,19 +2257,19 @@ internal static class ShopCrestSchema
         /// <summary>True once the container was scaled to the panel fill.</summary>
         internal bool FitApplied { get; set; }
 
-        /// <summary>True once the description block was measured for this build.</summary>
-        internal bool AnchorTried { get; set; }
+        /// <summary>Frames the description bounds were asked for and came back empty.</summary>
+        internal int AnchorAttempts { get; set; }
 
-        /// <summary>True when the description block gave a usable bottom.</summary>
+        /// <summary>True once the description bounds were given up on for this build.</summary>
+        internal bool AnchorGivenUp { get; set; }
+
+        /// <summary>True when the description text gave a usable bottom.</summary>
         internal bool AnchorKnown { get; set; }
 
-        /// <summary>Scene path of the measured description block, for the anchor log.</summary>
-        internal string BlockPath { get; set; } = string.Empty;
+        /// <summary>World Y of the lowest drawn description glyph, measured once per build.</summary>
+        internal float DescBottom { get; set; }
 
-        /// <summary>World Y of the description block bottom, measured once per build.</summary>
-        internal float BlockBottom { get; set; }
-
-        /// <summary>World Y of the schema top, equal to <see cref="BlockBottom"/>.</summary>
+        /// <summary>World Y of the schema top: the description bottom less the anchor gap.</summary>
         internal float Top { get; set; }
 
         /// <summary>True once the anchor numbers were logged for this build.</summary>
