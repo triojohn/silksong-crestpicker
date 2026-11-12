@@ -72,17 +72,17 @@ internal static class ShopDiag
     {
         try
         {
-            ShopOwnerBase? owner = FindLiveOwner();
+            ShopOwnerBase? owner = OwnShopWindow.Owner;
             if (owner == null)
             {
-                Plugin.Log.LogInfo("[SHOPFSM] no active ShopOwnerBase in scene.");
+                Plugin.Log.LogInfo("[SHOPFSM] no live ShopOwnerBase in scene.");
                 return;
             }
 
-            GameObject? shopObject = owner.ShopObject;
+            GameObject? shopObject = OwnShopWindow.Current != null ? OwnShopWindow.Current.gameObject : null;
             if (shopObject == null)
             {
-                Plugin.Log.LogInfo($"[SHOPFSM] owner='{owner.name}' has no ShopObject.");
+                Plugin.Log.LogInfo($"[SHOPFSM] owner='{owner.name}' has no own shop window.");
                 return;
             }
 

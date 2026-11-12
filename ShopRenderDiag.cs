@@ -400,19 +400,13 @@ internal static class ShopRenderDiag
         return shopRoot.Find("Window/Shop_Backboard") ?? shopRoot.Find("Window") ?? shopRoot;
     }
 
-    /// <summary>Shop window of the scene, even while it is hidden.</summary>
+    /// <summary>Our own shop window, even while it is hidden.</summary>
     private static Transform? LiveRoot()
     {
         try
         {
-            foreach (ShopOwnerBase owner in Resources.FindObjectsOfTypeAll<ShopOwnerBase>())
-            {
-                if (owner != null && owner.gameObject.scene.IsValid() && owner.gameObject.activeInHierarchy)
-                {
-                    GameObject? shop = owner.ShopObject;
-                    return shop != null ? shop.transform : null;
-                }
-            }
+            ShopMenuStock? stock = OwnShopWindow.Current;
+            return stock != null ? stock.transform : null;
         }
         catch (Exception ex)
         {

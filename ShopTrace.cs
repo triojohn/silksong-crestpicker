@@ -158,25 +158,18 @@ internal static class ShopTrace
         return $"({value.x:F2},{value.y:F2},{value.z:F2})";
     }
 
-    /// <summary>The spawned shop window of the scene, even while it is hidden.</summary>
+    /// <summary>Our own shop window, even while it is hidden.</summary>
     private static GameObject? LiveShopRoot()
     {
         try
         {
-            foreach (ShopOwnerBase owner in Resources.FindObjectsOfTypeAll<ShopOwnerBase>())
-            {
-                if (owner != null && owner.gameObject.scene.IsValid() && owner.gameObject.activeInHierarchy)
-                {
-                    return owner.ShopObject;
-                }
-            }
+            ShopMenuStock? stock = OwnShopWindow.Current;
+            return stock != null ? stock.gameObject : null;
         }
         catch (Exception)
         {
             return null;
         }
-
-        return null;
     }
 }
 

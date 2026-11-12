@@ -323,9 +323,8 @@ internal static class ShopCrestMenu
                 return Fail("own shop built an empty item list");
             }
 
-            // The open event runs FSM actions that read ShopObject, and that getter
-            // re-applies the owner's vanilla stock. Arm the session first so the
-            // owner guard holds; ReassertStock() catches a later overwrite anyway.
+            // Arm the session before the open event so a close during the first
+            // frame is still attributed to it. ReassertStock() keeps our stock.
             IsOpen = true;
             CrestSelectMenu.IsOpen = true;
             ShopInputLock.Block("shop open");
@@ -1899,20 +1898,6 @@ internal static class ShopCrestMenu
         return field?.GetValue(target) is float value ? value : float.NaN;
     }
 
-    /// <summary>First active scene shop owner; asset copies are ignored.</summary>
-    private static ShopOwnerBase? FindLiveOwner()
-    {
-        foreach (ShopOwnerBase owner in Resources.FindObjectsOfTypeAll<ShopOwnerBase>())
-        {
-            if (owner != null && owner.gameObject.scene.IsValid() && owner.gameObject.activeInHierarchy)
-            {
-                return owner;
-            }
-        }
-
-        return null;
-    }
-
     /// <summary>Sets a private field, ignoring a missing field or a rejected value.</summary>
     private static void SetField(object target, string fieldName, object? value)
     {
@@ -2095,32 +2080,5 @@ internal static class DialogueSuppressPatch
         }
 
         return text!.Length <= 60 ? text : text.Substring(0, 60) + "...";
-    }
-}
-
-/// <summary>
-/// Stops the owner from re-applying its vanilla stock over ours: touching
-/// <c>ShopObject</c> calls this, and SetStock would replace our temp entries.
-/// Skipped only while our live shop session is up; the window itself already exists.
-/// </summary>
-[HarmonyPatch(typeof(ShopOwnerBase), "SpawnUpdateShop")]
-internal static class ShopOwnerStockResetPatch
-{
-    private static bool Prefix()
-    {
-        try
-        {
-            if (ShopCrestMenu.IsOpen)
-            {
-                Plugin.Log.LogInfo("[STOCK] owner stock re-apply blocked during crest session");
-                return false;
-            }
-        }
-        catch (Exception ex)
-        {
-            Plugin.Log.LogWarning($"[STOCK] owner stock guard failed: {ex.Message}");
-        }
-
-        return true;
     }
 }
