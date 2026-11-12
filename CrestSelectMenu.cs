@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using CrestPicker.Pure;
 using TMProOld;
 using UnityEngine;
 using UnityEngine.UI;
@@ -47,6 +48,22 @@ internal sealed class CrestSelectMenu : MonoBehaviour
     /// <summary>True while a picker menu (custom or cloned shop) exists in the scene.</summary>
     internal static bool IsOpen { get; set; }
 
+    /// <summary>Outcome of an open attempt.</summary>
+    internal enum OpenResult
+    {
+        /// <summary>The picker is on screen, or its cloned window is still starting.</summary>
+        Opened,
+
+        /// <summary>Nothing was opened; a later attempt may succeed.</summary>
+        Retry,
+
+        /// <summary>The cross-save pool is still being read; a later attempt may succeed.</summary>
+        Waiting,
+
+        /// <summary>The pool is settled and empty: there is nothing to offer.</summary>
+        NoPool,
+    }
+
     /// <summary>
     /// Raised when a picker closes. Args: true when a crest was selected, and true
     /// when the picker was opened by the dialogue offer rather than the test hotkey.
@@ -57,21 +74,35 @@ internal sealed class CrestSelectMenu : MonoBehaviour
     /// Builds and shows the picker when the game is ready. Never throws.
     /// </summary>
     /// <param name="fromDialogue">True when opened by the maid dialogue offer.</param>
-    /// <returns>True when the menu was created and is on screen.</returns>
-    internal static bool TryOpen(bool fromDialogue = false)
+    /// <returns>Whether the menu is on screen, and why it is not.</returns>
+    internal static OpenResult TryOpen(bool fromDialogue = false)
     {
         if (IsOpen)
         {
-            return false;
+            return OpenResult.Opened;
         }
 
         try
         {
-            List<ToolCrest> crests = CrestPickerService.GetSelectableCrests();
+            List<ToolCrest> crests =
+                CrestPickerService.GetSelectableCrests(waitForSaves: fromDialogue, out bool waiting);
             if (crests.Count == 0)
             {
+                if (waiting)
+                {
+                    return OpenResult.Waiting;
+                }
+
+                if (fromDialogue && CrestPickerService.PoolMode == CrestPoolMode.FromSaves)
+                {
+                    Plugin.Log.LogInfo(
+                        "[POOL] offer ended: all normal crests unlocked here" +
+                        $" (slot {Plugin.CurrentSlotId()})");
+                    return OpenResult.NoPool;
+                }
+
                 Plugin.Log.LogWarning("[CREST] No selectable crests to show, menu not opened.");
-                return false;
+                return OpenResult.Retry;
             }
 
             bool deferred = false;
@@ -81,17 +112,17 @@ internal sealed class CrestSelectMenu : MonoBehaviour
                 // take over while the clone's FSM is still starting.
                 if (ShopCrestMenu.TryOpen(crests, fromDialogue, out deferred) || deferred)
                 {
-                    return true;
+                    return OpenResult.Opened;
                 }
             }
 
-            return OpenCustom(crests, fromDialogue);
+            return OpenCustom(crests, fromDialogue) ? OpenResult.Opened : OpenResult.Retry;
         }
         catch (Exception ex)
         {
             Plugin.Log.LogError($"[CREST] Failed to open the crest menu: {ex}");
             IsOpen = false;
-            return false;
+            return OpenResult.Retry;
         }
     }
 

@@ -86,11 +86,12 @@ public sealed class Plugin : BaseUnityPlugin
 
         _grantAllCrests = Config.Bind("General", "GrantAllCrests", false,
             "Устаревший ключ: true трактуется как CrestPool=All");
-        _crestPool = Config.Bind("General", "CrestPool", CrestPoolMode.All,
-            "Пул знаков для выбора: All — все 7 нормальных, Unlocked — только открытые в сейве");
-        IgnoreUnlockState = Config.Bind("General", "IgnoreUnlockState", true,
-            "Временно показывать все нормальные знаки независимо от сейва. " +
-            "false — снова фильтровать по CrestPool/IsUnlocked. Читается на лету.");
+        _crestPool = Config.Bind("General", "CrestPool", CrestPoolMode.FromSaves,
+            "Пул знаков для выбора: FromSaves — открытые в любом слоте сейва минус открытые " +
+            "в текущем прохождении, All — все нормальные, Unlocked — только открытые в текущем сейве");
+        IgnoreUnlockState = Config.Bind("General", "IgnoreUnlockState", false,
+            "Устаревший ключ: true — показывать все нормальные знаки независимо от сейва, " +
+            "false — фильтровать по CrestPool. При CrestPool=FromSaves игнорируется. Читается на лету.");
         IncludeEquippedCrest = Config.Bind("General", "IncludeEquippedCrest", true,
             "Оставлять надетый знак в списке выбора. true — знак не вырезается, " +
             "false — прежнее поведение (надетый знак исключён). Читается на лету.");
@@ -152,7 +153,15 @@ public sealed class Plugin : BaseUnityPlugin
             "list (Item List), listGroup (Item List Group), backboard (Window/Shop_Backboard), " +
             "window (Window), original (не двигать текст). Читается каждый кадр.");
 
-        CrestPickerService.PoolMode = _grantAllCrests.Value ? CrestPoolMode.All : _crestPool.Value;
+        CrestPoolMode poolMode = _crestPool.Value;
+        if (!_grantAllCrests.Value && poolMode == CrestPoolMode.All && IgnoreUnlockState.Value)
+        {
+            poolMode = CrestPoolMode.FromSaves;
+            _crestPool.Value = poolMode;
+            Logger.LogInfo("[CONFIG] pool mode migrated to FromSaves");
+        }
+
+        CrestPickerService.PoolMode = _grantAllCrests.Value ? CrestPoolMode.All : poolMode;
         EnableSnailChoice = _enableSnailChoice.Value;
         UseLiveShop = _useLiveShop.Value;
         ShopCrestSchema.Enabled = _showCrestSchema.Value;
@@ -176,8 +185,11 @@ public sealed class Plugin : BaseUnityPlugin
         ShopCosmetics.RowLabelOffsetX = _rowLabelOffsetX;
         ShopCosmetics.RowLabelOffsetY = _rowLabelOffsetY;
         ShopCosmetics.CentreSourceConfig = _textCentreSource;
-        Logger.LogInfo($"[CREST] crest pool mode: {CrestPickerService.PoolMode}" +
-            $" (GrantAllCrests={_grantAllCrests.Value}, CrestPool={_crestPool.Value}).");
+        Logger.LogInfo(CrestPickerService.PoolMode == CrestPoolMode.FromSaves
+            ? "[POOL] mode=FromSaves (IgnoreUnlockState ignored)."
+            : $"[POOL] mode={CrestPickerService.PoolMode}" +
+              $" (IgnoreUnlockState={IgnoreUnlockState.Value}, GrantAllCrests={_grantAllCrests.Value}," +
+              $" CrestPool={_crestPool.Value}).");
         CrestSelectMenu.Closed += OnMenuClosed;
         CrestSelectMenu.RunSelfCheck();
         CrestOfferState.RunSelfCheck();
@@ -276,6 +288,7 @@ public sealed class Plugin : BaseUnityPlugin
                 return;
             }
 
+            CrestPoolFromSaves.Begin(slot);
             _offerDeadline = Time.unscaledTime + OfferGrace;
             Log.LogInfo($"[CREST] Offer requested for slot {slot}.");
         }
@@ -288,15 +301,35 @@ public sealed class Plugin : BaseUnityPlugin
     /// <summary>Opens a pending offer once the game is playable; drops it after a grace period.</summary>
     private void UpdatePendingOffer()
     {
+        CrestPoolFromSaves.Tick();
+
         if (_offerDeadline <= 0f || CrestSelectMenu.IsOpen)
         {
             return;
         }
 
-        if (IsInGame() && CrestSelectMenu.TryOpen(fromDialogue: true))
+        // While the other save slots are being read the offer stays pending: the read
+        // finishes (or times out to the all-normals fallback) inside its own 2s budget.
+        bool savesPending = CrestPickerService.PoolMode == CrestPoolMode.FromSaves
+            && CrestPoolFromSaves.State == CrestPoolFromSaves.LoadState.Loading;
+
+        if (savesPending)
         {
-            _offerDeadline = 0f;
             return;
+        }
+
+        if (IsInGame())
+        {
+            switch (CrestSelectMenu.TryOpen(fromDialogue: true))
+            {
+                case CrestSelectMenu.OpenResult.Opened:
+                    _offerDeadline = 0f;
+                    return;
+
+                case CrestSelectMenu.OpenResult.NoPool:
+                    _offerDeadline = 0f;
+                    return;
+            }
         }
 
         if (Time.unscaledTime > _offerDeadline)
@@ -320,7 +353,7 @@ public sealed class Plugin : BaseUnityPlugin
     }
 
     /// <summary>Game save slot index, taken from the fields the save system uses.</summary>
-    private static int CurrentSlotId()
+    internal static int CurrentSlotId()
     {
         GameManager? manager = GameManager.instance;
         if (manager != null && manager.profileID >= 0)
@@ -348,6 +381,7 @@ public sealed class Plugin : BaseUnityPlugin
 
     private void OnDestroy()
     {
+        CrestPoolFromSaves.Reset();
         CrestSelectMenu.Closed -= OnMenuClosed;
         OwnShopWindow.RestoreVanilla();
         _harmony?.UnpatchSelf();

@@ -378,6 +378,17 @@ verify: pending
 - Проверка: `dotnet build -c Release` — 0 предупреждений, 0 ошибок; `dotnet test CrestPicker.Tests -c Release` — 126/126; DLL скопирован в `BepInEx/plugins` (SHA256 `E84A234B91B017549DCCF6466F68CED66A851CF79E94BFE6D9D95F869E3F84ED`). Код — коммит `53a3211`, запушен в `origin/master`.
 - Статус: `not_run` — маркеры проверяются вручную в игре; чек-лист для `tester` передан в отчёте.
 
+### 2026-11-12 — восстановление T3–T7 после реверта
+
+- Контекст: реализация T3–T7 (`9f81205`, `1c80888`, `6ec80ad`, `53a3211`) откачена ревертом (`2501f1b`, в задаче назван `0bb37ee`); `Pure/CrestPoolRules.cs` (без `FromSaves`) и `Pure/CrossSavePool.cs` остались в дереве, `CrestPoolFromSaves.cs` удалён.
+- T3: `CrestPoolFromSaves.cs` восстановлен из `53a3211` — `LoadState { Idle, Loading, Ready, Failed }`, слоты 0..4 минус текущий по одному за кадр через `Platform.Current.ReadSaveSlot` → `GameManager.GetJsonForSaveBytesStatic` → `SaveDataUtility.DeserializeSaveData<SaveGameData>` → `playerData.ToolEquips.GetValidNames(d => d.IsUnlocked)`; `SetLoadedGameData`/`LoadGame`/подмена `PlayerData.instance` не вызываются; таймаут 2 с; кэш по слоту+сцене; `Reset()`.
+- T4: `Pure/CrestPoolRules.cs` — член `CrestPoolMode.FromSaves`; `Select` не подменяет режим на `All` при `ignoreUnlock`, если режим `FromSaves`. `Plugin.cs` — `CrestPool` default `FromSaves`, `IgnoreUnlockState` default `false`; миграция: при `CrestPool=All` и `IgnoreUnlockState=true` режим переводится в `FromSaves`, значение пишется в cfg, лог `[CONFIG] pool mode migrated to FromSaves`.
+- T5: `CrestPickerService.GetSelectableCrests(bool waitForSaves, out bool waiting)` — при `FromSaves` и `Ready` пул через `CrossSavePool.Build(facts, [Elsewhere], includeEquipped)`; при `Loading` и `waitForSaves=true` — `waiting`, меню не открывается; иначе фолбэк `[POOL] fallback all-normals reason=<idle|loading|failed>` → все нормальные; итог `[POOL] source=saves elsewhere=… here=… pool=… reason=… names=…`.
+- T6: `CrestSelectMenu.TryOpen` возвращает `OpenResult { Opened, Retry, Waiting, NoPool }`; пустой пул в диалоговом оффере при `FromSaves` даёт `NoPool` и одну строку `[POOL] offer ended: all normal crests unlocked here (slot N)`, окно не открывается, `CrestOfferState` не трогается. `Plugin.UpdatePendingOffer` крутит `Tick()` каждый кадр и держит оффер, пока `Loading` (бюджет чтения 2 с), затем решает по состоянию.
+- T7: `Plugin.RequestOffer` вызывает `CrestPoolFromSaves.Begin(slot)`; кэш по слоту+сцене, `Stale()` сбрасывает проход при смене слота/сцены, `Plugin.OnDestroy` — `Reset()`; `Plugin.CurrentSlotId` стал `internal`.
+- Проверка: `dotnet build -c Release` — 0 предупреждений, 0 ошибок; `dotnet test CrestPicker.Tests -c Release` — 126/126; DLL скопирован в `BepInEx/plugins` (SHA256 `7B79DD7BFFF1D9727D0B1ADCF1E9D6A99100A7C51013E21E0934797CA48EFA83`). Код — коммит с сообщением `feat: crest pool from saves (restore plan 004 T3-T7)`.
+- Статус: `not_run` — живое чтение слотов, таймаут 2 с, отказ от меню при полном наборе и смена слота проверяются вручную по разделу 2 `TESTING.md`.
+
 ### 2026-11-11 — ручной чек-лист `[POOL]` (tester)
 
 - `TESTING.md`: раздел 2 получил подраздел «Пул по сейвам (`CrestPool = FromSaves`, default)» —
