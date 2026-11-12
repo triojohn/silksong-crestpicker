@@ -163,7 +163,7 @@ internal static class ShopCrestSchema
     internal static float Scale = 1f;
 
     /// <summary>Vertical shift of the details schema, as a fraction of the panel height; negative goes down.</summary>
-    internal static float OffsetY = -0.16f;
+    internal static float OffsetY = -0.12f;
 
     /// <summary>Dot diameter for an unlocked slot, as a fraction of the reference height.</summary>
     internal static float DotSize = 0.373f;
