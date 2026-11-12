@@ -70,12 +70,12 @@ internal static class OwnShopWindow
     /// <summary>Drops the reference once the clone is gone; call every frame.</summary>
     internal static void Tick()
     {
+        ShopFsmDiag.Poll();
+
         if (SceneHandle == 0)
         {
             return;
         }
-
-        ShopFsmDiag.Poll();
 
         int ownerId = Owner != null ? Owner.GetInstanceID() : 0;
         bool stale = OwnWindowPolicy.ShouldRebuild(
@@ -232,7 +232,7 @@ internal static class OwnShopWindow
         return StockArrayField?.GetValue(stock) is ShopItem[] items ? items.Length : -1;
     }
 
-    private static string PathOf(Transform transform)
+    internal static string PathOf(Transform transform)
     {
         string path = transform.name;
         for (Transform? current = transform.parent; current != null; current = current.parent)

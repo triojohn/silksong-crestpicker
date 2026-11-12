@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using HutongGames.PlayMaker;
 using TeamCherry.NestedFadeGroup;
 using UnityEngine;
@@ -6,8 +7,8 @@ using UnityEngine;
 namespace CrestPicker;
 
 /// <summary>
-/// Per-frame diagnostic of our own shop window clone: the <c>shop_control</c> state,
-/// the confirm group fade and its item sprite, and our schema container. Writes one
+/// Per-frame diagnostic of every <c>shop_control</c> FSM in the loaded scene (ours and
+/// the vanilla ones), plus the clone's confirm group and schema container. Writes one
 /// line per change and touches nothing in the game objects. Read-only, never throws.
 /// </summary>
 internal static class ShopFsmDiag
@@ -21,11 +22,26 @@ internal static class ShopFsmDiag
     /// <summary>Item picture inside the confirmation group.</summary>
     private const string ItemSpriteName = "Item Sprite";
 
+    /// <summary>States that mean the window just opened.</summary>
+    private static readonly string[] OpenStates = { "Open Window", "Open" };
+
+    /// <summary>Frames between full rescans; new windows may spawn at any time.</summary>
+    private const int ScanInterval = 60;
+
+    /// <summary>Known <c>shop_control</c> FSMs in the loaded scene.</summary>
+    private static readonly List<PlayMakerFSM> _fsms = new();
+
+    /// <summary>Last state per FSM instance id.</summary>
+    private static readonly Dictionary<int, string> _lastStates = new();
+
+    /// <summary>Frame of the last full rescan.</summary>
+    private static int _scanFrame = -ScanInterval;
+
+    /// <summary>Clone instance id the current FSM list was scanned for.</summary>
+    private static int _scanWindowId;
+
     /// <summary>Instance id of the clone the last lines came from; 0 before the first.</summary>
     private static int _windowId;
-
-    /// <summary>Last logged FSM state; null before the first sample of a clone.</summary>
-    private static string? _lastState;
 
     /// <summary>Last logged confirm group fields; null before the first sample of a clone.</summary>
     private static string? _lastConfirm;
@@ -33,32 +49,31 @@ internal static class ShopFsmDiag
     /// <summary>Last logged schema fields; null before the first sample of a clone.</summary>
     private static string? _lastSchema;
 
-    /// <summary>Samples the clone; call every frame.</summary>
+    /// <summary>Samples the shop FSMs and the clone; call every frame.</summary>
     internal static void Poll()
     {
-        ShopMenuStock? window = OwnShopWindow.Current;
-        if (window == null)
-        {
-            _windowId = 0;
-            _lastState = null;
-            _lastConfirm = null;
-            _lastSchema = null;
-            return;
-        }
-
         try
         {
+            NoteTransitions();
+
+            ShopMenuStock? window = OwnShopWindow.Current;
+            if (window == null)
+            {
+                _windowId = 0;
+                _lastConfirm = null;
+                _lastSchema = null;
+                return;
+            }
+
             Transform root = window.transform;
             int id = root.GetInstanceID();
             if (id != _windowId)
             {
                 _windowId = id;
-                _lastState = null;
                 _lastConfirm = null;
                 _lastSchema = null;
             }
 
-            NoteState(root);
             NoteConfirm(root);
             NoteSchema();
         }
@@ -68,19 +83,79 @@ internal static class ShopFsmDiag
         }
     }
 
-    /// <summary>Writes the state line when the <c>shop_control</c> state changed.</summary>
-    private static void NoteState(Transform root)
+    /// <summary>Rescans the scene, then writes a line for every FSM whose state changed.</summary>
+    private static void NoteTransitions()
     {
-        string state = State(root);
-        if (state == _lastState)
+        int windowId = OwnShopWindow.Current != null ? OwnShopWindow.Current.GetInstanceID() : 0;
+        if (_fsms.Count == 0 || windowId != _scanWindowId ||
+            Time.frameCount - _scanFrame >= ScanInterval)
         {
-            return;
+            Rescan(windowId);
         }
 
-        string was = _lastState ?? "<none>";
-        _lastState = state;
-        Plugin.Log.LogInfo($"[SHOPFSM] state '{was}' -> '{state}'" +
-            $" ourOpen={ShopCrestMenu.OurOpen} closing={ShopCrestMenu.OurClosing}");
+        foreach (PlayMakerFSM fsm in _fsms)
+        {
+            if (fsm == null)
+            {
+                continue;
+            }
+
+            int id = fsm.GetInstanceID();
+            string state = fsm.ActiveStateName ?? string.Empty;
+            if (_lastStates.TryGetValue(id, out string? was) && was == state)
+            {
+                continue;
+            }
+
+            _lastStates[id] = state;
+            bool ours = IsOurs(fsm);
+            Plugin.Log.LogInfo($"[SHOPFSM] fsm path='{OwnShopWindow.PathOf(fsm.transform)}'" +
+                $" state '{was ?? "<none>"}' -> '{state}' ours={(ours ? "true" : "false")}");
+
+            if (Array.IndexOf(OpenStates, state) >= 0)
+            {
+                Plugin.Log.LogInfo($"[SHOPFSM] OPENED path='{OwnShopWindow.PathOf(fsm.transform)}'" +
+                    $" event={EventName(fsm)} ourOpen={ShopCrestMenu.OurOpen}" +
+                    $" ourClosing={ShopCrestMenu.OurClosing}");
+            }
+        }
+    }
+
+    /// <summary>Rebuilds the FSM list from the loaded scene; assets are ignored.</summary>
+    private static void Rescan(int windowId)
+    {
+        _scanFrame = Time.frameCount;
+        _scanWindowId = windowId;
+        _fsms.Clear();
+        foreach (PlayMakerFSM fsm in UnityEngine.Object.FindObjectsByType<PlayMakerFSM>(
+            FindObjectsInactive.Include, FindObjectsSortMode.None))
+        {
+            if (fsm != null && fsm.FsmName == ControlFsm && fsm.gameObject.scene.IsValid())
+            {
+                _fsms.Add(fsm);
+            }
+        }
+    }
+
+    /// <summary>True when the FSM belongs to our clone.</summary>
+    private static bool IsOurs(PlayMakerFSM fsm)
+    {
+        ShopMenuStock? window = OwnShopWindow.Current;
+        return window != null && fsm.transform.IsChildOf(window.transform);
+    }
+
+    /// <summary>Transition event that led into the current state, quoted, or <c>&lt;none&gt;</c>.</summary>
+    private static string EventName(PlayMakerFSM fsm)
+    {
+        try
+        {
+            FsmTransition? transition = fsm.Fsm?.LastTransition;
+            return transition != null ? $"'{transition.EventName}'" : "<none>";
+        }
+        catch (Exception)
+        {
+            return "<none>";
+        }
     }
 
     /// <summary>Writes the confirm group line when its alpha or item sprite changed.</summary>
@@ -117,20 +192,6 @@ internal static class ShopFsmDiag
 
         _lastSchema = line;
         Plugin.Log.LogInfo($"[SHOPFSM] schema {line}");
-    }
-
-    /// <summary>Active state of the window FSM, or a note when it has none.</summary>
-    private static string State(Transform root)
-    {
-        foreach (PlayMakerFSM fsm in root.GetComponentsInChildren<PlayMakerFSM>(true))
-        {
-            if (fsm != null && fsm.FsmName == ControlFsm)
-            {
-                return fsm.ActiveStateName ?? string.Empty;
-            }
-        }
-
-        return "<no shop_control>";
     }
 
     /// <summary>
