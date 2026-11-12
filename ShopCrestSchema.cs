@@ -45,27 +45,6 @@ internal static class ShopCrestSchema
     /// <summary>Path of the details panel inside the shop window.</summary>
     private const string DetailsPath = "Item List Group/Item Details";
 
-    /// <summary>Confirm group whose vanilla item picture the confirm schema replaces.</summary>
-    private const string ConfirmGroupPath = "Item Confirm Group";
-
-    /// <summary>Sorting orders the confirm schema is lifted above the backboard by.</summary>
-    private const int ConfirmOrderOffset = 2;
-
-    /// <summary>Room kept above the confirmation text, as a fraction of its height.</summary>
-    private const float ConfirmGap = 0.15f;
-
-    /// <summary>Smallest confirm schema scale left when the crest name leaves no room.</summary>
-    private const float ConfirmFitMin = 0.5f;
-
-    /// <summary>Names of the two confirmation texts: the question and the purchase line.</summary>
-    private const string ConfirmMessageName = "Confirm msg";
-    private const string PurchaseMessageName = "Thankyou";
-
-    /// <summary>Anchor names of the confirmation actually on screen, as written to the log.</summary>
-    private const string AnchorNone = "none";
-    private const string AnchorThanks = "Thankyou";
-    private const string AnchorQuestion = "ConfirmMsg";
-
     /// <summary>Silhouette renderer inside the vanilla crest card the clone is fitted by.</summary>
     private const string SilhouetteName = "crestSilhouette";
 
@@ -85,10 +64,7 @@ internal static class ShopCrestSchema
             [ToolItemType.Skill] = new Color(0.88f, 0.88f, 0.88f, 1f),
         };
 
-    /// <summary>Vanilla active state of every object we hid.</summary>
-    private static readonly Dictionary<GameObject, bool> ObjectStates = new Dictionary<GameObject, bool>();
-
-    /// <summary>Neutral holder of both schema containers, parented outside every fade group.</summary>
+    /// <summary>Neutral holder of the schema container, parented outside every fade group.</summary>
     private const string SchemaRootName = "CrestPicker Schemas";
 
     /// <summary>Child of a container that carries the fit scale; the container stays at scale 1.</summary>
@@ -99,13 +75,9 @@ internal static class ShopCrestSchema
     private static Transform? _details;
     private static TMP_Text? _nameLabel;
     private static TMP_Text? _descLabel;
-    private static Transform? _confirmGroup;
-    private static TMP_Text? _confirmMessage;
-    private static TMP_Text? _confirmThanks;
 
-    /// <summary>Schema objects created for the current crest; destroyed on rebuild.</summary>
+    /// <summary>Schema object created for the current crest; destroyed on rebuild.</summary>
     private static Schema? _detailsSchema;
-    private static Schema? _confirmSchema;
     private static ToolCrest? _builtFor;
     private static Sprite? _dotSprite;
 
@@ -113,28 +85,10 @@ internal static class ShopCrestSchema
     private static float _referenceHeight;
 
     private static bool _missingLogged;
-    private static bool _confirmOrderLogged;
-
-    /// <summary>Last <c>activeSelf</c> of the confirm group that was logged; null before the first log.</summary>
-    private static bool? _confirmGroupActiveLogged;
-
-    /// <summary>Bounds the details schema drew on the last frame it was visible.</summary>
-    private static Bounds _detailsBounds;
-
-    /// <summary>True once the details schema was hidden behind the confirm screen.</summary>
-    private static bool _detailsHiddenLogged;
-
-    /// <summary>True once the details schema was shown after a build.</summary>
-    private static bool _detailsShownLogged;
-
-    /// <summary>Last logged anchor of the visible confirmation text; null before the first log.</summary>
-    private static string? _confirmAnchorLogged;
 
     /// <summary>
     /// True from the purchase that starts the vanilla confirmation until the window is
-    /// restored. Gates the purchase flow only: what is drawn follows the confirmation
-    /// text on screen (see <see cref="ConfirmVisualVisible"/>), because the game asks its
-    /// question before any purchase runs.
+    /// restored. Kept for the purchase flow; the schema itself no longer reads it.
     /// </summary>
     internal static bool ConfirmActive;
 
@@ -160,9 +114,6 @@ internal static class ShopCrestSchema
 
     /// <summary>Schema scale of the current build, reported by the <c>[GEO]</c> block.</summary>
     private static float _geoScale;
-
-    /// <summary>Last logged confirm fit scale; negative before the first fit.</summary>
-    private static float _confirmFitLogged = -1f;
 
     /// <summary>Flags for the private fields read off the vanilla crest widgets.</summary>
     private const BindingFlags PrivateInstance = BindingFlags.Instance | BindingFlags.NonPublic;
@@ -223,9 +174,6 @@ internal static class ShopCrestSchema
     /// <summary>Dot drop, as a fraction of the drawn silhouette height, in world units.</summary>
     internal static float DotOffsetY = -0.02f;
 
-    /// <summary>Confirm-screen schema size relative to the details schema.</summary>
-    internal static float ConfirmScale = 1f;
-
     /// <summary>Remembers the window, hides the duplicate name and draws the schema.</summary>
     /// <param name="root">Shop window root, the object holding <c>shop_control</c>.</param>
     internal static void Begin(Transform root)
@@ -236,14 +184,8 @@ internal static class ShopCrestSchema
             _details = null;
             _nameLabel = null;
             _descLabel = null;
-            _confirmGroup = null;
-            _confirmMessage = null;
-            _confirmThanks = null;
             _builtFor = null;
             _missingLogged = false;
-            _detailsHiddenLogged = false;
-            _detailsShownLogged = false;
-            _confirmAnchorLogged = null;
             ConfirmActive = false;
             _closed = false;
             _closeHiddenLogged = false;
@@ -252,8 +194,6 @@ internal static class ShopCrestSchema
             _pickIndex = -1;
             _pickName = string.Empty;
             _detailsCorrectedLogged = false;
-            _confirmGroupActiveLogged = null;
-            _detailsBounds = default;
             _geoLogged = false;
             _geoScale = 0f;
             DestroySchemaRoot();
@@ -285,18 +225,16 @@ internal static class ShopCrestSchema
     }
 
     /// <summary>
-    /// Hides both schema containers as soon as the window starts closing. They live
-    /// outside the fade hierarchy, so the vanilla fade cannot reach them: without this
-    /// they stay opaque while the window already goes dark.
+    /// Hides the schema container as soon as the window starts closing. It lives outside
+    /// the fade hierarchy, so the vanilla fade cannot reach it: without this it stays
+    /// opaque while the window already goes dark.
     /// </summary>
     internal static void Hide()
     {
         _closed = true;
         try
         {
-            bool changed = false;
-            changed |= HideContainer(_detailsSchema);
-            changed |= HideContainer(_confirmSchema);
+            bool changed = HideContainer(_detailsSchema);
             if (!_closeHiddenLogged)
             {
                 _closeHiddenLogged = true;
@@ -333,17 +271,8 @@ internal static class ShopCrestSchema
         _details = null;
         _nameLabel = null;
         _descLabel = null;
-        _confirmGroup = null;
-        _confirmMessage = null;
-        _confirmThanks = null;
         _builtFor = null;
-        _detailsHiddenLogged = false;
-        _detailsShownLogged = false;
-        _confirmAnchorLogged = null;
         ConfirmActive = false;
-        _confirmGroupActiveLogged = null;
-        _detailsBounds = default;
-        _confirmFitLogged = -1f;
         _selectedIndex = -1;
         _pickSource = string.Empty;
         _pickIndex = -1;
@@ -360,7 +289,6 @@ internal static class ShopCrestSchema
         }
         finally
         {
-            ObjectStates.Clear();
             _closed = false;
         }
     }
@@ -383,8 +311,6 @@ internal static class ShopCrestSchema
             return;
         }
 
-        ConfirmGroup();
-
         ToolCrest? crest = SelectedCrest();
         if (crest != null && crest != _builtFor)
         {
@@ -395,13 +321,11 @@ internal static class ShopCrestSchema
     }
 
     /// <summary>
-    /// Puts the details schema in the middle of the lower half of the details panel and
-    /// the confirm schema in the space above the confirmation text. Runs every frame
-    /// because the panel's layout group keeps moving its children.
+    /// Puts the details schema in the middle of the lower half of the details panel. Runs
+    /// every frame because the panel's layout group keeps moving its children.
     /// </summary>
     private static void Place()
     {
-        LogConfirmGroupState();
         FitPending();
 
         if (_detailsSchema == null || _details == null || !TryBounds(_details, out Bounds bounds))
@@ -409,138 +333,14 @@ internal static class ShopCrestSchema
             return;
         }
 
-        // A stale confirm group left active by the game must not keep the details hidden.
-        if (!ConfirmActive)
+        if (!_detailsSchema.Container.activeSelf)
         {
-            if (!_detailsSchema.Container.activeSelf)
-            {
-                ShowDetails();
-            }
-
-            if (_detailsSchema.Container.activeSelf && !_detailsShownLogged)
-            {
-                _detailsShownLogged = true;
-                Plugin.Log.LogInfo("[SCHEMA] details shown (confirm inactive)");
-            }
+            _detailsSchema.Container.SetActive(true);
         }
 
-        if (_detailsSchema.Container.activeSelf)
-        {
-            FitHeight(_detailsSchema, bounds);
-            PlaceAt(_detailsSchema, bounds);
-            _detailsBounds = ContainerBounds(_detailsSchema.Container.transform);
-        }
-
+        FitHeight(_detailsSchema, bounds);
+        PlaceAt(_detailsSchema, bounds);
         LogGeometry(_detailsSchema, bounds);
-
-        if (_confirmSchema == null)
-        {
-            ShowDetails();
-            return;
-        }
-
-        string anchor = ConfirmVisualVisible(out Bounds anchorBounds);
-        bool showing = anchor == AnchorQuestion || (anchor == AnchorThanks && ConfirmActive);
-        if (_confirmSchema.Container.activeSelf != showing)
-        {
-            _confirmSchema.Container.SetActive(showing);
-            Plugin.Log.LogInfo(showing
-                ? "[SCHEMA] confirm visible"
-                : $"[SCHEMA] confirm hidden ({ConfirmHiddenReason(anchor)})");
-        }
-
-        if (showing)
-        {
-            HideDetails();
-            PlaceConfirm(_confirmSchema, anchorBounds, anchor);
-            return;
-        }
-
-        ShowDetails();
-        if (_detailsSchema.Container.activeSelf && !_detailsShownLogged)
-        {
-            _detailsShownLogged = true;
-            Plugin.Log.LogInfo("[SCHEMA] details shown (no confirm visual)");
-        }
-    }
-
-    /// <summary>Logs the confirm group <c>activeSelf</c> once per change, with the current message text.</summary>
-    private static void LogConfirmGroupState()
-    {
-        if (_confirmGroup == null)
-        {
-            return;
-        }
-
-        bool active = _confirmGroup.gameObject.activeSelf;
-        if (_confirmGroupActiveLogged == active)
-        {
-            return;
-        }
-
-        _confirmGroupActiveLogged = active;
-        string text = _confirmMessage != null ? SafeText(_confirmMessage) : string.Empty;
-        Plugin.Log.LogInfo($"[SCHEMA] confirm group activeSelf={active} text='{text}'");
-    }
-
-    /// <summary>
-    /// Hides our details schema while the confirm screen covers the panel: the confirm
-    /// schema is drawn on the same spot, so both would overlap.
-    /// </summary>
-    private static void HideDetails()
-    {
-        if (_detailsSchema == null)
-        {
-            return;
-        }
-
-        GameObject go = _detailsSchema.Container;
-        if (!ObjectStates.ContainsKey(go))
-        {
-            ObjectStates[go] = go.activeSelf;
-        }
-
-        if (!go.activeSelf)
-        {
-            return;
-        }
-
-        go.SetActive(false);
-        if (!_detailsHiddenLogged)
-        {
-            _detailsHiddenLogged = true;
-            Plugin.Log.LogInfo("[SCHEMA] details hidden (confirm visual)");
-        }
-    }
-
-    /// <summary>
-    /// Puts our details schema back to the state it had before the confirm screen, or
-    /// shows it when no hidden state was recorded.
-    /// </summary>
-    private static void ShowDetails()
-    {
-        if (_detailsSchema == null)
-        {
-            return;
-        }
-
-        GameObject go = _detailsSchema.Container;
-        bool wanted = !ObjectStates.TryGetValue(go, out bool wasActive) || wasActive;
-        if (go.activeSelf != wanted)
-        {
-            go.SetActive(wanted);
-        }
-    }
-
-    /// <summary>Bounds of the details schema; the last visible ones while it is hidden.</summary>
-    private static Bounds DetailsSchemaBounds()
-    {
-        if (_detailsSchema != null && _detailsSchema.Container.activeSelf)
-        {
-            _detailsBounds = ContainerBounds(_detailsSchema.Container.transform);
-        }
-
-        return _detailsBounds;
     }
 
     /// <summary>
@@ -633,136 +433,6 @@ internal static class ShopCrestSchema
         return ContainerBounds(schema.Container.transform);
     }
 
-    /// <summary>
-    /// Puts the confirm schema in the space between the confirmation text and the item
-    /// name: the schema bottom sits <see cref="ConfirmGap"/> text heights over the top of
-    /// <paramref name="message"/>, its top stays under the name, and the name shrinks the
-    /// schema down to <see cref="ConfirmFitMin"/> when it leaves less room than that. With
-    /// no room left even then the schema hugs the name. Only X is clamped, so nothing can
-    /// push the schema back down onto the text. The position comes from the drawn bounds
-    /// of the container itself, so no parent scale chain is assumed.
-    /// </summary>
-    /// <param name="schema">Confirm schema to place.</param>
-    /// <param name="message">World bounds of the visible confirmation text.</param>
-    /// <param name="anchor">Name of that text, for the log line.</param>
-    private static void PlaceConfirm(Schema schema, Bounds message, string anchor)
-    {
-        if (_detailsSchema == null)
-        {
-            return;
-        }
-
-        Transform container = schema.Container.transform;
-        Bounds detailsBounds = DetailsSchemaBounds();
-        float wanted = detailsBounds.size.y * ConfirmScale;
-        float gap = ConfirmGap * message.size.y;
-        float bottom = message.max.y + gap;
-        float nameBottom = ConfirmNameBottom();
-        float room = float.NaN;
-        float fit = 1f;
-        if (wanted > 0.0001f && !float.IsNaN(nameBottom))
-        {
-            room = nameBottom - gap - bottom;
-            fit = Mathf.Clamp(room / wanted, ConfirmFitMin, 1f);
-        }
-
-        float target = wanted * fit;
-        if (target > 0.0001f && !float.IsNaN(room) && room < target)
-        {
-            // The name leaves less room than the smallest schema: hug the name instead.
-            bottom = nameBottom - gap - target;
-        }
-
-        float current = ContainerBounds(container).size.y;
-        Transform content = schema.Content.transform;
-        if (current > 0.0001f && target > 0.0001f && Mathf.Abs(current - target) > target * 0.001f)
-        {
-            float factor = target / current;
-            Vector3 local = content.localScale;
-            content.localScale = new Vector3(local.x * factor, local.y * factor, local.z);
-        }
-
-        if (Mathf.Abs(fit - _confirmFitLogged) > 0.0001f)
-        {
-            _confirmFitLogged = fit;
-            Plugin.Log.LogInfo($"[SCHEMA] confirm fit scale={fit:F3} room={room:F3}");
-        }
-
-        Bounds inner = ContainerBounds(container);
-        Vector3 shift = new Vector3(
-            detailsBounds.center.x - inner.center.x,
-            bottom + inner.extents.y - inner.center.y,
-            0f);
-        if (shift.sqrMagnitude > 0.0000001f)
-        {
-            container.position += shift;
-        }
-
-        if (_root != null)
-        {
-            Transform? board = _root.Find("Window/Shop_Backboard");
-            if (board != null && TryBounds(board, out Bounds outer))
-            {
-                Bounds placed = ContainerBounds(container);
-                float dx = ClampAxis(placed.center.x, placed.extents.x, outer.min.x, outer.max.x);
-                if (Mathf.Abs(dx) > 0.0001f)
-                {
-                    container.position += new Vector3(dx, 0f, 0f);
-                }
-            }
-        }
-
-        if (!schema.PlacedLogged)
-        {
-            schema.PlacedLogged = true;
-            Bounds placed = ContainerBounds(container);
-            Plugin.Log.LogInfo($"[SCHEMA] confirm placed y={placed.min.y:F3} msgTop={message.max.y:F3}" +
-                $" nameBottom={nameBottom:F3} scale={fit:F3} anchor={anchor}");
-        }
-    }
-
-    /// <summary>World bounds of a confirmation text that is shown with a non-empty string.</summary>
-    private static bool TryTextBounds(TMP_Text? text, out Bounds bounds)
-    {
-        bounds = default;
-        if (text == null || !text.gameObject.activeInHierarchy || string.IsNullOrEmpty(SafeText(text)))
-        {
-            return false;
-        }
-
-        Renderer? renderer = text.GetComponent<Renderer>();
-        if (renderer == null || renderer.bounds.size.sqrMagnitude <= 0.0000001f)
-        {
-            return false;
-        }
-
-        bounds = renderer.bounds;
-        return true;
-    }
-
-    /// <summary>Lowest point of the bought item name; NaN when no name is shown.</summary>
-    private static float ConfirmNameBottom()
-    {
-        TMP_Text? name = _confirmGroup != null ? FindText(_confirmGroup, "Item name") : null;
-        if (!TryTextBounds(name, out Bounds bounds) && !TryTextBounds(_nameLabel, out bounds))
-        {
-            return float.NaN;
-        }
-
-        return bounds.min.y;
-    }
-
-    /// <summary>Delta that pulls one axis centre inside the outer bounds, zero when it does not fit.</summary>
-    private static float ClampAxis(float centre, float half, float min, float max)
-    {
-        if (half * 2f > max - min)
-        {
-            return 0f;
-        }
-
-        return Geometry.ClampAxis(centre, half, min, max) - centre;
-    }
-
     /// <summary>Retries the fit of a schema whose renderers had no bounds when built.</summary>
     private static void FitPending()
     {
@@ -770,75 +440,6 @@ internal static class ShopCrestSchema
         {
             Fit(_detailsSchema);
         }
-
-        if (_confirmSchema != null)
-        {
-            Fit(_confirmSchema);
-        }
-    }
-
-    /// <summary>
-    /// Anchor name of the confirmation text really on screen: <c>Thankyou</c> after a
-    /// purchase, <c>ConfirmMsg</c> while the game asks its question, <c>none</c> when the
-    /// group is inactive or both texts are hidden or empty. The group flag alone is a poor
-    /// guard: the game leaves it active with stale text after a window closes, while the
-    /// real confirmation texts are the ones the player reads.
-    /// </summary>
-    /// <param name="bounds">World bounds of that text; default when nothing is visible.</param>
-    private static string ConfirmVisualVisible(out Bounds bounds)
-    {
-        string anchor = AnchorNone;
-        bounds = default;
-        if (_confirmGroup != null && _confirmGroup.gameObject.activeInHierarchy)
-        {
-            if (TryTextBounds(_confirmThanks, out bounds))
-            {
-                anchor = AnchorThanks;
-            }
-            else if (TryTextBounds(_confirmMessage, out bounds))
-            {
-                anchor = AnchorQuestion;
-            }
-        }
-
-        if (_confirmAnchorLogged != anchor)
-        {
-            _confirmAnchorLogged = anchor;
-            Plugin.Log.LogInfo($"[SCHEMA] confirm visual visible anchor={anchor}");
-        }
-
-        return anchor;
-    }
-
-    /// <summary>
-    /// Empty when the confirm schema belongs on screen, otherwise why it does not. The
-    /// question text always counts; the purchase line only once <see cref="ConfirmActive"/>
-    /// is set, because the game leaves it active with stale text after a window closes.
-    /// </summary>
-    /// <param name="anchor">Result of <see cref="ConfirmVisualVisible"/>.</param>
-    private static string ConfirmHiddenReason(string anchor)
-    {
-        if (!ConfirmActive)
-        {
-            return "confirm inactive";
-        }
-
-        if (anchor != AnchorNone)
-        {
-            return string.Empty;
-        }
-
-        if (_confirmGroup == null)
-        {
-            return "no group";
-        }
-
-        if (!_confirmGroup.gameObject.activeInHierarchy)
-        {
-            return "group inactive";
-        }
-
-        return _confirmMessage == null ? "no confirm msg" : "confirm text hidden";
     }
 
     /// <summary>Active state name of the item list FSM, or null when it is out of reach.</summary>
@@ -1192,10 +793,7 @@ internal static class ShopCrestSchema
             $" cardScale={cardScale:F4} (body={body:F3})");
 
         Color bodyColor = InventoryToolCrest.DeselectedColor;
-        _detailsSchema = BuildSchema(crest, silhouette, bodyColor, scale, cardScale, true,
-            "Crest Schema");
-        _confirmSchema = BuildSchema(crest, silhouette, bodyColor, scale, cardScale, false,
-            "Confirm Crest Schema");
+        _detailsSchema = BuildSchema(crest, silhouette, bodyColor, scale, cardScale, "Crest Schema");
         int slots = crest.Slots?.Length ?? 0;
         Plugin.Log.LogInfo($"[SCHEMA] built '{crest.name}' slots={slots}" +
             $" slotScale={CrestCardLook.SlotScale(false):F2}");
@@ -1313,7 +911,7 @@ internal static class ShopCrestSchema
     /// at scale 1 and the content carries the scale divided by the inherited one.
     /// </summary>
     private static Schema? BuildSchema(ToolCrest crest, Sprite silhouette, Color bodyColor,
-        float scale, float cardScale, bool fitDetails, string label)
+        float scale, float cardScale, string label)
     {
         Transform? host = SchemaHost();
         if (host == null)
@@ -1349,7 +947,6 @@ internal static class ShopCrestSchema
             Schema? clone = CloneSchema(crest, container, content, label);
             if (clone != null)
             {
-                LiftConfirm(clone, fitDetails);
                 LogSprites("clone");
                 return clone;
             }
@@ -1366,7 +963,6 @@ internal static class ShopCrestSchema
         AddDots(schema, crest, reference);
         schema.DotsTemplate = DotsFromTemplate(crest);
         Fit(schema);
-        LiftConfirm(schema, fitDetails);
         LogSprites(vanilla ? "vanilla" : "generated");
         return schema;
     }
@@ -2353,64 +1949,6 @@ internal static class ShopCrestSchema
         return path;
     }
 
-    /// <summary>Confirm group and the item picture the confirm schema is centred on.</summary>
-    private static Transform? ConfirmGroup()
-    {
-        if (_confirmGroup != null)
-        {
-            return _confirmGroup;
-        }
-
-        if (_root == null)
-        {
-            return null;
-        }
-
-        Transform? direct = _root.Find(ConfirmGroupPath);
-        if (direct == null)
-        {
-            foreach (Transform child in _root.GetComponentsInChildren<Transform>(true))
-            {
-                if (child != null && child.name == "Item Confirm Group")
-                {
-                    direct = child;
-                    break;
-                }
-            }
-        }
-
-        _confirmGroup = direct;
-        if (_confirmGroup != null)
-        {
-            Transform? picture = _confirmGroup.Find("Item Sprite");
-            // The vanilla FSM draws the item icon here; our schema replaces it.
-            HideObject(picture != null ? picture.gameObject : null);
-            _confirmMessage = FindText(_confirmGroup, ConfirmMessageName);
-            _confirmThanks = FindText(_confirmGroup, PurchaseMessageName);
-        }
-
-        return _confirmGroup;
-    }
-
-    /// <summary>Hides one object for the session, remembering its vanilla state once.</summary>
-    private static void HideObject(GameObject? go)
-    {
-        if (go == null)
-        {
-            return;
-        }
-
-        if (!ObjectStates.ContainsKey(go))
-        {
-            ObjectStates[go] = go.activeSelf;
-        }
-
-        if (go.activeSelf)
-        {
-            go.SetActive(false);
-        }
-    }
-
     /// <summary>
     /// Adds one dot per slot as a child of the schema container. Slot positions are
     /// silhouette-local units and stay as they are; the diameter is the card slot scale
@@ -2547,46 +2085,6 @@ internal static class ShopCrestSchema
         return backboard != null ? backboard.GetComponent<SpriteRenderer>() : null;
     }
 
-    /// <summary>
-    /// Gives the confirm schema its own sorting order instead of one relative to the
-    /// row icon: the vanilla item picture and the backboard both sit below the
-    /// confirmation text, and the schema must not be drawn over by either. The layer
-    /// stays the window's HUD layer. Z is left alone.
-    /// </summary>
-    /// <param name="schema">Schema that was just built.</param>
-    /// <param name="fitPanel">True for the details schema, which keeps its own order.</param>
-    private static void LiftConfirm(Schema schema, bool fitPanel)
-    {
-        if (fitPanel)
-        {
-            return;
-        }
-
-        SpriteRenderer? board = BackboardRenderer();
-        if (board == null || schema.Container == null)
-        {
-            return;
-        }
-
-        int order = board.sortingOrder + ConfirmOrderOffset;
-        foreach (Renderer renderer in schema.Container.GetComponentsInChildren<Renderer>(true))
-        {
-            if (renderer == null)
-            {
-                continue;
-            }
-
-            renderer.sortingLayerID = board.sortingLayerID;
-            renderer.sortingOrder = order;
-        }
-
-        if (!_confirmOrderLogged)
-        {
-            _confirmOrderLogged = true;
-            Plugin.Log.LogInfo($"[SCHEMA] confirm order={order} (backboard={board.sortingOrder})");
-        }
-    }
-
     /// <summary>Generated circle used as a slot dot.</summary>
     private static Sprite? DotSprite()
     {
@@ -2649,9 +2147,6 @@ internal static class ShopCrestSchema
 
         internal Renderer Body { get; }
 
-        /// <summary>True once the confirm placement numbers were logged.</summary>
-        internal bool PlacedLogged { get; set; }
-
         /// <summary>True once the details placement numbers were logged.</summary>
         internal bool PlaceLogged { get; set; }
 
@@ -2680,10 +2175,10 @@ internal static class ShopCrestSchema
     }
 
     /// <summary>
-    /// Destroys the schema objects of the current crest, details and confirm alike.
-    /// Containers are switched off at once because <c>Destroy</c> only takes effect at the
-    /// end of the frame: a rebuilt schema would otherwise overlap the old one and show a
-    /// doubled picture on the first frame.
+    /// Destroys the schema object of the current crest. The container is switched off at
+    /// once because <c>Destroy</c> only takes effect at the end of the frame: a rebuilt
+    /// schema would otherwise overlap the old one and show a doubled picture on the first
+    /// frame.
     /// </summary>
     private static void DestroySchema()
     {
@@ -2691,12 +2186,6 @@ internal static class ShopCrestSchema
         {
             Retire(_detailsSchema.Container);
             _detailsSchema = null;
-        }
-
-        if (_confirmSchema != null)
-        {
-            Retire(_confirmSchema.Container);
-            _confirmSchema = null;
         }
     }
 
@@ -2728,7 +2217,7 @@ internal static class ShopCrestSchema
                 continue;
             }
 
-            if (go.name == "Crest Schema" || go.name == "Confirm Crest Schema")
+            if (go.name == "Crest Schema")
             {
                 count++;
             }

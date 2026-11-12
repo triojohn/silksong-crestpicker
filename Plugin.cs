@@ -64,7 +64,6 @@ public sealed class Plugin : BaseUnityPlugin
     private ConfigEntry<float> _crestDotSize = null!;
     private ConfigEntry<float> _crestLockedDotSize = null!;
     private ConfigEntry<float> _crestDotOffsetY = null!;
-    private ConfigEntry<float> _confirmSchemaScale = null!;
     private ConfigEntry<string> _confirmText = null!;
     private ConfigEntry<string> _confirmButtonText = null!;
     private ConfigEntry<string> _purchaseText = null!;
@@ -128,8 +127,6 @@ public sealed class Plugin : BaseUnityPlugin
             "(0.174 — как заблокированный слот в ванили: 0.59 / 3.400)");
         _crestDotOffsetY = Config.Bind("General", "CrestDotOffsetY", -0.02f,
             "Смещение точек слотов по вертикали как доля высоты силуэта (минус — вниз)");
-        _confirmSchemaScale = Config.Bind("General", "ConfirmSchemaScale", 1f,
-            "Размер схемы на экране подтверждения относительно правой панели");
         _confirmText = Config.Bind("General", "ConfirmText", "Вы уверены?",
             "Текст подтверждения покупки знака");
         _confirmButtonText = Config.Bind("General", "ConfirmButtonText", "Выбрать",
@@ -171,7 +168,6 @@ public sealed class Plugin : BaseUnityPlugin
             Logger.LogWarning($"[SCHEMA] CrestDotSize={dotSizeRaw:F3}" +
                 $" looks like legacy multiplier, using {ShopCrestSchema.DotSize:F3}");
         }
-        ShopCrestSchema.ConfirmScale = _confirmSchemaScale.Value;
         ShopCosmetics.ConfirmText = _confirmText.Value;
         ShopCosmetics.ConfirmButtonText = _confirmButtonText.Value;
         ShopCosmetics.PurchaseText = _purchaseText.Value;
