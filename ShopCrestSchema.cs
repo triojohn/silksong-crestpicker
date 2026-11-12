@@ -404,22 +404,41 @@ internal static class ShopCrestSchema
             return;
         }
 
-        schema.DescBottom = descBottom;
-        schema.TmpBottom = _descLabel.bounds.min.y;
-        schema.Top = descBottom - (AnchorGap * panel.size.y);
+        // The window is recentred and rescaled after the build, so the anchor is stored
+        // relative to the panel centre and re-applied on every frame.
+        schema.AnchorOffset = descBottom - panel.center.y;
         schema.AnchorKnown = true;
     }
 
+    /// <summary>World Y of the schema top: the panel centre plus the measured anchor offset.</summary>
+    /// <param name="schema">Schema to place.</param>
+    /// <param name="panel">World bounds of the details panel.</param>
+    private static float AnchorTop(Schema schema, Bounds panel)
+    {
+        return panel.center.y + schema.AnchorOffset - (AnchorGap * panel.size.y);
+    }
+
     /// <summary>
-    /// World Y of the schema centre under the measured description text bottom, pulled back
-    /// inside the panel when the silhouette would leave it. The drawn size is not touched here.
+    /// World Y of the schema centre under the measured description text bottom. Nothing is
+    /// clamped: the offset is panel-relative, so a moved panel carries the schema with it.
     /// </summary>
     /// <param name="schema">Schema to place.</param>
     /// <param name="panel">World bounds of the details panel.</param>
     private static float AnchorCentreY(Schema schema, Bounds panel)
     {
+        return SchemaPlacement.CentreYFromTop(AnchorTop(schema, panel), WorldHeight(schema.Body));
+    }
+
+    /// <summary>
+    /// Panel-relative centre used when no description bounds arrived: the panel centre
+    /// shifted by <see cref="OffsetY"/>, pulled back inside the panel.
+    /// </summary>
+    /// <param name="schema">Schema to place.</param>
+    /// <param name="panel">World bounds of the details panel.</param>
+    private static float FallbackCentreY(Schema schema, Bounds panel)
+    {
         float h = WorldHeight(schema.Body);
-        float centre = SchemaPlacement.CentreYFromTop(schema.Top, h);
+        float centre = SchemaPlacement.TargetY(panel.min.y, panel.center.y, panel.size.y, OffsetY);
         float clamped = SchemaPlacement.ClampCentreY(centre, h / 2f, panel.min.y, panel.max.y);
         if (SchemaPlacement.IsClamped(centre, h / 2f, panel.min.y, panel.max.y) && !schema.ClampLogged)
         {
@@ -441,8 +460,9 @@ internal static class ShopCrestSchema
         }
 
         schema.AnchorLogged = true;
-        Plugin.Log.LogInfo($"[SCHEMA] anchor rendererBottom={schema.DescBottom:F3}" +
-            $" tmpBounds={schema.TmpBottom:F3} top={schema.Top:F3}" +
+        Plugin.Log.LogInfo($"[SCHEMA] anchor offset={schema.AnchorOffset:F3}" +
+            $" panelCentre=({panel.center.x:F3},{panel.center.y:F3})" +
+            $" top={AnchorTop(schema, panel):F3}" +
             $" h={WorldHeight(schema.Body):F3}" +
             $" centre={AnchorCentreY(schema, panel):F3}");
     }
@@ -461,7 +481,7 @@ internal static class ShopCrestSchema
         float targetX = panel.center.x;
         float targetY = schema.AnchorKnown
             ? AnchorCentreY(schema, panel)
-            : SchemaPlacement.TargetY(panel.min.y, panel.center.y, panel.size.y, OffsetY);
+            : FallbackCentreY(schema, panel);
         if (!schema.OffsetKnown)
         {
             Vector3 offset = SilhouetteBounds(schema).center - container.position;
@@ -536,7 +556,7 @@ internal static class ShopCrestSchema
         }
 
         LogOnce("[SCHEMA] silhouette bounds unavailable, using container");
-        return ContainerBounds(schema.Container.transform);
+        return ActiveBounds(schema.Container.transform);
     }
 
     /// <summary>Retries the fit of a schema whose renderers had no bounds when built.</summary>
@@ -1423,12 +1443,29 @@ internal static class ShopCrestSchema
             }
 
             // The vanilla components drive themselves from a manager the clone does not have.
+            // The card may carry more slot widgets than the crest has slots: the extras are
+            // whole objects (frame and icon), so they are removed, not just switched off.
             InventoryToolCrestSlot[] slots = clone.GetComponentsInChildren<InventoryToolCrestSlot>(true);
-            foreach (InventoryToolCrestSlot slot in slots)
+            int keep = crest.Slots?.Length ?? 0;
+            int removed = 0;
+            List<InventoryToolCrestSlot> kept = new List<InventoryToolCrestSlot>(slots.Length);
+            for (int i = 0; i < slots.Length; i++)
             {
+                InventoryToolCrestSlot slot = slots[i];
+                if (i >= keep)
+                {
+                    removed++;
+                    slot.gameObject.SetActive(false);
+                    UnityEngine.Object.Destroy(slot.gameObject);
+                    continue;
+                }
+
+                kept.Add(slot);
                 slot.enabled = false;
                 slot.transform.localScale = new Vector3(CloneSlotScale, CloneSlotScale, 1f);
             }
+
+            Plugin.Log.LogInfo($"[SCHEMA] clone slots kept={kept.Count} removed={removed}");
 
             string silhouetteName = "none";
             string crestSpriteName = "none";
@@ -1452,7 +1489,7 @@ internal static class ShopCrestSchema
             }
 
             ResetFades(clone, body.transform);
-            foreach (InventoryToolCrestSlot slot in slots)
+            foreach (InventoryToolCrestSlot slot in kept)
             {
                 slot.ItemFlashAmount = 0f;
                 UnityEngine.Object.Destroy(slot);
@@ -1862,7 +1899,7 @@ internal static class ShopCrestSchema
             float measured = WorldHeight(schema.Body);
             float targetY = schema.AnchorKnown
                 ? AnchorCentreY(schema, panel)
-                : SchemaPlacement.TargetY(panel.min.y, panel.center.y, panel.size.y, OffsetY);
+                : FallbackCentreY(schema, panel);
             Plugin.Log.LogInfo($"[GEO] computed target={targetY:F3} measured={measured:F3}" +
                 $" scale={_geoScale:F4}");
         }
@@ -2276,14 +2313,8 @@ internal static class ShopCrestSchema
         /// <summary>True when the description text gave a usable bottom.</summary>
         internal bool AnchorKnown { get; set; }
 
-        /// <summary>World Y of the lowest drawn description glyph, measured once per build.</summary>
-        internal float DescBottom { get; set; }
-
-        /// <summary>World Y the label's own <see cref="TMP_Text.bounds"/> reported, for the log.</summary>
-        internal float TmpBottom { get; set; }
-
-        /// <summary>World Y of the schema top: the description bottom less the anchor gap.</summary>
-        internal float Top { get; set; }
+        /// <summary>Description bottom relative to the panel centre, measured once per build.</summary>
+        internal float AnchorOffset { get; set; }
 
         /// <summary>True once the anchor numbers were logged for this build.</summary>
         internal bool AnchorLogged { get; set; }
@@ -2337,19 +2368,18 @@ internal static class ShopCrestSchema
             $" parent='{path}' fadeAncestors={fade}");
     }
 
-    /// <summary>Schema containers currently drawn, retired ones excluded.</summary>
+    /// <summary>Schema containers currently held by the schema root, hidden ones included.</summary>
     private static int LiveContainers()
     {
-        int count = 0;
-        foreach (GameObject go in Resources.FindObjectsOfTypeAll<GameObject>())
+        if (_schemaRoot == null)
         {
-            if (go == null || !go.scene.isLoaded || go.hideFlags != HideFlags.None ||
-                !go.activeInHierarchy)
-            {
-                continue;
-            }
+            return 0;
+        }
 
-            if (go.name == "Crest Schema")
+        int count = 0;
+        foreach (Transform child in _schemaRoot)
+        {
+            if (child != null)
             {
                 count++;
             }
