@@ -8,19 +8,6 @@ internal static class SchemaPlacement
     /// <summary>Smallest move in world units that counts as a clamp.</summary>
     private const float Tolerance = 0.0001f;
 
-    /// <summary>Gap between the description text and the schema top, as a fraction of the panel height.</summary>
-    internal const float GapFraction = 0.02f;
-
-    /// <summary>Top edge of the schema: the bottom of the description rect pulled down by the gap.</summary>
-    /// <param name="rectBottomY">World Y of the lowest corner of the description rect.</param>
-    /// <param name="gapFraction">Gap as a fraction of the panel height.</param>
-    /// <param name="panelHeight">World height of the details panel.</param>
-    /// <returns>World Y the schema top should take.</returns>
-    internal static float TopFromRectBottom(float rectBottomY, float gapFraction, float panelHeight)
-    {
-        return rectBottomY - (gapFraction * panelHeight);
-    }
-
     /// <summary>Centre that puts a silhouette of <paramref name="drawnHeight"/> under the top.</summary>
     /// <param name="topY">World Y the schema top should take.</param>
     /// <param name="drawnHeight">World height the silhouette actually draws.</param>

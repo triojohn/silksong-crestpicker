@@ -338,7 +338,7 @@ internal static class ShopCrestSchema
             _detailsSchema.Container.SetActive(true);
         }
 
-        AnchorSchema(_detailsSchema, bounds);
+        AnchorSchema(_detailsSchema);
         FitHeight(_detailsSchema, bounds);
         PlaceAt(_detailsSchema, bounds);
         LogAnchor(_detailsSchema, bounds);
@@ -346,13 +346,13 @@ internal static class ShopCrestSchema
     }
 
     /// <summary>
-    /// Measures the description rect bottom once per build and stores the schema top under it.
-    /// The rect corners come from the object itself, so the anchor does not depend on drawn
-    /// glyphs; a missing rect or a non-finite corner leaves the old panel offset in charge.
+    /// Measures the bottom of the description block once per build and stores it as the schema
+    /// top, so the silhouette hangs directly under the text container. The block is the first
+    /// ancestor of the description label with a real rect, never above the details panel; a
+    /// missing block or a non-finite corner leaves the old panel offset in charge.
     /// </summary>
     /// <param name="schema">Schema built for the current crest.</param>
-    /// <param name="panel">World bounds of the details panel.</param>
-    private static void AnchorSchema(Schema schema, Bounds panel)
+    private static void AnchorSchema(Schema schema)
     {
         if (schema.AnchorTried)
         {
@@ -366,29 +366,55 @@ internal static class ShopCrestSchema
             _descLabel.ForceMeshUpdate();
         }
 
-        if (!(_descLabel?.rectTransform is RectTransform rect))
+        RectTransform? block = DescriptionBlock();
+        if (block == null)
         {
-            Plugin.Log.LogInfo("[SCHEMA] anchor fallback (no rect)");
+            Plugin.Log.LogInfo("[SCHEMA] anchor fallback (no block)");
             return;
         }
 
         Vector3[] corners = new Vector3[4];
-        rect.GetWorldCorners(corners);
+        block.GetWorldCorners(corners);
         float bottom = Mathf.Min(corners[0].y, corners[1].y);
         if (!Geometry.IsSane(bottom))
         {
-            Plugin.Log.LogInfo("[SCHEMA] anchor fallback (no rect)");
+            Plugin.Log.LogInfo("[SCHEMA] anchor fallback (no block)");
             return;
         }
 
-        schema.DescBottom = bottom;
-        schema.Top = SchemaPlacement.TopFromRectBottom(bottom, SchemaPlacement.GapFraction, panel.size.y);
+        schema.BlockPath = PathOf(block);
+        schema.BlockBottom = bottom;
+        schema.Top = bottom;
         schema.AnchorKnown = true;
     }
 
     /// <summary>
-    /// World Y of the schema centre under the measured description bottom, pulled back inside
-    /// the panel when the silhouette would leave it. The drawn size is not touched here.
+    /// Rect the description text is laid out in: the parent of the description label, climbing
+    /// while the rect is empty, and stopping at the details panel itself.
+    /// </summary>
+    private static RectTransform? DescriptionBlock()
+    {
+        if (!(_descLabel?.rectTransform is RectTransform label))
+        {
+            return null;
+        }
+
+        for (Transform? current = label.parent;
+            current != null && current != _details;
+            current = current.parent)
+        {
+            if (current is RectTransform candidate && candidate.rect.height > 0.0001f)
+            {
+                return candidate;
+            }
+        }
+
+        return _details is RectTransform panel && panel.rect.height > 0.0001f ? panel : null;
+    }
+
+    /// <summary>
+    /// World Y of the schema centre under the measured description block bottom, pulled back
+    /// inside the panel when the silhouette would leave it. The drawn size is not touched here.
     /// </summary>
     /// <param name="schema">Schema to place.</param>
     /// <param name="panel">World bounds of the details panel.</param>
@@ -417,8 +443,8 @@ internal static class ShopCrestSchema
         }
 
         schema.AnchorLogged = true;
-        Plugin.Log.LogInfo($"[SCHEMA] anchor rectBottom={schema.DescBottom:F3}" +
-            $" gap={SchemaPlacement.GapFraction * panel.size.y:F3} top={schema.Top:F3}" +
+        Plugin.Log.LogInfo($"[SCHEMA] anchor block='{schema.BlockPath}'" +
+            $" blockBottom={schema.BlockBottom:F3} top={schema.Top:F3}" +
             $" h={WorldHeight(schema.Body):F3} centre={AnchorCentreY(schema, panel):F3}");
     }
 
@@ -2242,16 +2268,19 @@ internal static class ShopCrestSchema
         /// <summary>True once the container was scaled to the panel fill.</summary>
         internal bool FitApplied { get; set; }
 
-        /// <summary>True once the description rect was measured for this build.</summary>
+        /// <summary>True once the description block was measured for this build.</summary>
         internal bool AnchorTried { get; set; }
 
-        /// <summary>True when the description rect gave a usable bottom.</summary>
+        /// <summary>True when the description block gave a usable bottom.</summary>
         internal bool AnchorKnown { get; set; }
 
-        /// <summary>World Y of the description rect bottom, measured once per build.</summary>
-        internal float DescBottom { get; set; }
+        /// <summary>Scene path of the measured description block, for the anchor log.</summary>
+        internal string BlockPath { get; set; } = string.Empty;
 
-        /// <summary>World Y of the schema top derived from <see cref="DescBottom"/>.</summary>
+        /// <summary>World Y of the description block bottom, measured once per build.</summary>
+        internal float BlockBottom { get; set; }
+
+        /// <summary>World Y of the schema top, equal to <see cref="BlockBottom"/>.</summary>
         internal float Top { get; set; }
 
         /// <summary>True once the anchor numbers were logged for this build.</summary>
