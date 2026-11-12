@@ -158,8 +158,11 @@ internal static class ShopCrestSchema
     /// <summary>True once the schema y offset was logged for this window.</summary>
     private static bool _offsetLogged;
 
-    /// <summary>True once the y offset clamp was logged for this window.</summary>
-    private static bool _offsetClampedLogged;
+    /// <summary>True once the skipped placement was logged for this window.</summary>
+    private static bool _offsetInvalidLogged;
+
+    /// <summary>World position of the details container before any placement shift.</summary>
+    private static Vector3 _schemaBasePosition;
 
     /// <summary>Last logged confirm fit scale; negative before the first fit.</summary>
     private static float _confirmFitLogged = -1f;
@@ -255,7 +258,7 @@ internal static class ShopCrestSchema
             _confirmGroupActiveLogged = null;
             _detailsBounds = default;
             _offsetLogged = false;
-            _offsetClampedLogged = false;
+            _offsetInvalidLogged = false;
             DestroySchemaRoot();
             DumpAllCrests();
             Apply();
@@ -344,7 +347,7 @@ internal static class ShopCrestSchema
         _confirmGroupActiveLogged = null;
         _detailsBounds = default;
         _offsetLogged = false;
-        _offsetClampedLogged = false;
+        _offsetInvalidLogged = false;
         _confirmFitLogged = -1f;
         _selectedIndex = -1;
         _pickSource = string.Empty;
@@ -429,15 +432,7 @@ internal static class ShopCrestSchema
         float targetY = SchemaPlacement.TargetY(bounds.min.y, bounds.center.y, bounds.size.y, OffsetY);
         if (_detailsSchema.Container.activeSelf)
         {
-            if (!_offsetLogged)
-            {
-                _offsetLogged = true;
-                Plugin.Log.LogInfo($"[SCHEMA] placeY target={targetY:F3}" +
-                    $" panel=(min={bounds.min.y:F3},centre={bounds.center.y:F3},max={bounds.max.y:F3})" +
-                    $" offset={OffsetY:F3}");
-            }
-
-            PlaceAt(_detailsSchema, targetY, bounds);
+            PlaceAt(_detailsSchema, targetY);
             _detailsBounds = ContainerBounds(_detailsSchema.Container.transform);
         }
 
@@ -552,33 +547,38 @@ internal static class ShopCrestSchema
     }
 
     /// <summary>
-    /// Moves a schema in world space so the centre of its drawn silhouette lands on
-    /// <paramref name="targetY"/>, kept inside <paramref name="panel"/> by the silhouette
-    /// half height. X is left on the panel centre as before. The bounds are measured on
-    /// every call, so the shift never accumulates.
+    /// Puts the centre of the drawn silhouette on <paramref name="targetY"/> by writing the
+    /// container position as an absolute offset from <see cref="_schemaBasePosition"/>, so a
+    /// bad measurement cannot accumulate into a walk. X and the scale are left alone. A
+    /// silhouette that measures zero is not moved at all, because that measurement carries
+    /// no centre to place.
     /// </summary>
     /// <param name="schema">Schema to move.</param>
     /// <param name="targetY">World Y the silhouette centre should take.</param>
-    /// <param name="panel">Panel the schema must stay inside.</param>
-    private static void PlaceAt(Schema schema, float targetY, Bounds panel)
+    private static void PlaceAt(Schema schema, float targetY)
     {
         Transform container = schema.Container.transform;
         Bounds silhouette = SilhouetteBounds(schema);
-        float half = silhouette.extents.y;
-        float clamped = SchemaPlacement.ClampCentreY(targetY, half, panel.min.y, panel.max.y);
-        if (SchemaPlacement.IsClamped(targetY, half, panel.min.y, panel.max.y) && !_offsetClampedLogged)
+        float centre = silhouette.center.y;
+        if (Mathf.Abs(centre) < 0.001f || Mathf.Abs(silhouette.size.y) < 0.001f)
         {
-            _offsetClampedLogged = true;
-            Plugin.Log.LogInfo($"[SCHEMA] placeY clamped from={targetY:F3} to={clamped:F3}");
+            if (!_offsetInvalidLogged)
+            {
+                _offsetInvalidLogged = true;
+                Plugin.Log.LogInfo($"[SCHEMA] placeY skipped (invalid centre), position unchanged" +
+                    $" centre={centre:F3} height={silhouette.size.y:F3}");
+            }
+
+            return;
         }
 
-        Vector3 shift = new Vector3(
-            panel.center.x - ContainerBounds(container).center.x,
-            clamped - silhouette.center.y,
-            0f);
-        if (shift.sqrMagnitude > 0.0000001f)
+        float shift = targetY - centre;
+        container.position = _schemaBasePosition + (Vector3.up * shift);
+        if (!_offsetLogged)
         {
-            container.position += shift;
+            _offsetLogged = true;
+            Plugin.Log.LogInfo($"[SCHEMA] placeY centre={centre:F3} target={targetY:F3}" +
+                $" shift={shift:F3} absolute=True");
         }
     }
 
@@ -1296,6 +1296,10 @@ internal static class ShopCrestSchema
         GameObject container = new GameObject(label);
         container.transform.SetParent(host, false);
         container.transform.localScale = Vector3.one;
+        if (fitDetails)
+        {
+            _schemaBasePosition = container.transform.position;
+        }
 
         GameObject content = new GameObject(ContentName);
         content.transform.SetParent(container.transform, false);
