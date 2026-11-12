@@ -72,11 +72,8 @@ internal static class ShopCrestSchema
     /// <summary>Slot scale of an unselected vanilla crest card (<c>_slotScaleOther</c>).</summary>
     private const float CloneSlotScale = 0.7f;
 
-    /// <summary>Scale error left alone by the silhouette fit.</summary>
-    private const float FitTolerance = 0.02f;
-
-    /// <summary>Corrective scale passes: one fit and one recheck.</summary>
-    private const int FitMaxPasses = 2;
+    /// <summary>Vanilla local scale of the silhouette child inside a crest card.</summary>
+    private const float SilhouetteScale = 2f;
 
     /// <summary>Fallback colours when the game's tool type palette is unavailable.</summary>
     private static readonly Dictionary<ToolItemType, Color> FallbackColors =
@@ -579,13 +576,6 @@ internal static class ShopCrestSchema
             panel.center.x - ContainerBounds(container).center.x,
             clamped - silhouette.center.y,
             0f);
-        if (!schema.PlaceLogged)
-        {
-            schema.PlaceLogged = true;
-            Plugin.Log.LogInfo($"[SCHEMA] placeY silhouetteCentre={silhouette.center.y:F3}" +
-                $" target={clamped:F3} shift={shift.y:F3}");
-        }
-
         if (shift.sqrMagnitude > 0.0000001f)
         {
             container.position += shift;
@@ -1160,12 +1150,15 @@ internal static class ShopCrestSchema
         float reference = ReferenceHeight();
         float panel = TryPanelSize(out Vector2 panelSize) ? PanelFill * panelSize.y : BaseHeight;
         float scale = reference > 0.0001f ? panel * Scale / reference : Scale;
-        Plugin.Log.LogInfo($"[SCHEMA] scale={scale:F4} (reference={reference:F3} panel={panel:F3})");
+        float body = ReferenceBody();
+        float cardScale = body > 0.0001f ? panel * Scale / body : Scale;
+        Plugin.Log.LogInfo($"[SCHEMA] scale={scale:F4} (reference={reference:F3} panel={panel:F3})" +
+            $" cardScale={cardScale:F4} (body={body:F3})");
 
         Color bodyColor = InventoryToolCrest.DeselectedColor;
-        _detailsSchema = BuildSchema(crest, silhouette, bodyColor, scale, true,
+        _detailsSchema = BuildSchema(crest, silhouette, bodyColor, scale, cardScale, true,
             "Crest Schema");
-        _confirmSchema = BuildSchema(crest, silhouette, bodyColor, scale, false,
+        _confirmSchema = BuildSchema(crest, silhouette, bodyColor, scale, cardScale, false,
             "Confirm Crest Schema");
         int slots = crest.Slots?.Length ?? 0;
         Plugin.Log.LogInfo($"[SCHEMA] built '{crest.name}' slots={slots}" +
@@ -1277,13 +1270,14 @@ internal static class ShopCrestSchema
     }
 
     /// <summary>
-    /// Creates one schema instance: the silhouette or the cloned vanilla card is drawn at
-    /// <paramref name="scale"/>, then fitted to the measured panel height. Neither depends
-    /// on the selected crest, so every crest ends up the same drawn size. The container
-    /// starts at scale 1 and the content carries the scale divided by the inherited one.
+    /// Creates one schema instance: the sprite fallback is drawn at <paramref name="scale"/>,
+    /// the cloned vanilla card at the constant <paramref name="cardScale"/>, which already
+    /// covers the silhouette child scale. Neither depends on the selected crest, so a taller
+    /// silhouette simply draws taller instead of being fitted per crest. The container stays
+    /// at scale 1 and the content carries the scale divided by the inherited one.
     /// </summary>
     private static Schema? BuildSchema(ToolCrest crest, Sprite silhouette, Color bodyColor,
-        float scale, bool fitDetails, string label)
+        float scale, float cardScale, bool fitDetails, string label)
     {
         Transform? host = SchemaHost();
         if (host == null)
@@ -1312,6 +1306,10 @@ internal static class ShopCrestSchema
 
         if (Render == SchemaRenderMode.Clone)
         {
+            // The copied card draws the vanilla silhouette child at SilhouetteScale;
+            // the card scale is the same for every crest, so only the body differs.
+            float cardLocal = inherited > 0.0001f ? cardScale / inherited : cardScale;
+            content.transform.localScale = new Vector3(cardLocal, cardLocal, 1f);
             Schema? clone = CloneSchema(crest, container, content, label);
             if (clone != null)
             {
@@ -1319,6 +1317,9 @@ internal static class ShopCrestSchema
                 LogSprites("clone");
                 return clone;
             }
+
+            // The sprite fallback still draws at the silhouette scale.
+            content.transform.localScale = new Vector3(local, local, 1f);
         }
 
         bool vanilla = Render != SchemaRenderMode.Generated && TemplateSprites() != null;
@@ -1335,27 +1336,19 @@ internal static class ShopCrestSchema
     }
 
     /// <summary>
-    /// Fits the drawn silhouette to the panel by its measured world height, then applies
-    /// the dot drop once a real height is there. The fit reads the renderer, never a
-    /// reference silhouette, so every crest lands on the same drawn height.
+    /// Applies the dot drop once the silhouette draws a real height. The dot diameter and
+    /// the container scale are fixed at build time, so nothing here is measured against
+    /// the selected crest and every crest keeps the same scale.
     /// </summary>
     private static void Fit(Schema schema)
     {
-        float measured = WorldHeight(schema.Body);
-        if (measured <= 0.0001f)
+        float h2 = WorldHeight(schema.Body);
+        if (h2 <= 0.0001f)
         {
             return;
         }
 
-        FitHeight(schema, measured);
-
-        float drawn = WorldHeight(schema.Body);
-        if (drawn <= 0.0001f)
-        {
-            return;
-        }
-
-        ApplyDotOffset(schema, drawn);
+        ApplyDotOffset(schema, h2);
 
         if (!schema.BoundsLogged)
         {
@@ -1364,42 +1357,9 @@ internal static class ShopCrestSchema
             Transform content = schema.Content.transform;
             Plugin.Log.LogInfo($"[SCHEMA] {schema.Label} silhouette" +
                 $" bounds={bounds.size.x:F3}x{bounds.size.y:F3}x{bounds.size.z:F3}" +
-                $" h2={drawn:F3} lossyScale={content.lossyScale.y:F3}" +
+                $" h2={h2:F3} lossyScale={content.lossyScale.y:F3}" +
                 $" contentScale={content.localScale.x:F3}");
         }
-    }
-
-    /// <summary>
-    /// Scales the container by the measured height ratio, once and once more to confirm.
-    /// The factor is derived from the current drawn height, so repeated frames cannot
-    /// accumulate. A ratio within <see cref="FitTolerance"/> counts as fitted.
-    /// </summary>
-    private static void FitHeight(Schema schema, float measured)
-    {
-        if (schema.FitPasses >= FitMaxPasses)
-        {
-            return;
-        }
-
-        float panel = TryPanelSize(out Vector2 size) ? size.y : BaseHeight;
-        float target = PanelFill * panel * Scale;
-        if (target <= 0.0001f)
-        {
-            return;
-        }
-
-        float factor = target / measured;
-        if (Mathf.Abs(factor - 1f) <= FitTolerance)
-        {
-            schema.FitPasses = FitMaxPasses;
-            return;
-        }
-
-        Transform container = schema.Container.transform;
-        container.localScale *= factor;
-        schema.FitPasses++;
-        Plugin.Log.LogInfo($"[SCHEMA] fit measured={measured:F3} target={target:F3}" +
-            $" factor={factor:F3} pass={schema.FitPasses}");
     }
 
     /// <summary>
@@ -1530,6 +1490,16 @@ internal static class ShopCrestSchema
         _referenceHeight = best;
         Plugin.Log.LogInfo($"[SCHEMA] reference height={best:F3} from '{name}'");
         return best;
+    }
+
+    /// <summary>
+    /// Body height of the tallest crest as a cloned card draws it: its native silhouette at
+    /// the vanilla <see cref="SilhouetteScale"/>. One reference for every clone, so the card
+    /// scale never depends on the selected crest.
+    /// </summary>
+    private static float ReferenceBody()
+    {
+        return ReferenceHeight() * SilhouetteScale;
     }
 
     /// <summary>World height a sprite draws at scale 1; <c>rect/ppu</c> when bounds are empty.</summary>
@@ -2452,12 +2422,6 @@ internal static class ShopCrestSchema
 
         /// <summary>True once the silhouette bounds were logged for this schema.</summary>
         internal bool BoundsLogged { get; set; }
-
-        /// <summary>Corrective scale passes already applied to the container.</summary>
-        internal int FitPasses { get; set; }
-
-        /// <summary>True once the silhouette placement numbers were logged.</summary>
-        internal bool PlaceLogged { get; set; }
     }
 
     /// <summary>
