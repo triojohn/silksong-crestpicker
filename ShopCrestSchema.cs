@@ -57,6 +57,9 @@ internal static class ShopCrestSchema
     /// <summary>Slot scale of an unselected vanilla crest card (<c>_slotScaleOther</c>).</summary>
     private const float CloneSlotScale = 0.7f;
 
+    /// <summary>Local distance under which a clone slot widget counts as the widget of a slot.</summary>
+    private const float CloneSlotTolerance = 0.05f;
+
     /// <summary>Vanilla local scale of the silhouette child inside a crest card.</summary>
     private const float SilhouetteScale = 2f;
 
@@ -1445,27 +1448,77 @@ internal static class ShopCrestSchema
             // The vanilla components drive themselves from a manager the clone does not have.
             // The card may carry more slot widgets than the crest has slots: the extras are
             // whole objects (frame and icon), so they are removed, not just switched off.
+            // Widget order in the clone does not follow crest.Slots, so a widget is paired
+            // with the slot whose position it sits on, not with the slot of the same index.
             InventoryToolCrestSlot[] slots = clone.GetComponentsInChildren<InventoryToolCrestSlot>(true);
-            int keep = crest.Slots?.Length ?? 0;
-            int removed = 0;
-            List<InventoryToolCrestSlot> kept = new List<InventoryToolCrestSlot>(slots.Length);
-            for (int i = 0; i < slots.Length; i++)
+            ToolCrest.SlotInfo[]? infos = crest.Slots;
+            int needed = infos?.Length ?? 0;
+            bool[] used = new bool[slots.Length];
+            List<InventoryToolCrestSlot> kept = new List<InventoryToolCrestSlot>(needed);
+            List<string> distances = new List<string>(needed);
+            for (int i = 0; i < needed; i++)
             {
-                InventoryToolCrestSlot slot = slots[i];
-                if (i >= keep)
+                Vector2 want = infos![i].Position;
+                int best = -1;
+                float bestDistance = float.MaxValue;
+                for (int j = 0; j < slots.Length; j++)
                 {
-                    removed++;
-                    slot.gameObject.SetActive(false);
-                    UnityEngine.Object.Destroy(slot.gameObject);
+                    if (used[j])
+                    {
+                        continue;
+                    }
+
+                    Vector3 at = slots[j].transform.localPosition;
+                    float distance = Vector2.Distance(new Vector2(at.x, at.y), want);
+                    if (distance < bestDistance)
+                    {
+                        bestDistance = distance;
+                        best = j;
+                    }
+                }
+
+                distances.Add(best < 0 ? "none" : $"{bestDistance:F3}");
+                if (best < 0 || bestDistance > CloneSlotTolerance)
+                {
                     continue;
                 }
 
-                kept.Add(slot);
+                used[best] = true;
+                kept.Add(slots[best]);
+            }
+
+            int matched = kept.Count;
+            int removed = 0;
+            if (kept.Count < needed)
+            {
+                // Spare frames are a lesser evil than holes in the card: nothing is removed.
+                Plugin.Log.LogWarning($"[SCHEMA] clone slots mismatch kept={kept.Count} needed={needed}" +
+                    $" distances=[{string.Join(", ", distances)}]");
+                kept.Clear();
+                kept.AddRange(slots);
+            }
+            else
+            {
+                for (int j = 0; j < slots.Length; j++)
+                {
+                    if (used[j])
+                    {
+                        continue;
+                    }
+
+                    removed++;
+                    slots[j].gameObject.SetActive(false);
+                    UnityEngine.Object.Destroy(slots[j].gameObject);
+                }
+            }
+
+            foreach (InventoryToolCrestSlot slot in kept)
+            {
                 slot.enabled = false;
                 slot.transform.localScale = new Vector3(CloneSlotScale, CloneSlotScale, 1f);
             }
 
-            Plugin.Log.LogInfo($"[SCHEMA] clone slots kept={kept.Count} removed={removed}");
+            Plugin.Log.LogInfo($"[SCHEMA] clone slots kept={kept.Count} removed={removed} matched={matched}");
 
             string silhouetteName = "none";
             string crestSpriteName = "none";
