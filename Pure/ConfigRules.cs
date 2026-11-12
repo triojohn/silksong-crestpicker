@@ -27,6 +27,17 @@ internal static class ConfigRules
     }
 
     /// <summary>
+    /// Schema offset stays as configured except for the old -0.12 default, which
+    /// sat a little too high and moves to the current -0.16 default.
+    /// </summary>
+    /// <param name="offsetY">Raw <c>CrestSchemaOffsetY</c> value.</param>
+    /// <returns>Offset to use.</returns>
+    internal static float NormalizeSchemaOffsetY(float offsetY)
+    {
+        return offsetY == -0.12f ? -0.16f : offsetY;
+    }
+
+    /// <summary>
     /// Locked dot size follows the same rule as <see cref="NormalizeDotSize"/>
     /// but falls back to its own default.
     /// </summary>

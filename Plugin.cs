@@ -1,4 +1,5 @@
 using System;
+using System.Globalization;
 using BepInEx;
 using BepInEx.Configuration;
 using BepInEx.Logging;
@@ -116,7 +117,7 @@ public sealed class Plugin : BaseUnityPlugin
         _crestSchemaScale = Config.Bind("General", "CrestSchemaScale", 1f,
             "Множитель единого масштаба схемы знака: все гребни рисуются в одном масштабе от " +
             "эталонной высоты, схема занимает 80% панели деталей (1 — ровно вписано)");
-        _crestSchemaOffsetY = Config.Bind("General", "CrestSchemaOffsetY", -0.12f,
+        _crestSchemaOffsetY = Config.Bind("General", "CrestSchemaOffsetY", -0.16f,
             "Сдвиг схемы знака по вертикали как доля высоты панели деталей " +
             "(минус — вниз, чтобы схема не наезжала на описание)");
         _crestDotSize = Config.Bind("General", "CrestDotSize", 0.373f,
@@ -158,7 +159,13 @@ public sealed class Plugin : BaseUnityPlugin
         ShopCrestSchema.Enabled = _showCrestSchema.Value;
         ShopCrestSchema.Render = _schemaRender.Value;
         ShopCrestSchema.Scale = ConfigRules.NormalizeSchemaScale(_crestSchemaScale.Value);
-        ShopCrestSchema.OffsetY = _crestSchemaOffsetY.Value;
+        ShopCrestSchema.OffsetY = ConfigRules.NormalizeSchemaOffsetY(_crestSchemaOffsetY.Value);
+        if (ShopCrestSchema.OffsetY != _crestSchemaOffsetY.Value)
+        {
+            Logger.LogInfo($"[CONFIG] CrestSchemaOffsetY migrated " +
+                $"{_crestSchemaOffsetY.Value.ToString(CultureInfo.InvariantCulture)} -> " +
+                $"{ShopCrestSchema.OffsetY.ToString(CultureInfo.InvariantCulture)}");
+        }
         float dotSizeRaw = _crestDotSize.Value;
         ShopCrestSchema.DotSize = ConfigRules.NormalizeDotSize(dotSizeRaw);
         ShopCrestSchema.LockedDotSize = ConfigRules.NormalizeLockedDotSize(_crestLockedDotSize.Value);
