@@ -549,63 +549,54 @@ internal static class ShopCrestSchema
     /// <summary>
     /// Puts the centre of the drawn silhouette on <paramref name="targetY"/> by writing the
     /// container position as an absolute offset from <see cref="_schemaBasePosition"/>, so a
-    /// bad measurement cannot accumulate into a walk. X and the scale are left alone. The
-    /// base centre is measured once at build time, from the sprite itself; a silhouette that
-    /// measures no height is not moved at all.
+    /// bad measurement cannot accumulate into a walk. X and the scale are left alone. A
+    /// silhouette that measures zero is not moved at all, because that measurement carries
+    /// no centre to place.
     /// </summary>
     /// <param name="schema">Schema to move.</param>
     /// <param name="targetY">World Y the silhouette centre should take.</param>
     private static void PlaceAt(Schema schema, float targetY)
     {
         Transform container = schema.Container.transform;
-        if (schema.BaseHeight < 0.001f)
+        Bounds silhouette = SilhouetteBounds(schema);
+        float centre = silhouette.center.y;
+        if (Mathf.Abs(centre) < 0.001f || Mathf.Abs(silhouette.size.y) < 0.001f)
         {
             if (!_offsetInvalidLogged)
             {
                 _offsetInvalidLogged = true;
-                Plugin.Log.LogInfo("[SCHEMA] placeY skipped (invalid sprite bounds)");
+                Plugin.Log.LogInfo($"[SCHEMA] placeY skipped (invalid centre), position unchanged" +
+                    $" centre={centre:F3} height={silhouette.size.y:F3}");
             }
 
             return;
         }
 
-        float shift = targetY - schema.BaseCentreY;
+        float shift = targetY - centre;
         container.position = _schemaBasePosition + (Vector3.up * shift);
         if (!_offsetLogged)
         {
             _offsetLogged = true;
-            Plugin.Log.LogInfo($"[SCHEMA] placeY centre={schema.BaseCentreY:F3}" +
-                $" target={targetY:F3} shift={shift:F3} absolute=True");
+            Plugin.Log.LogInfo($"[SCHEMA] placeY centre={centre:F3} target={targetY:F3}" +
+                $" shift={shift:F3} absolute=True");
         }
     }
 
     /// <summary>
-    /// World centre and height the silhouette sprite draws, taken from the sprite's own
-    /// bounds and the renderer transform. <c>Renderer.bounds</c> stays zero on a clone whose
-    /// renderer the fade group has not updated, so it cannot carry the measurement.
+    /// World bounds of the drawn silhouette, the only thing the vertical placement measures:
+    /// the union of the container falls back when the silhouette draws nothing.
     /// </summary>
-    /// <param name="body">Silhouette renderer of the schema.</param>
-    /// <param name="centreY">World Y of the sprite bounds centre.</param>
-    /// <param name="height">World height of the sprite bounds.</param>
-    /// <param name="scaleY">Absolute world Y scale of the renderer transform.</param>
-    /// <returns>False when there is no sprite to measure.</returns>
-    private static bool TrySpriteMeasure(Renderer? body, out float centreY, out float height,
-        out float scaleY)
+    /// <param name="schema">Schema whose silhouette is measured.</param>
+    private static Bounds SilhouetteBounds(Schema schema)
     {
-        centreY = 0f;
-        height = 0f;
-        scaleY = 0f;
-        if (body is not SpriteRenderer renderer || renderer.sprite == null)
+        Renderer? body = schema.Body;
+        if (body != null && body.bounds.size.sqrMagnitude > 0.0000001f)
         {
-            return false;
+            return body.bounds;
         }
 
-        Transform transform = renderer.transform;
-        Bounds bounds = renderer.sprite.bounds;
-        scaleY = Mathf.Abs(transform.lossyScale.y);
-        centreY = transform.TransformPoint(bounds.center).y;
-        height = bounds.size.y * scaleY;
-        return height > 0.001f;
+        LogOnce("[SCHEMA] silhouette bounds unavailable, using container");
+        return ContainerBounds(schema.Container.transform);
     }
 
     /// <summary>
@@ -1281,10 +1272,9 @@ internal static class ShopCrestSchema
     /// <summary>
     /// Creates one schema instance: the sprite fallback is drawn at <paramref name="scale"/>,
     /// the cloned vanilla card at the constant <paramref name="cardScale"/>, which already
-    /// covers the silhouette child scale. <see cref="Fit"/> then normalises the drawn
-    /// silhouette to the panel height, so the starting scale only has to be sane. The
-    /// container stays at scale 1 and the content carries the scale divided by the
-    /// inherited one.
+    /// covers the silhouette child scale. Neither depends on the selected crest, so a taller
+    /// silhouette simply draws taller instead of being fitted per crest. The container stays
+    /// at scale 1 and the content carries the scale divided by the inherited one.
     /// </summary>
     private static Schema? BuildSchema(ToolCrest crest, Sprite silhouette, Color bodyColor,
         float scale, float cardScale, bool fitDetails, string label)
@@ -1350,43 +1340,29 @@ internal static class ShopCrestSchema
     }
 
     /// <summary>
-    /// Fits the drawn silhouette to <see cref="PanelFill"/> of the panel height, then applies
-    /// the dot drop once. The height comes from the sprite bounds and the renderer
-    /// transform, never from <c>Renderer.bounds</c>. The base centre and height are stored
-    /// for the absolute placement that runs every frame.
+    /// Applies the dot drop once the silhouette draws a real height. The dot diameter and
+    /// the container scale are fixed at build time, so nothing here is measured against
+    /// the selected crest and every crest keeps the same scale.
     /// </summary>
     private static void Fit(Schema schema)
     {
-        if (!TrySpriteMeasure(schema.Body, out _, out float height, out _))
+        float h2 = WorldHeight(schema.Body);
+        if (h2 <= 0.0001f)
         {
             return;
         }
 
-        float panel = TryPanelSize(out Vector2 size) ? PanelFill * size.y : BaseHeight;
-        float target = panel * Scale;
-        if (target > 0.0001f)
-        {
-            float factor = target / height;
-            if (Mathf.Abs(factor - 1f) > 0.001f)
-            {
-                schema.Content.transform.localScale *= factor;
-            }
-        }
-
-        if (!TrySpriteMeasure(schema.Body, out float centre, out height, out float scale))
-        {
-            return;
-        }
-
-        schema.BaseCentreY = centre;
-        schema.BaseHeight = height;
-        ApplyDotOffset(schema, height);
+        ApplyDotOffset(schema, h2);
 
         if (!schema.BoundsLogged)
         {
             schema.BoundsLogged = true;
-            Plugin.Log.LogInfo($"[SCHEMA] spriteMeasure centre={centre:F3} height={height:F3}" +
-                $" scale={scale:F3}");
+            Bounds bounds = schema.Body.bounds;
+            Transform content = schema.Content.transform;
+            Plugin.Log.LogInfo($"[SCHEMA] {schema.Label} silhouette" +
+                $" bounds={bounds.size.x:F3}x{bounds.size.y:F3}x{bounds.size.z:F3}" +
+                $" h2={h2:F3} lossyScale={content.lossyScale.y:F3}" +
+                $" contentScale={content.localScale.x:F3}");
         }
     }
 
@@ -1453,6 +1429,26 @@ internal static class ShopCrestSchema
 
         size = new Vector2(bounds.size.x, bounds.size.y);
         return true;
+    }
+
+    /// <summary>World height the renderer actually draws; sprite size when bounds are empty.</summary>
+    private static float WorldHeight(Renderer? renderer)
+    {
+        if (renderer == null)
+        {
+            return 0f;
+        }
+
+        float measured = renderer.bounds.size.y;
+        if (measured > 0.0001f)
+        {
+            return measured;
+        }
+
+        SpriteRenderer? sprite = renderer as SpriteRenderer;
+        return sprite != null && sprite.sprite != null
+            ? SpriteHeight(sprite.sprite) * Mathf.Abs(renderer.transform.lossyScale.y)
+            : 0f;
     }
 
     /// <summary>
@@ -2430,12 +2426,6 @@ internal static class ShopCrestSchema
 
         /// <summary>True once the silhouette bounds were logged for this schema.</summary>
         internal bool BoundsLogged { get; set; }
-
-        /// <summary>World Y of the silhouette sprite centre as built, before placement.</summary>
-        internal float BaseCentreY { get; set; }
-
-        /// <summary>World height of the silhouette sprite as built; zero when unmeasured.</summary>
-        internal float BaseHeight { get; set; }
     }
 
     /// <summary>
