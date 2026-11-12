@@ -35,6 +35,24 @@ public class ConfigRulesTests
         Assert.Equal(0.373f, ConfigRules.NormalizeDotSize(0.373f), 5);
     }
 
+    // Migration to the -0.16 default: the old -0.12 offset sat roughly 3-4% of the
+    // panel height above the wanted centre (D7, commit 1b406ef).
+    [Fact]
+    public void SchemaOffsetY_LegacyDefault_BecomesCurrentDefault()
+    {
+        Assert.Equal(-0.16f, ConfigRules.NormalizeSchemaOffsetY(-0.12f), 5);
+    }
+
+    [Theory]
+    [InlineData(-0.16f)]
+    [InlineData(-0.2f)]
+    [InlineData(0f)]
+    [InlineData(0.5f)]
+    public void SchemaOffsetY_OtherValue_IsKept(float raw)
+    {
+        Assert.Equal(raw, ConfigRules.NormalizeSchemaOffsetY(raw), 5);
+    }
+
     [Theory]
     [InlineData(0.11f)]
     [InlineData(0.174f)]
