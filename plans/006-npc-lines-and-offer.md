@@ -389,3 +389,18 @@ verify: pending
 - команды и точный вывод: —
 - замечания: план составлен по коду репозитория и декомпилу игры на 13.11.2026;
   наличие `NPCSpeakingAudio` и его таблицы у прислужницы из кода не видно — даёт T1.
+
+### 2026-11-13 — T2, T3: автотесты `Pure/OfferLines`, `Pure/OfferTalkFlow`
+
+- статус: `passed`
+- команды и точный вывод:
+  - `dotnet test CrestPicker.Tests -c Release` до правки тестов → `Пройден! : не пройдено 0, пройдено 126, всего 126`
+  - `dotnet test CrestPicker.Tests -c Release --filter "FullyQualifiedName~OfferLinesTests|FullyQualifiedName~OfferTalkFlowTests"` → `Пройден! : не пройдено 0, пройдено 13, всего 13`
+  - `dotnet test CrestPicker.Tests -c Release` после → `Пройден! : не пройдено 0, пройдено 139, всего 139`
+- тесты: `CrestPicker.Tests/OfferLinesTests.cs` (6), `CrestPicker.Tests/OfferTalkFlowTests.cs` (7)
+- замечания: режим `after` — реализация T2/T3 в `ccc972a` уже в HEAD, поэтому падение
+  «до фикса» не воспроизводимо без правки продуктового кода; тесты написаны по разделу 6
+  и по поведению из T2/T3. `TESTING.md` обновлён: таблица, счётчик 139, чек-лист цепочки
+  «молитва → фразы → окно». Коммит и push не выполнены: `git add` и `git commit` отклонены
+  правами (`Permission denied: shell`), нужен коммит от оркестратора.
+
