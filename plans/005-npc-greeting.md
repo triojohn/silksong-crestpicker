@@ -348,3 +348,12 @@ verify: pending
   прислужницы, привязка по сцене `Bonetown`), ключи `GreetEnabled/GreetRadius/
   GreetCooldown/GreetClip`, маркер `[GREET]`, FSM не трогается; сборка 0 предупреждений,
   тесты 126/126. Статус: сделано.
+- Диагностика обрыва клипа (вне списка задач): в `ChurchkeeperGreeting` окно волны
+  расширено до `clip.Duration + 1.0 с`; внутри окна каждый кадр пишется смена клипа
+  `[GREET] clip changed '<old>' -> '<new>' playing=<bool> t=<сек>`, подписка на
+  `Fsm.StateChanged` FSM `Conversation` даёт `[GREET] fsm 'Conversation' state
+  '<old>' -> '<new>'`, перед каждым нашим `Play` — `[GREET] play '<clip>'
+  (previous='<old>')`, один раз при привязке — `[GREET] actors: ...` (look animator,
+  sprite animator, все FSM с состояниями, trigger responder). Ничего не чинится,
+  только логи. Сборка 0 предупреждений, тесты 126/126, DLL скопирован в plugins.
+  Коммит `5ecbff0`. Статус: сделано.
