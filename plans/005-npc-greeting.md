@@ -398,3 +398,16 @@ verify: pending
   по-прежнему один раз на вход в радиус через `NPCSpeakingAudio.PlayVoice`.
   Сборка 0 предупреждений, тесты 126/126, DLL скопирован в plugins. Коммит `95440e6`.
   Статус: сделано.
+- Слышимое пение (вне списка задач): источник `CrestPicker Voice` переведён в 2D
+  (`spatialBlend=0`, `volume=1`, `priority=128`, `mute=false`, `bypassEffects=true`);
+  перед каждым `Play` — `enabled=true` и `Stop()`; после `Play` — лог `[GREET] sing
+  '<clip>' n=<номер> playing=<bool> time=<сек> isActive=<bool>`. Индекс чередования и
+  сквозной номер стали статическими полями класса и больше не сбрасываются в `BeginPray`
+  (объект прислужницы пересоздаётся со сценой, поэтому поле экземпляра начинало с нуля):
+  `_singIndex` ходит по кругу 0 -> 1 -> 0, `_singCount` растёт сквозь заходы.
+  `StopSing` вызывается только из `StopPray` и останавливает источник лишь при
+  `_voice.isPlaying`, поэтому `sing stopped` без реального пения не пишется. Если таблица
+  `CM_notice` не находится, оклик падает на клип `CM_startle_short_01`, затем
+  `CM_startle_04` через тот же источник (`[GREET] notice clip '<name>'`), иначе один раз
+  `[GREET] notice unavailable`. Сборка 0 предупреждений, тесты 126/126, DLL скопирован
+  в plugins. Коммит `bcc65f7`. Статус: сделано.
