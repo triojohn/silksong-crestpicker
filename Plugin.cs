@@ -57,6 +57,7 @@ public sealed class Plugin : BaseUnityPlugin
     private ConfigEntry<KeyboardShortcut> _shopDumpHotkey = null!;
     private ConfigEntry<KeyboardShortcut> _spriteDumpHotkey = null!;
     private ConfigEntry<KeyboardShortcut> _ownWindowHotkey = null!;
+    private ConfigEntry<KeyboardShortcut> _npcDumpHotkey = null!;
     private ConfigEntry<bool> _showCrestSchema = null!;
     private ConfigEntry<SchemaRenderMode> _schemaRender = null!;
     private ConfigEntry<float> _crestSchemaScale = null!;
@@ -106,6 +107,8 @@ public sealed class Plugin : BaseUnityPlugin
             "Клавиша дампа спрайтов гребней в PNG (C:\\Users\\trioj\\Downloads\\silksong_sprites)");
         _ownWindowHotkey = Config.Bind("General", "OwnWindowHotkey", new KeyboardShortcut(KeyCode.F7),
             "Клавиша спавна собственного окна магазина (клон префаба, ничего не открывает)");
+        _npcDumpHotkey = Config.Bind("General", "NpcDumpHotkey", new KeyboardShortcut(KeyCode.F5),
+            "Клавиша дампа прислужницы Bonetown (объекты, FSM, клипы, флаги)");
         _useLiveShop = Config.Bind("General", "UseLiveShop", true,
             "Показывать выбор знака в настоящем окне магазина (сток и позиция восстанавливаются)");
         _showCrestSchema = Config.Bind("General", "ShowCrestSchema", true,
@@ -237,6 +240,12 @@ public sealed class Plugin : BaseUnityPlugin
         {
             Log.LogInfo($"[OWN] Hotkey {_ownWindowHotkey.Value} pressed: spawn shop window clone.");
             OwnShopWindow.TrySpawn();
+        }
+
+        if (_npcDumpHotkey.Value.IsDown())
+        {
+            Log.LogInfo($"[NPC] Hotkey {_npcDumpHotkey.Value} pressed: churchkeeper dump.");
+            ChurchkeeperDiag.Dump();
         }
 
         if (_spriteDumpHotkey.Value.IsDown())
