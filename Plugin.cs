@@ -136,10 +136,10 @@ public sealed class Plugin : BaseUnityPlugin
         IncludeEquippedCrest = Config.Bind("General", "IncludeEquippedCrest", true,
             "Оставлять надетый знак в списке выбора. true — знак не вырезается, " +
             "false — прежнее поведение (надетый знак исключён). Читается на лету.");
-        IgnoreAlreadyOffered = Config.Bind("General", "IgnoreAlreadyOffered", true,
-            "Игнорировать отметку «уже предлагали в этом слоте» из state.json: true — " +
-            "цепочка срабатывает при каждом подходе (для тестов), false — строгое поведение. " +
-            "Читается на лету.");
+        IgnoreAlreadyOffered = Config.Bind("General", "IgnoreAlreadyOffered", false,
+            "Игнорировать отметку «уже предлагали в этом слоте» из state.json: false — " +
+            "предложение один раз на слот, true — цепочка срабатывает при каждом подходе " +
+            "(для тестов). Читается на лету.");
         _enableSnailChoice = Config.Bind("General", "EnableSnailChoice", true,
             "Предлагать выбор знака после диалога с прислужницей капеллы");
         _testHotkey = Config.Bind("General", "TestHotkey", new KeyboardShortcut(KeyCode.F9),
@@ -195,6 +195,12 @@ public sealed class Plugin : BaseUnityPlugin
         {
             GreetRadius.Value = 7f;
             Logger.LogInfo("[GREET] GreetRadius migrated 12 -> 7");
+        }
+
+        if (IgnoreAlreadyOffered.Value)
+        {
+            IgnoreAlreadyOffered.Value = false;
+            Logger.LogInfo("[CONFIG] IgnoreAlreadyOffered migrated true -> false");
         }
 
         if (!GreetEnabled.Value)
