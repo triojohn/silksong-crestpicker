@@ -30,7 +30,7 @@ BepInEx 5 плагин для Hollow Knight: Silksong (C#, .NET, Harmony) — с
 ## Сборка и проверка
 
 - `dotnet build -c Release` — сборка, требует `SilksongPath.props` с путём к установке игры (файл gitignored, шаблон `.example`).
-- `dotnet test CrestPicker.Tests` — 33 юнит-теста, только `Pure/`, без ссылок на DLL игры.
+- `dotnet test CrestPicker.Tests` — 126 юнит-тестов, только `Pure/`, без ссылок на DLL игры.
 - Правило: новая логика, которую можно проверить без движка, идёт в `Pure/` и покрывается тестом; живое поведение (сцены, PlayMaker, TMP, Harmony на живых объектах) тестом не покрывается — ручной чек-лист в `TESTING.md`.
 - Лог-маркеры для проверки в игре: `[CREST]`, `[SHOPFX]`, `[SHOP] purchase done` → `sent 'Close'` → `window closed`.
 
