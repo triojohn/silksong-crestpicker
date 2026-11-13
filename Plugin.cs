@@ -152,12 +152,12 @@ public sealed class Plugin : BaseUnityPlugin
             "Радиус приветствия прислужницы в мировых единицах. Читается на лету.");
         GreetCooldown = Config.Bind("General", "GreetCooldown", 12f,
             "Минимум секунд между приветствиями при повторном подходе. Читается на лету.");
-        GreetClip = Config.Bind("General", "GreetClip", "Bonking",
+        GreetClip = Config.Bind("General", "GreetClip", "Pray",
             "Клип аниматора прислужницы для волны. Читается на лету.");
-        if (GreetClip.Value == "Hail")
+        if (GreetClip.Value == "Bonking")
         {
-            GreetClip.Value = "Bonking";
-            Logger.LogInfo("[GREET] GreetClip migrated Hail -> Bonking");
+            GreetClip.Value = "Pray";
+            Logger.LogInfo("[GREET] GreetClip migrated Bonking -> Pray");
         }
 
         if (Mathf.Approximately(GreetRadius.Value, 7f))
