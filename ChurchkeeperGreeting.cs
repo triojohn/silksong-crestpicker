@@ -89,6 +89,7 @@ internal sealed class ChurchkeeperGreeting : MonoBehaviour
     private bool _noticed;
     private bool _lookOff;
     private bool _skipLogged;
+    private bool _noticeUnavailableLogged;
 
     private readonly OfferTalkFlow _flow = new();
     private CrestOfferSpeaker? _speaker;
@@ -509,11 +510,18 @@ internal sealed class ChurchkeeperGreeting : MonoBehaviour
     /// </summary>
     private void TryTalk()
     {
-        if (CrestOfferState.IsOffered(Plugin.CurrentSlotId()))
+        bool alreadyOffered = CrestOfferState.IsOffered(Plugin.CurrentSlotId());
+        bool ignoreOffered = Plugin.IgnoreAlreadyOffered.Value;
+        if (OfferTalkFlow.ShouldSkipTalk(alreadyOffered, ignoreOffered))
         {
             _flow.Abort();
             Plugin.RequestOffer();
             return;
+        }
+
+        if (alreadyOffered)
+        {
+            Plugin.Log.LogInfo("[TALK] alreadyOffered ignored=True");
         }
 
         if (!_flow.Begin())
@@ -709,7 +717,6 @@ internal sealed class ChurchkeeperGreeting : MonoBehaviour
             return;
         }
 
-        Missing(NoticeTableName);
         PlayNoticeClip();
     }
 
@@ -721,6 +728,7 @@ internal sealed class ChurchkeeperGreeting : MonoBehaviour
     {
         foreach (string name in NoticeClipNames)
         {
+            Plugin.Log.LogInfo($"[GREET] notice table missing, trying clip '{name}'");
             AudioClip? clip = FindAudio(name);
             if (clip == null || _voice == null)
             {
@@ -732,7 +740,13 @@ internal sealed class ChurchkeeperGreeting : MonoBehaviour
             return;
         }
 
-        Plugin.Log.LogWarning("[GREET] notice unavailable");
+        if (_noticeUnavailableLogged)
+        {
+            return;
+        }
+
+        _noticeUnavailableLogged = true;
+        Plugin.Log.LogWarning("[GREET] notice unavailable (no table, no clip)");
     }
 
     /// <summary>

@@ -416,3 +416,18 @@ verify: pending
   `state.json` уже стоит (`CrestOfferState.IsOffered` в `TryTalk`), то есть пункт 7
   чек-листа даёт «окна нет, фраз тоже нет» вместо «фразы есть».
 
+### 2026-11-13 — F03: `IgnoreAlreadyOffered` в `TryTalk` и лог оклика
+
+- статус: `not_run`
+- команды и точный вывод:
+  - `dotnet build -c Release` → `Сборка успешно завершена. Предупреждений: 0, Ошибок: 0`
+  - `dotnet test CrestPicker.Tests -c Release` → `Пройден! : не пройдено 0, пройдено 139, всего 139`
+- коммит: `fix(F03): honor ignore-offered in talk path`
+- замечания: ранний выход по `IsOffered` теперь только при `IgnoreAlreadyOffered=false`;
+  при `true` идут фразы и окно, в лог пишется `[TALK] alreadyOffered ignored=True`.
+  Решение вынесено в `OfferTalkFlow.ShouldSkipTalk` — тест нужен от `tester`.
+  Оклик: вместо `[GREET] sound missing 'CM_notice'` пишутся
+  `[GREET] notice table missing, trying clip '<name>'` и `[GREET] notice clip '<name>'`,
+  либо однократный `[GREET] notice unavailable (no table, no clip)`.
+
+

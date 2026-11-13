@@ -58,6 +58,16 @@ internal sealed class OfferTalkFlow
         Finished = true;
     }
 
+    /// <summary>
+    /// True when the talk must be skipped because the crest offer was already made and the
+    /// ignore-offered override is off. With the override on the talk runs anyway, so the
+    /// lines and the window can be tested on a slot whose flag is already set.
+    /// </summary>
+    internal static bool ShouldSkipTalk(bool alreadyOffered, bool ignoreAlreadyOffered)
+    {
+        return alreadyOffered && !ignoreAlreadyOffered;
+    }
+
     /// <summary>Returns to the initial state so the lines may run on the next approach.</summary>
     internal void Rearm()
     {
