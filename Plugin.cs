@@ -62,6 +62,15 @@ public sealed class Plugin : BaseUnityPlugin
     /// <summary>Every Nth repeat of the prayer clip the maid sings a line.</summary>
     internal static ConfigEntry<int> SingEveryLoops = null!;
 
+    /// <summary>First line the maid says before the crest offer; empty skips it.</summary>
+    internal static ConfigEntry<string> OfferLine1 = null!;
+
+    /// <summary>Second line the maid says before the crest offer; empty skips it.</summary>
+    internal static ConfigEntry<string> OfferLine2 = null!;
+
+    /// <summary>Third line the maid says before the crest offer; empty skips it.</summary>
+    internal static ConfigEntry<string> OfferLine3 = null!;
+
     /// <summary>When true, the picker offers every normal crest regardless of save state.</summary>
     internal static ConfigEntry<bool> IgnoreUnlockState = null!;
 
@@ -167,6 +176,15 @@ public sealed class Plugin : BaseUnityPlugin
         SingEveryLoops = Config.Bind("General", "SingEveryLoops", 2,
             "Каждый N-й повтор клипа молитвы прислужница поёт (CM_sing_01/02 по кругу). " +
             "1 — каждый повтор. Читается на лету.");
+        OfferLine1 = Config.Bind("General", "Line1", "You carry more than one crest, don't you?",
+            "Одна фраза прислужницы перед выбором знака (первая); пусто — фразы нет. " +
+            "Читается на лету.");
+        OfferLine2 = Config.Bind("General", "Line2", "The others remember what this shell has forgotten.",
+            "Одна фраза прислужницы перед выбором знака (вторая); пусто — фразы нет. " +
+            "Читается на лету.");
+        OfferLine3 = Config.Bind("General", "Line3", "Take one. Choose well.",
+            "Одна фраза прислужницы перед выбором знака (третья); пусто — фразы нет. " +
+            "Читается на лету.");
         if (GreetClip.Value == "Bonking")
         {
             GreetClip.Value = "Pray";
