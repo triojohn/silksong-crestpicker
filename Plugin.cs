@@ -121,15 +121,19 @@ public sealed class Plugin : BaseUnityPlugin
             "Клавиша спавна собственного окна магазина (клон префаба, ничего не открывает)");
         _npcDumpHotkey = Config.Bind("General", "NpcDumpHotkey", new KeyboardShortcut(KeyCode.F5),
             "Клавиша дампа прислужницы Bonetown (объекты, FSM, клипы, флаги)");
-        GreetEnabled = Config.Bind("General", "GreetEnabled", true,
+        GreetEnabled = Config.Bind("General", "GreetEnabled", false,
             "Прислужница машет и окликает Хорнет при подходе после первого разговора. " +
-            "Читается на лету.");
+            "По умолчанию выключено: ванильное поведение. Читается на лету.");
         GreetRadius = Config.Bind("General", "GreetRadius", 7f,
             "Радиус приветствия прислужницы в мировых единицах. Читается на лету.");
         GreetCooldown = Config.Bind("General", "GreetCooldown", 12f,
             "Минимум секунд между приветствиями при повторном подходе. Читается на лету.");
         GreetClip = Config.Bind("General", "GreetClip", "Hail",
             "Клип аниматора прислужницы для волны. Читается на лету.");
+        if (!GreetEnabled.Value)
+        {
+            Logger.LogInfo("[GREET] disabled by config");
+        }
         _useLiveShop = Config.Bind("General", "UseLiveShop", true,
             "Показывать выбор знака в настоящем окне магазина (сток и позиция восстанавливаются)");
         _showCrestSchema = Config.Bind("General", "ShowCrestSchema", true,

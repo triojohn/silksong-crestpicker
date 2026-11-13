@@ -106,6 +106,11 @@ internal sealed class ChurchkeeperGreeting : MonoBehaviour
     /// <summary>One frame: distance edge, gates, then the greeting itself.</summary>
     private void Step()
     {
+        if (!Plugin.GreetEnabled.Value)
+        {
+            return;
+        }
+
         HeroController? hero = HeroController.instance;
         if (hero == null)
         {
@@ -126,9 +131,9 @@ internal sealed class ChurchkeeperGreeting : MonoBehaviour
             return;
         }
 
-        if (!Plugin.EnableSnailChoice || !Plugin.GreetEnabled.Value)
+        if (!Plugin.EnableSnailChoice)
         {
-            Skip("disabled");
+            Skip("snail choice off");
             return;
         }
 
