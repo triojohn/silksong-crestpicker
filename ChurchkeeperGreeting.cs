@@ -51,6 +51,9 @@ internal sealed class ChurchkeeperGreeting : MonoBehaviour
     /// <summary>How many times a clip may be restarted if something overrides it.</summary>
     private const int MaxRestarts = 2;
 
+    /// <summary>Longest the lines may stay up before the flow is dropped as stuck.</summary>
+    private const float TalkTimeout = 60f;
+
     private static float _nextFind;
 
     private readonly Dictionary<string, AudioClip> _clips = new();
@@ -86,6 +89,10 @@ internal sealed class ChurchkeeperGreeting : MonoBehaviour
     private bool _noticed;
     private bool _lookOff;
     private bool _skipLogged;
+
+    private readonly OfferTalkFlow _flow = new();
+    private CrestOfferSpeaker? _speaker;
+    private float _talkStart;
 
     /// <summary>Finds the maid in Bonetown and attaches the greeting once. Never throws.</summary>
     internal static void Tick()
@@ -247,6 +254,7 @@ internal sealed class ChurchkeeperGreeting : MonoBehaviour
         {
             HookFsm();
             Watch();
+            WatchTalk();
             Step();
         }
         catch (Exception ex)
@@ -333,13 +341,14 @@ internal sealed class ChurchkeeperGreeting : MonoBehaviour
         {
             _noticed = false;
             _skipLogged = false;
+            _flow.Rearm();
         }
 
         if (!CanPray(distance, dialogue, out string reason))
         {
             if (_praying)
             {
-                StopPray(dialogue ? "dialogue" : "far");
+                StopPray(dialogue ? "dialogue" : reason);
             }
 
             if (distance <= radius)
@@ -358,7 +367,7 @@ internal sealed class ChurchkeeperGreeting : MonoBehaviour
     }
 
     /// <summary>True while the prayer may run: hero near, no talk, no menu, chain still pending.</summary>
-    private static bool CanPray(float distance, bool dialogue, out string reason)
+    private bool CanPray(float distance, bool dialogue, out string reason)
     {
         if (!Plugin.GreetEnabled.Value)
         {
@@ -369,6 +378,12 @@ internal sealed class ChurchkeeperGreeting : MonoBehaviour
         if (distance > Plugin.GreetRadius.Value)
         {
             reason = "far";
+            return false;
+        }
+
+        if (_flow.Talking)
+        {
+            reason = "talk";
             return false;
         }
 
@@ -471,6 +486,11 @@ internal sealed class ChurchkeeperGreeting : MonoBehaviour
             }
 
             yield return PlayAndWait(clip, _loopCount == 1);
+
+            if (_loopCount == 1)
+            {
+                TryTalk();
+            }
         }
     }
 
@@ -481,6 +501,76 @@ internal sealed class ChurchkeeperGreeting : MonoBehaviour
         ReleaseIdle();
         StopSing();
         Plugin.Log.LogInfo($"[GREET] pray stopped (reason={reason})");
+    }
+
+    /// <summary>
+    /// Speaks the configured lines once per approach. Nothing to say, a missing speaker or an
+    /// already used offer falls through to <see cref="Plugin.RequestOffer"/> at once.
+    /// </summary>
+    private void TryTalk()
+    {
+        if (CrestOfferState.IsOffered(Plugin.CurrentSlotId()))
+        {
+            _flow.Abort();
+            Plugin.RequestOffer();
+            return;
+        }
+
+        if (!_flow.Begin())
+        {
+            return;
+        }
+
+        _talkStart = Time.unscaledTime;
+        _speaker ??= CrestOfferSpeaker.Attach(gameObject);
+
+        string text = OfferLines.Compose(new[]
+        {
+            Plugin.OfferLine1.Value,
+            Plugin.OfferLine2.Value,
+            Plugin.OfferLine3.Value,
+        });
+
+        if (_speaker == null || !_speaker.Say(text, OnTalkFinished, OnTalkFinished))
+        {
+            _flow.End();
+            Plugin.RequestOffer();
+        }
+    }
+
+    /// <summary>The lines are over: asks for the picker once, whichever callback reported it.</summary>
+    private void OnTalkFinished()
+    {
+        if (_flow.End())
+        {
+            Plugin.RequestOffer();
+        }
+    }
+
+    /// <summary>Drops a talk whose callbacks will not come: the speaker is gone or the window is stuck.</summary>
+    private void WatchTalk()
+    {
+        if (!_flow.Talking)
+        {
+            return;
+        }
+
+        if (_speaker == null || _speaker.gameObject == null)
+        {
+            AbortTalk("speaker gone");
+            return;
+        }
+
+        if (Time.unscaledTime - _talkStart > TalkTimeout)
+        {
+            AbortTalk("timeout");
+        }
+    }
+
+    private void AbortTalk(string reason)
+    {
+        _flow.Abort();
+        Plugin.Log.LogWarning($"[TALK] aborted: {reason}");
     }
 
     /// <summary>Plays one clip, restarts it if something overrides it, and waits for its end.</summary>
