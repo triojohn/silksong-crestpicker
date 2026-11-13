@@ -1,5 +1,6 @@
 using System;
 using System.Collections;
+using System.Text;
 using CrestPicker.Pure;
 using UnityEngine;
 using UnityEngine.SceneManagement;
@@ -21,7 +22,7 @@ internal sealed class ChurchkeeperGreeting : MonoBehaviour
     private const float FindInterval = 1f;
 
     /// <summary>Last greet time used before the first greeting, so the cooldown never blocks it.</summary>
-    private const float NeverGreeted = -9999f;
+    private const float NeverGreeted = float.NegativeInfinity;
 
     /// <summary>Longest wait for the look animator's own turn clip before the wave starts.</summary>
     private const float TurnSettle = 0.15f;
@@ -36,7 +37,7 @@ internal sealed class ChurchkeeperGreeting : MonoBehaviour
     private RandomAudioClipTable? _voice;
     private PlayMakerNPC? _npc;
     private bool _armed = true;
-    private float _lastGreet = NeverGreeted;
+    private float _lastGreetTime = NeverGreeted;
     private Coroutine? _wave;
     private bool _skipLogged;
     private bool _voiceMissingLogged;
@@ -98,6 +99,49 @@ internal sealed class ChurchkeeperGreeting : MonoBehaviour
         _animator = GetComponent<tk2dSpriteAnimator>();
         NPCSpeakingAudio? audio = GetComponent<NPCSpeakingAudio>();
         _voice = audio != null ? audio.Table : null;
+        DumpClipEvents();
+    }
+
+    /// <summary>Logs every animator clip with its duration and the frames that carry events, once on attach.</summary>
+    private void DumpClipEvents()
+    {
+        tk2dSpriteAnimation? library = _animator != null ? _animator.Library : null;
+        if (library == null || library.clips == null)
+        {
+            Plugin.Log.LogInfo("[GREET] clips unavailable");
+            return;
+        }
+
+        foreach (tk2dSpriteAnimationClip clip in library.clips)
+        {
+            if (clip == null || clip.frames == null)
+            {
+                continue;
+            }
+
+            StringBuilder line = new StringBuilder();
+            int events = 0;
+            for (int i = 0; i < clip.frames.Length; i++)
+            {
+                tk2dSpriteAnimationFrame? frame = clip.frames[i];
+                if (frame == null)
+                {
+                    continue;
+                }
+
+                string info = frame.eventInfo ?? string.Empty;
+                if (info.Length == 0 && frame.eventInt == 0 && frame.eventFloat == 0f)
+                {
+                    continue;
+                }
+
+                events++;
+                line.Append($" frame={i} info='{info}' int={frame.eventInt} float={frame.eventFloat}");
+            }
+
+            string header = $"[GREET] clip '{clip.name}' dur={clip.Duration:F2}";
+            Plugin.Log.LogInfo(events == 0 ? $"{header} events: none" : $"{header} events: {events}{line}");
+        }
     }
 
     private void Update()
@@ -160,14 +204,14 @@ internal sealed class ChurchkeeperGreeting : MonoBehaviour
         PlayerData? data = PlayerData.instance;
         bool introDone = data != null && data.churchKeeperIntro;
         bool talking = _npc != null && _npc.IsRunningDialogue;
-        float since = Time.unscaledTime - _lastGreet;
+        float elapsed = Time.unscaledTime - _lastGreetTime;
+        float cooldown = Plugin.GreetCooldown.Value;
 
-        if (!GreetingPolicy.ShouldGreet(armed, distance, enterRadius, introDone, talking, since,
-                Plugin.GreetCooldown.Value))
+        if (!GreetingPolicy.ShouldGreet(armed, distance, enterRadius, introDone, talking, elapsed, cooldown))
         {
             Skip(!introDone ? "intro not done"
                 : talking ? "dialogue running"
-                : $"cooldown {since:F1}s");
+                : $"cooldown {cooldown - elapsed:F1}s (elapsed={elapsed:F1}s, need={cooldown:F1}s)");
             return;
         }
 
@@ -183,7 +227,7 @@ internal sealed class ChurchkeeperGreeting : MonoBehaviour
             return;
         }
 
-        _lastGreet = Time.unscaledTime;
+        _lastGreetTime = Time.unscaledTime;
         _skipLogged = false;
 
         string clipName = Plugin.GreetClip.Value;
