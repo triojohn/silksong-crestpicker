@@ -375,3 +375,16 @@ verify: pending
   (`[GREET] voice table='<name>' ...`) и `[GREET] voice played table='<name>'` после
   `PlayVoice`. Добавлена ссылка на `UnityEngine.AudioModule`. Сборка 0 предупреждений,
   тесты 126/126, DLL скопирован в plugins. Коммит `059eac8`. Статус: сделано.
+- Непрерывная молитва (вне списка задач): `ChurchkeeperGreeting` держит петлю `GreetClip`,
+  пока герой в `GreetRadius`, цепочка `OfferGateRuntime.ShouldRunChain()` не закрыта,
+  `PlayMakerNPC.IsRunningDialogue == false` и меню не открыто; `tk2dLookAnimNPC` деактивирован
+  всю молитву, по выходу за радиус или началу диалога — `Activate()` и
+  `[GREET] pray stopped (reason=dialogue|far)`. `GreetClipEnd` в цикле не играется (ключ
+  оставлен для старых конфигов); `GreetCooldown` и `GreetingPolicy.ShouldRepeat` удалены
+  как неиспользуемые. Звуки: `CM_notice` один раз при входе в радиус через
+  `NPCSpeakingAudio.PlayVoice`; каждые `SingEveryLoops` (2) повторов клипа —
+  `CM_sing_01`/`CM_sing_02` по кругу через `AudioSource.PlayOneShot`, при отсутствии клипа —
+  таблица `CM_sing`. Логи `[GREET] pray start (dist=…)`, `[GREET] notice sound`,
+  `[GREET] sing '<clip>'`, `[GREET] sound missing '<name>'` (однократно). `DumpAudio` —
+  только на первом цикле входа. Сборка 0 предупреждений, тесты 126/126, DLL скопирован
+  в plugins. Коммит `6aeb52b`. Статус: сделано.
