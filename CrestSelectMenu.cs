@@ -85,7 +85,7 @@ internal sealed class CrestSelectMenu : MonoBehaviour
         try
         {
             List<ToolCrest> crests =
-                CrestPickerService.GetSelectableCrests(waitForSaves: fromDialogue, out bool waiting);
+                CrestPickerService.GetSelectableCrests(out bool waiting, out CrestPoolEmpty empty);
             if (crests.Count == 0)
             {
                 if (waiting)
@@ -93,7 +93,7 @@ internal sealed class CrestSelectMenu : MonoBehaviour
                     return OpenResult.Waiting;
                 }
 
-                if (fromDialogue && CrestPickerService.PoolMode == CrestPoolMode.FromSaves)
+                if (empty == CrestPoolEmpty.AllNormalsUnlockedHere)
                 {
                     Plugin.Log.LogInfo(
                         "[POOL] offer ended: all normal crests unlocked here" +

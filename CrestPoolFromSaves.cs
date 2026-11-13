@@ -187,7 +187,7 @@ internal static class CrestPoolFromSaves
         }
 
         int crests = 0;
-        string error = "none";
+        string? error = null;
         try
         {
             string json = GameManager.GetJsonForSaveBytesStatic(bytes);
@@ -224,17 +224,20 @@ internal static class CrestPoolFromSaves
         Plugin.Log.LogWarning($"[POOL] read failed: {reason}");
     }
 
-    /// <summary>One line per slot: how many crests it added and what went wrong, if anything.</summary>
-    private static void LogSlot(int slot, int crests, string error)
+    /// <summary>One line per slot: the crests it added, or why the slot was skipped.</summary>
+    private static void LogSlot(int slot, int crests, string? error)
     {
-        string line = $"[POOL] slot {slot}: crests={crests} err={error}";
-        if (error == "none" || error == "empty")
+        if (error == null)
         {
-            Plugin.Log.LogInfo(line);
+            Plugin.Log.LogInfo($"[POOL] slot {slot}: ok crests={crests}");
+        }
+        else if (error == "empty")
+        {
+            Plugin.Log.LogInfo($"[POOL] slot {slot}: empty");
         }
         else
         {
-            Plugin.Log.LogWarning(line);
+            Plugin.Log.LogWarning($"[POOL] slot {slot}: err={error}");
         }
     }
 

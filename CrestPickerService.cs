@@ -20,22 +20,20 @@ internal static class CrestPickerService
     /// <summary>
     /// Returns the crests the player may pick: base versions that are not hidden.
     /// <see cref="CrestPoolMode.FromSaves"/> builds the pool from crests unlocked in the
-    /// other save slots, and reports <paramref name="waiting"/> instead of falling back to
-    /// every crest while those slots are still being read. The other modes keep the config
-    /// rules: unlock state is ignored while <c>IgnoreUnlockState</c> is true, and
-    /// <see cref="CrestPoolMode.Unlocked"/> limits the pool to unlocked crests.
-    /// The currently equipped crest is excluded only while <c>IncludeEquippedCrest</c>
-    /// is false.
+    /// other save slots, starting that read on first use, and reports
+    /// <paramref name="waiting"/> instead of falling back to every crest while those slots
+    /// are still being read. The other modes keep the config rules: unlock state is ignored
+    /// while <c>IgnoreUnlockState</c> is true, and <see cref="CrestPoolMode.Unlocked"/> limits
+    /// the pool to unlocked crests. The currently equipped crest is excluded only while
+    /// <c>IncludeEquippedCrest</c> is false.
     /// </summary>
-    /// <param name="waitForSaves">
-    /// True for the dialogue offer: an unfinished read defers the pool instead of falling back.
-    /// False for direct opens (the test hotkey), which fall back to every normal crest.
-    /// </param>
     /// <param name="waiting">True when the cross-save read has not finished; the list is empty.</param>
+    /// <param name="empty">Why the cross-save pool has no crests, if it has none.</param>
     /// <returns>Selectable crests in crest-list order; empty on failure or while waiting.</returns>
-    internal static List<ToolCrest> GetSelectableCrests(bool waitForSaves, out bool waiting)
+    internal static List<ToolCrest> GetSelectableCrests(out bool waiting, out CrestPoolEmpty empty)
     {
         waiting = false;
+        empty = CrestPoolEmpty.None;
         try
         {
             bool includeEquipped = Plugin.IncludeEquippedCrest.Value;
@@ -58,7 +56,14 @@ internal static class CrestPickerService
             if (PoolMode == CrestPoolMode.FromSaves)
             {
                 CrestPoolFromSaves.LoadState state = CrestPoolFromSaves.State;
-                if (state == CrestPoolFromSaves.LoadState.Loading && waitForSaves)
+                if (state == CrestPoolFromSaves.LoadState.Idle)
+                {
+                    // First need for the pool this session: start the read instead of falling back.
+                    CrestPoolFromSaves.Begin(Plugin.CurrentSlotId());
+                    state = CrestPoolFromSaves.State;
+                }
+
+                if (state == CrestPoolFromSaves.LoadState.Loading)
                 {
                     waiting = true;
                     Plugin.Log.LogInfo($"[POOL] waiting slots={CrestPoolFromSaves.SlotsRead}");
@@ -74,7 +79,8 @@ internal static class CrestPickerService
                 }
                 else
                 {
-                    // No saves to read: the pool is built as if no other slot owns anything.
+                    // The read gave up (timeout or broken platform): build the pool as if no
+                    // other slot owns anything, which yields every normal crest.
                     Plugin.Log.LogInfo(
                         $"[POOL] fallback all-normals reason={state.ToString().ToLowerInvariant()}");
                     slots = Array.Empty<IEnumerable<string>>();
@@ -83,6 +89,7 @@ internal static class CrestPickerService
 
                 CrestPoolSelection selection = CrossSavePool.Build(facts, slots, includeEquipped);
                 selected = selection.Crests;
+                empty = selection.Empty;
                 Plugin.Log.LogInfo(
                     $"[POOL] source=saves elsewhere={elsewhere} here={selection.UnlockedHere}" +
                     $" pool={selected.Count} reason={ReasonName(selection.Empty)}" +

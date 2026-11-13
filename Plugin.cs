@@ -76,6 +76,7 @@ public sealed class Plugin : BaseUnityPlugin
     private bool _loggedAlive;
 
     private static float _offerDeadline;
+    private static bool _offerFromDialogue;
 
     private void Awake()
     {
@@ -252,7 +253,7 @@ public sealed class Plugin : BaseUnityPlugin
         if (_testHotkey.Value.IsDown())
         {
             Log.LogInfo($"[CREST] Hotkey {_testHotkey.Value} pressed.");
-            CrestSelectMenu.TryOpen();
+            QueueOpen(fromDialogue: false);
         }
     }
 
@@ -288,14 +289,25 @@ public sealed class Plugin : BaseUnityPlugin
                 return;
             }
 
-            CrestPoolFromSaves.Begin(slot);
-            _offerDeadline = Time.unscaledTime + OfferGrace;
+            QueueOpen(fromDialogue: true);
             Log.LogInfo($"[CREST] Offer requested for slot {slot}.");
         }
         catch (Exception ex)
         {
             Log.LogError($"[CREST] RequestOffer failed: {ex}");
         }
+    }
+
+    /// <summary>
+    /// Defers an open until the cross-save pool is settled: the read is started here so the
+    /// window never opens on the all-normals fallback while the slots are still loading.
+    /// </summary>
+    /// <param name="fromDialogue">True when the maid dialogue asked for the picker.</param>
+    private static void QueueOpen(bool fromDialogue)
+    {
+        CrestPoolFromSaves.Begin(CurrentSlotId());
+        _offerFromDialogue = fromDialogue;
+        _offerDeadline = Time.unscaledTime + OfferGrace;
     }
 
     /// <summary>Opens a pending offer once the game is playable; drops it after a grace period.</summary>
@@ -320,7 +332,7 @@ public sealed class Plugin : BaseUnityPlugin
 
         if (IsInGame())
         {
-            switch (CrestSelectMenu.TryOpen(fromDialogue: true))
+            switch (CrestSelectMenu.TryOpen(fromDialogue: _offerFromDialogue))
             {
                 case CrestSelectMenu.OpenResult.Opened:
                     _offerDeadline = 0f;

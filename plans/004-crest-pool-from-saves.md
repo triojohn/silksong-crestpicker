@@ -408,3 +408,13 @@ verify: pending
 - Статус: `passed` — чек-лист и счётчик тестов совпадают с кодом на HEAD `368833f`;
   живое поведение слотов, таймаут и отказ от меню проверяются вручную по разделу 2.
 
+### 2026-11-13 — D12: старт чтения по требованию
+
+- Причина: `Begin` вызывался только из диалогового оффера, `F9` шёл сразу в `GetSelectableCrests` при `State == Idle`, поэтому чтение не запускалось и пул молча заменялся на «все нормальные» (`fallback all-normals reason=idle`).
+- `CrestPickerService.GetSelectableCrests(out bool waiting, out CrestPoolEmpty empty)` — при `FromSaves` и `Idle` стартует `CrestPoolFromSaves.Begin(CurrentSlotId())`; `Loading` даёт `waiting` для обоих входов (диалог и `F9`); фолбэк «все нормальные» остался только для `Failed`; причина пустого пула отдаётся наружу (`empty`).
+- `Plugin.QueueOpen(fromDialogue)` — общая точка входа для `F9` и `RequestOffer`: стартует чтение и откладывает окно до `OfferGrace`; `UpdatePendingOffer` открывает с `_offerFromDialogue` и не открывает, пока `Loading`.
+- `CrestSelectMenu.TryOpen` — окно не открывается при `AllNormalsUnlockedHere`, печатается `[POOL] offer ended: all normal crests unlocked here (slot N)`; причина берётся из `CrossSavePool`, а не угадывается по пустому списку.
+- Логи слотов: `[POOL] slot N: ok crests=M`, `[POOL] slot N: empty`, `[POOL] slot N: err=<текст>`; итог `[POOL] read done slots=N unique=M ms=…`. Правила `Pure/CrossSavePool.cs` не менялись.
+- Проверка: `dotnet build -c Release` — 0 предупреждений, 0 ошибок; `dotnet test CrestPicker.Tests` — 126/126; DLL скопирован в `BepInEx/plugins` (SHA256 `9E3A08945CAE0FCB675FF579F6A25656DFF019B267749E42F346E59931F6075D`). Код — коммит с сообщением `fix(D12): start pool read on demand, wait on F9`.
+- Статус: `not_run` — живое чтение слотов и поведение окна проверяются вручную (раздел 2 `TESTING.md`).
+
