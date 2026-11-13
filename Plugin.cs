@@ -148,12 +148,24 @@ public sealed class Plugin : BaseUnityPlugin
             "Общий выключатель цепочки прислужницы: машет и окликает Хорнет при подходе, " +
             "если мод нашёл в сейвах больше гребней, чем открыто в текущем прохождении. " +
             "По умолчанию включено. Читается на лету.");
-        GreetRadius = Config.Bind("General", "GreetRadius", 7f,
+        GreetRadius = Config.Bind("General", "GreetRadius", 12f,
             "Радиус приветствия прислужницы в мировых единицах. Читается на лету.");
         GreetCooldown = Config.Bind("General", "GreetCooldown", 12f,
             "Минимум секунд между приветствиями при повторном подходе. Читается на лету.");
-        GreetClip = Config.Bind("General", "GreetClip", "Hail",
+        GreetClip = Config.Bind("General", "GreetClip", "Bonking",
             "Клип аниматора прислужницы для волны. Читается на лету.");
+        if (GreetClip.Value == "Hail")
+        {
+            GreetClip.Value = "Bonking";
+            Logger.LogInfo("[GREET] GreetClip migrated Hail -> Bonking");
+        }
+
+        if (Mathf.Approximately(GreetRadius.Value, 7f))
+        {
+            GreetRadius.Value = 12f;
+            Logger.LogInfo("[GREET] GreetRadius migrated 7 -> 12");
+        }
+
         if (!GreetEnabled.Value)
         {
             Logger.LogInfo("[GREET] disabled by config");

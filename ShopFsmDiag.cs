@@ -42,6 +42,9 @@ internal static class ShopFsmDiag
     /// <summary>Last state per FSM instance id.</summary>
     private static readonly Dictionary<int, string> _lastStates = new();
 
+    /// <summary>Identity keys already written for the scanned clone.</summary>
+    private static readonly HashSet<string> _loggedIdentity = new();
+
     /// <summary>Frame of the last full rescan.</summary>
     private static int _scanFrame = -ScanInterval;
 
@@ -148,6 +151,11 @@ internal static class ShopFsmDiag
     private static void Rescan(int windowId)
     {
         _scanFrame = Time.frameCount;
+        if (windowId != _scanWindowId)
+        {
+            _loggedIdentity.Clear();
+        }
+
         _scanWindowId = windowId;
         _fsms.Clear();
         foreach (PlayMakerFSM fsm in UnityEngine.Object.FindObjectsByType<PlayMakerFSM>(
@@ -163,12 +171,12 @@ internal static class ShopFsmDiag
     }
 
     /// <summary>
-    /// Writes one identity line per FSM on every rescan: the shared <c>Fsm</c> object shows up
-    /// as the same <c>fsmHash</c> under two paths. Duplicates of a path/hash pair are skipped.
+    /// Writes one identity line per FSM and state: the shared <c>Fsm</c> object shows up
+    /// as the same <c>fsmHash</c> under two paths. A key already written for the scanned
+    /// clone is skipped, so the line appears once per state change, not every rescan.
     /// </summary>
     private static void NoteIdentity()
     {
-        HashSet<string> seen = new();
         foreach (PlayMakerFSM fsm in _fsms)
         {
             if (fsm == null)
@@ -178,7 +186,8 @@ internal static class ShopFsmDiag
 
             string path = OwnShopWindow.PathOf(fsm.transform);
             int hash = fsm.Fsm != null ? RuntimeHelpers.GetHashCode(fsm.Fsm) : 0;
-            if (!seen.Add($"{path}|{hash}"))
+            string state = fsm.ActiveStateName ?? string.Empty;
+            if (!_loggedIdentity.Add($"{path}|{hash}|{state}"))
             {
                 continue;
             }
@@ -186,7 +195,7 @@ internal static class ShopFsmDiag
             bool ours = IsOurs(fsm);
             string template = fsm.FsmTemplate != null ? fsm.FsmTemplate.name : "-";
             Plugin.Log.LogInfo($"[SHOPFSM] identity path='{path}' ours={(ours ? "true" : "false")}" +
-                $" fsmHash={hash} template='{template}' fsmId={FsmId(fsm)}");
+                $" fsmHash={hash} template='{template}' fsmId={FsmId(fsm)} state='{state}'");
         }
     }
 
