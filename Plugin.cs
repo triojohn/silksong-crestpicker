@@ -62,6 +62,12 @@ public sealed class Plugin : BaseUnityPlugin
     /// <summary>When true, the currently equipped crest stays in the picker list.</summary>
     internal static ConfigEntry<bool> IncludeEquippedCrest = null!;
 
+    /// <summary>
+    /// When true, the chain runs even if the offer was already used in this save slot;
+    /// the flag from <c>state.json</c> is ignored. For testing.
+    /// </summary>
+    internal static ConfigEntry<bool> IgnoreAlreadyOffered = null!;
+
     /// <summary>Seconds to wait for a playable state before dropping an offer.</summary>
     private const float OfferGrace = 2f;
 
@@ -115,6 +121,10 @@ public sealed class Plugin : BaseUnityPlugin
         IncludeEquippedCrest = Config.Bind("General", "IncludeEquippedCrest", true,
             "Оставлять надетый знак в списке выбора. true — знак не вырезается, " +
             "false — прежнее поведение (надетый знак исключён). Читается на лету.");
+        IgnoreAlreadyOffered = Config.Bind("General", "IgnoreAlreadyOffered", true,
+            "Игнорировать отметку «уже предлагали в этом слоте» из state.json: true — " +
+            "цепочка срабатывает при каждом подходе (для тестов), false — строгое поведение. " +
+            "Читается на лету.");
         _enableSnailChoice = Config.Bind("General", "EnableSnailChoice", true,
             "Предлагать выбор знака после диалога с прислужницей капеллы");
         _testHotkey = Config.Bind("General", "TestHotkey", new KeyboardShortcut(KeyCode.F9),

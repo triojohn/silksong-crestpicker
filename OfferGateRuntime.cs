@@ -42,12 +42,14 @@ internal static class OfferGateRuntime
         PlayerData? data = PlayerData.instance;
         bool introDone = data != null && data.churchKeeperIntro;
         bool offered = slot >= 0 && CrestOfferState.IsOffered(slot);
-        OfferGateReason reason = OfferGate.Reason(saveCrests, unlockedHere, introDone, offered);
+        bool ignoreOffered = Plugin.IgnoreAlreadyOffered.Value;
+        OfferGateReason reason = OfferGate.Reason(saveCrests, unlockedHere, introDone,
+            offered && !ignoreOffered);
         if (reason == OfferGateReason.Ok)
         {
             Plugin.Log.LogInfo(
                 $"[GATE] chain enabled saveCrests={saveCrests} unlockedHere={unlockedHere}" +
-                $" reason={reason}");
+                $" reason={reason} alreadyOffered ignored={ignoreOffered}");
         }
         else
         {
