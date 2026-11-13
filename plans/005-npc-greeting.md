@@ -388,3 +388,13 @@ verify: pending
   `[GREET] sing '<clip>'`, `[GREET] sound missing '<name>'` (однократно). `DumpAudio` —
   только на первом цикле входа. Сборка 0 предупреждений, тесты 126/126, DLL скопирован
   в plugins. Коммит `6aeb52b`. Статус: сделано.
+- Единый источник голоса (вне списка задач): `AudioSource.PlayOneShot` на чужом источнике
+  не останавливается, поэтому пение копилось и звучало поверх себя. `ChurchkeeperGreeting`
+  создаёт один раз в `Awake` дочерний объект `CrestPicker Voice` с `AudioSource`
+  (`playOnAwake=false`, `loop=false`, `spatialBlend=1`); пение идёт только через него
+  (`clip` -> `Stop` -> `Play`), при `_voice.isPlaying` новая строка не начинается;
+  `CM_sing_01`/`CM_sing_02` чередуются по `_singIndex`, лог `[GREET] sing '<clip>' n=<номер>`;
+  по `pray stopped` любой причины — `Stop()` и `[GREET] sing stopped`. `CM_notice`
+  по-прежнему один раз на вход в радиус через `NPCSpeakingAudio.PlayVoice`.
+  Сборка 0 предупреждений, тесты 126/126, DLL скопирован в plugins. Коммит `95440e6`.
+  Статус: сделано.
