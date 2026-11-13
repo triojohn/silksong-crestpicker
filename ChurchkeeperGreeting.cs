@@ -27,8 +27,11 @@ internal sealed class ChurchkeeperGreeting : MonoBehaviour
     /// <summary>Longest wait for the look animator's own turn clip before the wave starts.</summary>
     private const float TurnSettle = 0.15f;
 
-    /// <summary>Extra time the look animator stays off after the wave clip ends.</summary>
-    private const float ClipTail = 0.1f;
+    /// <summary>Extra time after the wave clip ends, during which the clip is kept alive.</summary>
+    private const float ClipTail = 0.3f;
+
+    /// <summary>How many times the wave clip may be restarted if something overrides it.</summary>
+    private const int MaxRestarts = 2;
 
     private static float _nextFind;
 
@@ -258,7 +261,8 @@ internal sealed class ChurchkeeperGreeting : MonoBehaviour
 
     /// <summary>
     /// Turns to the hero, lets the look animator finish its own turn clip, then plays the wave
-    /// with the look animator disabled so nothing overrides the clip.
+    /// with the look animator deactivated so nothing overrides the clip. Deactivating the
+    /// component alone would not stop its running coroutines, hence the public call.
     /// </summary>
     private IEnumerator Wave(bool left, tk2dSpriteAnimationClip clip, float distance)
     {
@@ -282,23 +286,36 @@ internal sealed class ChurchkeeperGreeting : MonoBehaviour
 
         if (_look != null)
         {
-            _look.enabled = false;
+            _look.Deactivate();
         }
 
         _animator.Play(clip);
         Plugin.Log.LogInfo($"[GREET] wave (dist={distance:F1}, clip={clip.name})");
 
+        int restarts = 0;
         float until = Time.unscaledTime + clip.Duration + ClipTail;
-        while (_animator != null && _animator.Playing && IsPlaying(clip) && Time.unscaledTime < until)
+        while (_animator != null && Time.unscaledTime < until)
         {
+            tk2dSpriteAnimationClip? current = _animator.CurrentClip;
+            if (_animator.Playing && (current == null || current.name != clip.name))
+            {
+                if (restarts < MaxRestarts)
+                {
+                    restarts++;
+                    _animator.Play(clip);
+                    Plugin.Log.LogInfo($"[GREET] clip restarted (was='{current?.name ?? "none"}')");
+                }
+            }
+
             yield return null;
         }
 
         if (_look != null)
         {
-            _look.enabled = true;
+            _look.Activate();
         }
 
+        Plugin.Log.LogInfo($"[GREET] wave done restarts={restarts}");
         _wave = null;
     }
 
