@@ -6,43 +6,21 @@ namespace CrestPicker.Pure;
 internal static class GreetingPolicy
 {
     /// <summary>
-    /// Next arming state of the greeting edge: armed outside <paramref name="exitRadius"/>,
-    /// disarmed inside <paramref name="enterRadius"/>, unchanged in the band between them.
+    /// True when the hero stands inside the greeting radius and the cooldown since the
+    /// previous cycle has passed, so the maid repeats her gesture.
     /// </summary>
-    /// <param name="armed">The edge was ready to fire on the previous frame.</param>
     /// <param name="distance">Distance from the maid to the hero.</param>
-    /// <param name="enterRadius">Radius that fires the greeting.</param>
-    /// <param name="exitRadius">Radius the hero must leave by to re-arm the greeting.</param>
-    internal static bool ShouldArm(bool armed, float distance, float enterRadius, float exitRadius)
+    /// <param name="radius">Radius that keeps the greeting cycle running.</param>
+    /// <param name="elapsed">Seconds since the previous cycle started.</param>
+    /// <param name="cooldown">Minimum seconds between two cycles.</param>
+    internal static bool ShouldRepeat(float distance, float radius, float elapsed, float cooldown)
     {
-        if (distance > exitRadius)
-        {
-            return true;
-        }
-
-        return armed && distance > enterRadius;
-    }
-
-    /// <summary>
-    /// True when the hero has just entered the greeting radius, the first talk is over,
-    /// no dialogue runs and the cooldown since the previous greeting has passed.
-    /// </summary>
-    /// <param name="armed">The edge was ready to fire on the previous frame.</param>
-    /// <param name="distance">Distance from the maid to the hero.</param>
-    /// <param name="enterRadius">Radius that fires the greeting.</param>
-    /// <param name="introDone">The first conversation with the maid has happened.</param>
-    /// <param name="dialogueRunning">A dialogue is running right now.</param>
-    /// <param name="secondsSinceLastGreet">Seconds since the previous greeting.</param>
-    /// <param name="cooldown">Minimum seconds between two greetings.</param>
-    internal static bool ShouldGreet(bool armed, float distance, float enterRadius, bool introDone,
-        bool dialogueRunning, float secondsSinceLastGreet, float cooldown)
-    {
-        if (!introDone || dialogueRunning || !armed || distance > enterRadius)
+        if (distance > radius)
         {
             return false;
         }
 
-        return secondsSinceLastGreet >= cooldown;
+        return elapsed >= cooldown;
     }
 
     /// <summary>True when a target with this horizontal offset from the maid is on her left.</summary>

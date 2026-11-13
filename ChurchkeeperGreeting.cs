@@ -31,13 +31,10 @@ internal sealed class ChurchkeeperGreeting : MonoBehaviour
     /// <summary>Longest wait for the look animator's own turn clip before the wave starts.</summary>
     private const float TurnSettle = 0.15f;
 
-    /// <summary>
-    /// Extra time after the wave clip ends, during which the clip is kept alive and the
-    /// animator and the FSM are watched, so late switches still land in the log.
-    /// </summary>
+    /// <summary>Extra time after a clip ends during which the animator and the FSM are watched.</summary>
     private const float ClipTail = 1f;
 
-    /// <summary>How many times the wave clip may be restarted if something overrides it.</summary>
+    /// <summary>How many times a clip may be restarted if something overrides it.</summary>
     private const int MaxRestarts = 2;
 
     private static float _nextFind;
@@ -53,9 +50,10 @@ internal sealed class ChurchkeeperGreeting : MonoBehaviour
     private string? _lastClip;
     private float _diagStart;
     private float _diagUntil = float.NegativeInfinity;
-    private bool _armed = true;
     private float _lastGreetTime = NeverGreeted;
-    private Coroutine? _wave;
+    private bool _cycleRunning;
+    private int _cycleIndex;
+    private bool _lookOff;
     private bool _skipLogged;
     private bool _voiceMissingLogged;
 
@@ -289,31 +287,27 @@ internal sealed class ChurchkeeperGreeting : MonoBehaviour
         _animator?.Play(clip);
     }
 
-    /// <summary>One frame: distance edge, gates, then the greeting itself.</summary>
+    /// <summary>One frame: leaves the greeting zone, then decides whether a cycle is due.</summary>
     private void Step()
     {
-        if (!Plugin.GreetEnabled.Value)
+        if (!DistanceToHero(out float distance, out float dx))
         {
             return;
         }
 
-        HeroController? hero = HeroController.instance;
-        if (hero == null)
-        {
-            _armed = true;
-            return;
-        }
+        float radius = Plugin.GreetRadius.Value;
+        float exitRadius = Mathf.Max(radius, Plugin.GreetExitRadius.Value);
 
-        Vector3 heroPos = hero.transform.position;
-        float dx = heroPos.x - transform.position.x;
-        float distance = Vector2.Distance(heroPos, transform.position);
-        float enterRadius = Plugin.GreetRadius.Value;
-        bool armed = _armed;
-        _armed = GreetingPolicy.ShouldArm(armed, distance, enterRadius, Plugin.GreetExitRadius.Value);
-
-        if (!armed)
+        if (!Plugin.GreetEnabled.Value || distance > exitRadius)
         {
+            _lastGreetTime = NeverGreeted;
             _skipLogged = false;
+            RestoreIdle(distance);
+            return;
+        }
+
+        if (_cycleRunning)
+        {
             return;
         }
 
@@ -335,49 +329,49 @@ internal sealed class ChurchkeeperGreeting : MonoBehaviour
         }
 
         PlayerData? data = PlayerData.instance;
-        bool introDone = data != null && data.churchKeeperIntro;
-        bool talking = _npc != null && _npc.IsRunningDialogue;
+        if (data == null || !data.churchKeeperIntro)
+        {
+            Skip("intro not done");
+            return;
+        }
+
+        if (_npc != null && _npc.IsRunningDialogue)
+        {
+            Skip("dialogue running");
+            return;
+        }
+
         float elapsed = Time.unscaledTime - _lastGreetTime;
         float cooldown = Plugin.GreetCooldown.Value;
-
-        if (!GreetingPolicy.ShouldGreet(armed, distance, enterRadius, introDone, talking, elapsed, cooldown))
+        if (!GreetingPolicy.ShouldRepeat(distance, radius, elapsed, cooldown))
         {
-            Skip(!introDone ? "intro not done"
-                : talking ? "dialogue running"
-                : $"cooldown {cooldown - elapsed:F1}s (elapsed={elapsed:F1}s, need={cooldown:F1}s)");
+            Skip($"cooldown {cooldown - elapsed:F1}s (elapsed={elapsed:F1}s, need={cooldown:F1}s)");
             return;
         }
 
-        Greet(dx, distance);
+        StartCycle(dx, distance);
     }
 
-    /// <summary>Turns to the hero, plays the wave clip and the voice.</summary>
-    private void Greet(float dx, float distance)
+    /// <summary>Turns to the hero, then plays the wave and its tail clip in the background.</summary>
+    private void StartCycle(float dx, float distance)
     {
-        if (_wave != null)
-        {
-            Plugin.Log.LogInfo("[GREET] skipped: wave in progress");
-            return;
-        }
-
         _lastGreetTime = Time.unscaledTime;
         _skipLogged = false;
         FindFsm();
 
-        string clipName = Plugin.GreetClip.Value;
-        tk2dSpriteAnimationClip? clip = _animator != null ? _animator.GetClipByName(clipName) : null;
+        tk2dSpriteAnimationClip? clip = FindClip(Plugin.GreetClip.Value);
         if (clip == null)
         {
-            Plugin.Log.LogWarning($"[GREET] skipped: clip '{clipName}' not found");
+            Plugin.Log.LogWarning($"[GREET] skipped: clip '{Plugin.GreetClip.Value}' not found");
+            return;
         }
-        else if (IsPlaying(clip))
-        {
-            Plugin.Log.LogInfo($"[GREET] wave (dist={distance:F1}, clip={clip.name}, already playing)");
-        }
-        else
-        {
-            _wave = StartCoroutine(Wave(GreetingPolicy.FacingLeft(dx), clip, distance));
-        }
+
+        tk2dSpriteAnimationClip? end = FindClip(Plugin.GreetClipEnd.Value);
+        _cycleIndex++;
+        Plugin.Log.LogInfo(
+            $"[GREET] cycle (dist={distance:F1}, clip={clip.name} -> {end?.name ?? "none"}, n={_cycleIndex})");
+        _cycleRunning = true;
+        StartCoroutine(Cycle(GreetingPolicy.FacingLeft(dx), clip, end));
 
         if (_voice != null)
         {
@@ -391,11 +385,12 @@ internal sealed class ChurchkeeperGreeting : MonoBehaviour
     }
 
     /// <summary>
-    /// Turns to the hero, lets the look animator finish its own turn clip, then plays the wave
-    /// with the look animator deactivated so nothing overrides the clip. Deactivating the
-    /// component alone would not stop its running coroutines, hence the public call.
+    /// Turns to the hero, lets the look animator finish its own turn clip, then holds the look
+    /// animator off while the wave and its tail clip play, so nothing falls back to Idle
+    /// between them. Deactivating the component alone would not stop its running coroutines,
+    /// hence the public call.
     /// </summary>
-    private IEnumerator Wave(bool left, tk2dSpriteAnimationClip clip, float distance)
+    private IEnumerator Cycle(bool left, tk2dSpriteAnimationClip clip, tk2dSpriteAnimationClip? end)
     {
         if (_look != null)
         {
@@ -409,23 +404,37 @@ internal sealed class ChurchkeeperGreeting : MonoBehaviour
             yield return null;
         }
 
-        if (_animator == null || IsPlaying(clip))
+        if (_animator == null)
         {
-            _wave = null;
+            _cycleRunning = false;
             yield break;
         }
 
-        if (_look != null)
+        HoldIdle();
+
+        yield return PlayAndWait(clip);
+        if (end != null && end.name != clip.name)
         {
-            _look.Deactivate();
+            yield return PlayAndWait(end);
         }
 
+        _cycleRunning = false;
+
+        if (DistanceToHero(out float distance, out _)
+            && distance > Mathf.Max(Plugin.GreetRadius.Value, Plugin.GreetExitRadius.Value))
+        {
+            RestoreIdle(distance);
+        }
+    }
+
+    /// <summary>Plays one clip, restarts it if something overrides it, and waits for its end.</summary>
+    private IEnumerator PlayAndWait(tk2dSpriteAnimationClip clip)
+    {
         OpenWindow(clip);
         PlayLogged(clip);
-        Plugin.Log.LogInfo($"[GREET] wave (dist={distance:F1}, clip={clip.name})");
 
         int restarts = 0;
-        float until = _diagUntil;
+        float until = Time.unscaledTime + clip.Duration;
         while (_animator != null && Time.unscaledTime < until)
         {
             tk2dSpriteAnimationClip? current = _animator.CurrentClip;
@@ -441,21 +450,63 @@ internal sealed class ChurchkeeperGreeting : MonoBehaviour
 
             yield return null;
         }
+    }
 
+    /// <summary>Distance and horizontal offset from the maid to the hero; false without a hero.</summary>
+    private bool DistanceToHero(out float distance, out float dx)
+    {
+        HeroController? hero = HeroController.instance;
+        if (hero == null)
+        {
+            distance = 0f;
+            dx = 0f;
+            return false;
+        }
+
+        Vector3 heroPos = hero.transform.position;
+        distance = Vector2.Distance(heroPos, transform.position);
+        dx = heroPos.x - transform.position.x;
+        return true;
+    }
+
+    /// <summary>Turns the look animator off for the whole greeting cycle.</summary>
+    private void HoldIdle()
+    {
+        if (_lookOff || _look == null)
+        {
+            return;
+        }
+
+        _look.Deactivate();
+        _lookOff = true;
+    }
+
+    /// <summary>Turns the look animator back on once the hero has left the greeting zone.</summary>
+    private void RestoreIdle(float distance)
+    {
+        if (!_lookOff || _cycleRunning)
+        {
+            return;
+        }
+
+        _lookOff = false;
         if (_look != null)
         {
             _look.Activate();
         }
 
-        Plugin.Log.LogInfo($"[GREET] wave done restarts={restarts}");
-        _wave = null;
+        Plugin.Log.LogInfo($"[GREET] idle restored (dist={distance:F1})");
     }
 
-    /// <summary>True when the animator runs exactly this clip right now.</summary>
-    private bool IsPlaying(tk2dSpriteAnimationClip clip)
+    /// <summary>Clip by name; an empty or blank name means there is no clip.</summary>
+    private tk2dSpriteAnimationClip? FindClip(string name)
     {
-        return _animator != null && _animator.Playing && _animator.CurrentClip != null
-            && _animator.CurrentClip.name == clip.name;
+        if (_animator == null || string.IsNullOrWhiteSpace(name))
+        {
+            return null;
+        }
+
+        return _animator.GetClipByName(name);
     }
 
     /// <summary>Logs a skip reason once per approach.</summary>

@@ -53,11 +53,14 @@ public sealed class Plugin : BaseUnityPlugin
     /// <summary>Distance the hero must leave by before the maid may greet again, in world units.</summary>
     internal static ConfigEntry<float> GreetExitRadius = null!;
 
-    /// <summary>Minimum seconds between two greetings of the same approach.</summary>
+    /// <summary>Seconds between two greeting cycles while the hero stays near.</summary>
     internal static ConfigEntry<float> GreetCooldown = null!;
 
     /// <summary>Sprite animation clip played as the wave.</summary>
     internal static ConfigEntry<string> GreetClip = null!;
+
+    /// <summary>Clip played right after the wave; empty keeps the wave only.</summary>
+    internal static ConfigEntry<string> GreetClipEnd = null!;
 
     /// <summary>When true, the picker offers every normal crest regardless of save state.</summary>
     internal static ConfigEntry<bool> IgnoreUnlockState = null!;
@@ -154,12 +157,16 @@ public sealed class Plugin : BaseUnityPlugin
         GreetRadius = Config.Bind("General", "GreetRadius", 7f,
             "Радиус приветствия прислужницы в мировых единицах. Читается на лету.");
         GreetExitRadius = Config.Bind("General", "GreetExitRadius", 9f,
-            "Радиус выхода: приветствие повторяется, только когда Хорнет отойдёт дальше этого " +
-            "расстояния и войдёт в GreetRadius снова. Читается на лету.");
+            "Радиус выхода: дальше этого расстояния повторы прекращаются и прислужница " +
+            "возвращается в Idle. Если меньше GreetRadius, берётся GreetRadius. Читается на лету.");
         GreetCooldown = Config.Bind("General", "GreetCooldown", 12f,
-            "Минимум секунд между приветствиями при повторном подходе. Читается на лету.");
+            "Секунд между повторами приветствия, пока Хорнет стоит в GreetRadius. " +
+            "Читается на лету.");
         GreetClip = Config.Bind("General", "GreetClip", "Pray",
             "Клип аниматора прислужницы для волны. Читается на лету.");
+        GreetClipEnd = Config.Bind("General", "GreetClipEnd", "Pray End",
+            "Клип, который проигрывается сразу после GreetClip. Пусто — только основной клип. " +
+            "Читается на лету.");
         if (GreetClip.Value == "Bonking")
         {
             GreetClip.Value = "Pray";
