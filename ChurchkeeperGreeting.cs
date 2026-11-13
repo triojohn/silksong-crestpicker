@@ -6,7 +6,8 @@ using UnityEngine.SceneManagement;
 namespace CrestPicker;
 
 /// <summary>
-/// Waves and calls out when the hero walks up to the chapel maid after the first talk.
+/// Waves and calls out when the hero walks up to the chapel maid after the first talk,
+/// but only while <see cref="OfferGate"/> finds more crests in the saves than unlocked here.
 /// The component lives on the maid object and is attached by <see cref="Tick"/> once the
 /// Bonetown scene is loaded. Nothing is sent to any PlayMaker FSM.
 /// </summary>
@@ -128,6 +129,11 @@ internal sealed class ChurchkeeperGreeting : MonoBehaviour
         if (!inRange || wasInRange)
         {
             _skipLogged = false;
+            return;
+        }
+
+        if (!OfferGateRuntime.ShouldRunChain())
+        {
             return;
         }
 

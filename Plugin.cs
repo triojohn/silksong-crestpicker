@@ -38,8 +38,14 @@ public sealed class Plugin : BaseUnityPlugin
     /// </summary>
     internal static bool UseLiveShop;
 
-    /// <summary>When true, the maid waves and calls out when the hero comes close.</summary>
+    /// <summary>When true, the maid chain (wave and call) may run; the save-crest gate still applies.</summary>
     internal static ConfigEntry<bool> GreetEnabled = null!;
+
+    /// <summary>Normal crests the mod found in the save slots; written by the mod once per session.</summary>
+    internal static ConfigEntry<int> SaveCrestCount = null!;
+
+    /// <summary>Manual value that replaces <see cref="SaveCrestCount"/> when it is 0 or more.</summary>
+    internal static ConfigEntry<int> SaveCrestCountOverride = null!;
 
     /// <summary>Distance at which the maid greets the hero, in world units.</summary>
     internal static ConfigEntry<float> GreetRadius = null!;
@@ -121,9 +127,17 @@ public sealed class Plugin : BaseUnityPlugin
             "Клавиша спавна собственного окна магазина (клон префаба, ничего не открывает)");
         _npcDumpHotkey = Config.Bind("General", "NpcDumpHotkey", new KeyboardShortcut(KeyCode.F5),
             "Клавиша дампа прислужницы Bonetown (объекты, FSM, клипы, флаги)");
-        GreetEnabled = Config.Bind("General", "GreetEnabled", false,
-            "Прислужница машет и окликает Хорнет при подходе после первого разговора. " +
-            "По умолчанию выключено: ванильное поведение. Читается на лету.");
+        SaveCrestCount = Config.Bind("General", "SaveCrestCount", 0,
+            "Сколько нормальных гребней мод нашёл в сейвах. Значение пишет мод сам при старте " +
+            "после чтения слотов; править вручную не нужно (см. SaveCrestCountOverride).");
+        SaveCrestCountOverride = Config.Bind("General", "SaveCrestCountOverride", -1,
+            "Ручное значение вместо автоматического SaveCrestCount: если >= 0, берётся оно " +
+            "и автоматическая запись не делается. -1 — брать автоматическое значение. " +
+            "Читается на лету.");
+        GreetEnabled = Config.Bind("General", "GreetEnabled", true,
+            "Общий выключатель цепочки прислужницы: машет и окликает Хорнет при подходе, " +
+            "если мод нашёл в сейвах больше гребней, чем открыто в текущем прохождении. " +
+            "По умолчанию включено. Читается на лету.");
         GreetRadius = Config.Bind("General", "GreetRadius", 7f,
             "Радиус приветствия прислужницы в мировых единицах. Читается на лету.");
         GreetCooldown = Config.Bind("General", "GreetCooldown", 12f,
@@ -248,6 +262,7 @@ public sealed class Plugin : BaseUnityPlugin
         }
 
         InventoryDiag.Poll();
+        OfferGateRuntime.Tick();
         UpdatePendingOffer();
         OwnShopWindow.Tick();
         ChurchkeeperGreeting.Tick();
