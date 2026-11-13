@@ -33,6 +33,9 @@ internal sealed class ChurchkeeperGreeting : MonoBehaviour
     /// <summary>Sung clips, played in this order round-robin so the two never repeat back to back.</summary>
     private static readonly string[] SingClipNames = { "CM_sing_01", "CM_sing_02" };
 
+    /// <summary>Child object holding the maid's own voice source.</summary>
+    private const string VoiceObjectName = "CrestPicker Voice";
+
     /// <summary>Seconds between two scene searches for the maid.</summary>
     private const float FindInterval = 1f;
 
@@ -52,7 +55,7 @@ internal sealed class ChurchkeeperGreeting : MonoBehaviour
 
     private tk2dSpriteAnimator? _animator;
     private tk2dLookAnimNPC? _look;
-    private AudioSource? _source;
+    private AudioSource? _voice;
     private RandomAudioClipTable? _notice;
     private RandomAudioClipTable? _sing;
     private bool _noticeSearched;
@@ -127,11 +130,7 @@ internal sealed class ChurchkeeperGreeting : MonoBehaviour
         _npc = GetComponent<PlayMakerNPC>();
         _look = GetComponent<tk2dLookAnimNPC>();
         _animator = GetComponent<tk2dSpriteAnimator>();
-        _source = GetComponent<AudioSource>();
-        if (_source == null)
-        {
-            _source = GetComponentInChildren<AudioSource>(true);
-        }
+        _voice = CreateVoice();
 
         FindFsm();
         DumpActors();
@@ -469,6 +468,7 @@ internal sealed class ChurchkeeperGreeting : MonoBehaviour
     {
         _praying = false;
         ReleaseIdle();
+        StopSing();
         Plugin.Log.LogInfo($"[GREET] pray stopped (reason={reason})");
     }
 
@@ -552,6 +552,33 @@ internal sealed class ChurchkeeperGreeting : MonoBehaviour
         }
     }
 
+    /// <summary>
+    /// Own source for the sung lines. A one-shot on someone else's source cannot be stopped,
+    /// so the prayer piled up and kept sounding; a dedicated source stops on demand.
+    /// </summary>
+    private AudioSource CreateVoice()
+    {
+        GameObject go = new GameObject(VoiceObjectName);
+        go.transform.SetParent(transform, false);
+        AudioSource source = go.AddComponent<AudioSource>();
+        source.playOnAwake = false;
+        source.loop = false;
+        source.spatialBlend = 1f;
+        return source;
+    }
+
+    /// <summary>Stops the sung line, so nothing keeps sounding after the prayer ends.</summary>
+    private void StopSing()
+    {
+        if (_voice == null)
+        {
+            return;
+        }
+
+        _voice.Stop();
+        Plugin.Log.LogInfo("[GREET] sing stopped");
+    }
+
     /// <summary>One call-out when the hero walks into the radius.</summary>
     private void PlayNotice()
     {
@@ -569,17 +596,25 @@ internal sealed class ChurchkeeperGreeting : MonoBehaviour
     /// <summary>
     /// One sung line. The two clips are played by name and in turn, so the maid never sings the
     /// same line twice in a row; the table stays as a fallback when a clip is not loaded.
+    /// A line already sounding is left alone instead of being restarted.
     /// </summary>
     private void Sing()
     {
+        if (_voice == null || _voice.isPlaying)
+        {
+            return;
+        }
+
         string name = SingClipNames[_singIndex % SingClipNames.Length];
         _singIndex++;
 
         AudioClip? clip = FindAudio(name);
-        if (clip != null && _source != null)
+        if (clip != null)
         {
-            _source.PlayOneShot(clip);
-            Plugin.Log.LogInfo($"[GREET] sing '{clip.name}'");
+            _voice.clip = clip;
+            _voice.Stop();
+            _voice.Play();
+            Plugin.Log.LogInfo($"[GREET] sing '{clip.name}' n={_singIndex}");
             return;
         }
 
@@ -592,7 +627,7 @@ internal sealed class ChurchkeeperGreeting : MonoBehaviour
         }
 
         NPCSpeakingAudio.PlayVoice(table, transform.position);
-        Plugin.Log.LogInfo($"[GREET] sing table='{table.name}'");
+        Plugin.Log.LogInfo($"[GREET] sing table='{table.name}' n={_singIndex}");
     }
 
     /// <summary>Searches the loaded tables by name once and keeps the hit.</summary>
