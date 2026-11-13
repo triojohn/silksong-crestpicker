@@ -1,0 +1,20 @@
+filters:
+  and:
+    - file.inFolder("10-projects/silksong-mods/features")
+formulas:
+  функционал: file.asLink(title)
+properties:
+  formula.функционал:
+    displayName: Функционал
+  area:
+    displayName: Область
+  done:
+    displayName: Сделано
+views:
+  - type: table
+    name: Функционал
+    order:
+      - id
+      - formula.функционал
+      - area
+      - done
