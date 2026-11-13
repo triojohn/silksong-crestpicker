@@ -366,3 +366,12 @@ verify: pending
   `[GREET] cycle (dist=…, clip=Pray -> Pray End, n=<n>)` и `[GREET] idle restored (dist=…)`.
   Сборка 0 предупреждений, тесты 126/126, DLL скопирован в plugins. Коммит `7c76f79`.
   Статус: сделано.
+- Тихие логи и пауза между циклами (вне списка задач): `[GATE] chain ...` пишется только
+  при смене строки решения (`OfferGateRuntime._chainState`), а не каждый кадр; после
+  цепочки `tk2dLookAnimNPC` включается обратно (`[GREET] idle after cycle`) и гасится
+  заново перед следующим циклом (`RestoreIdle` удалён); на старте цикла — разовый дамп
+  аудио: все `AudioSource` в детях (`[GREET] audio '<path>' playing=<bool> clip='<name>'
+  vol=<x>`), поля `RandomAudioClipTable` через рефлексию с `n/a` при ошибке
+  (`[GREET] voice table='<name>' ...`) и `[GREET] voice played table='<name>'` после
+  `PlayVoice`. Добавлена ссылка на `UnityEngine.AudioModule`. Сборка 0 предупреждений,
+  тесты 126/126, DLL скопирован в plugins. Коммит `059eac8`. Статус: сделано.

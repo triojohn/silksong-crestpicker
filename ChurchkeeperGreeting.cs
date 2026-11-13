@@ -1,5 +1,7 @@
 using System;
 using System.Collections;
+using System.Collections.Generic;
+using System.Reflection;
 using System.Text;
 using CrestPicker.Pure;
 using HutongGames.PlayMaker;
@@ -302,7 +304,6 @@ internal sealed class ChurchkeeperGreeting : MonoBehaviour
         {
             _lastGreetTime = NeverGreeted;
             _skipLogged = false;
-            RestoreIdle(distance);
             return;
         }
 
@@ -372,10 +373,12 @@ internal sealed class ChurchkeeperGreeting : MonoBehaviour
             $"[GREET] cycle (dist={distance:F1}, clip={clip.name} -> {end?.name ?? "none"}, n={_cycleIndex})");
         _cycleRunning = true;
         StartCoroutine(Cycle(GreetingPolicy.FacingLeft(dx), clip, end));
+        DumpAudio();
 
         if (_voice != null)
         {
             NPCSpeakingAudio.PlayVoice(_voice, transform.position);
+            Plugin.Log.LogInfo($"[GREET] voice played table='{_voice.name}'");
         }
         else if (!_voiceMissingLogged)
         {
@@ -419,12 +422,7 @@ internal sealed class ChurchkeeperGreeting : MonoBehaviour
         }
 
         _cycleRunning = false;
-
-        if (DistanceToHero(out float distance, out _)
-            && distance > Mathf.Max(Plugin.GreetRadius.Value, Plugin.GreetExitRadius.Value))
-        {
-            RestoreIdle(distance);
-        }
+        IdleAfterCycle();
     }
 
     /// <summary>Plays one clip, restarts it if something overrides it, and waits for its end.</summary>
@@ -481,10 +479,10 @@ internal sealed class ChurchkeeperGreeting : MonoBehaviour
         _lookOff = true;
     }
 
-    /// <summary>Turns the look animator back on once the hero has left the greeting zone.</summary>
-    private void RestoreIdle(float distance)
+    /// <summary>Turns the look animator back on once the chain is done, so the maid stands idle between cycles.</summary>
+    private void IdleAfterCycle()
     {
-        if (!_lookOff || _cycleRunning)
+        if (!_lookOff)
         {
             return;
         }
@@ -495,7 +493,92 @@ internal sealed class ChurchkeeperGreeting : MonoBehaviour
             _look.Activate();
         }
 
-        Plugin.Log.LogInfo($"[GREET] idle restored (dist={distance:F1})");
+        Plugin.Log.LogInfo("[GREET] idle after cycle");
+    }
+
+    /// <summary>Logs the audio sources under the maid and the voice table once per cycle.</summary>
+    private void DumpAudio()
+    {
+        foreach (AudioSource source in GetComponentsInChildren<AudioSource>(true))
+        {
+            if (source == null)
+            {
+                continue;
+            }
+
+            string clip = source.clip != null ? source.clip.name : "none";
+            Plugin.Log.LogInfo(
+                $"[GREET] audio '{Path(source.transform)}' playing={source.isPlaying}" +
+                $" clip='{clip}' vol={source.volume:F2}");
+        }
+
+        Plugin.Log.LogInfo($"[GREET] voice {TableDump(_voice)}");
+    }
+
+    /// <summary>Table name and its readable fields; anything unreadable is reported as n/a.</summary>
+    private static string TableDump(RandomAudioClipTable? table)
+    {
+        if (table == null)
+        {
+            return "table=none";
+        }
+
+        StringBuilder line = new StringBuilder($"table='{table.name}'");
+        try
+        {
+            foreach (FieldInfo field in table.GetType().GetFields(
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance))
+            {
+                string value;
+                try
+                {
+                    value = Describe(field.GetValue(table));
+                }
+                catch (Exception)
+                {
+                    value = "n/a";
+                }
+
+                line.Append($" {field.Name}={value}");
+            }
+        }
+        catch (Exception)
+        {
+            line.Append(" fields=n/a");
+        }
+
+        return line.ToString();
+    }
+
+    private static string Describe(object? value)
+    {
+        if (value == null)
+        {
+            return "null";
+        }
+
+        if (value is AudioClip clip)
+        {
+            return $"'{clip.name}'";
+        }
+
+        if (value is string text)
+        {
+            return $"'{text}'";
+        }
+
+        if (value is IEnumerable list)
+        {
+            var names = new List<string>();
+            foreach (object? item in list)
+            {
+                names.Add(item is AudioClip itemClip ? itemClip.name : item?.ToString() ?? "null");
+            }
+
+            return $"[{string.Join(", ", names)}]";
+        }
+
+        return value.ToString() ?? "null";
     }
 
     /// <summary>Clip by name; an empty or blank name means there is no clip.</summary>

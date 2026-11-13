@@ -13,6 +13,7 @@ internal static class OfferGateRuntime
 {
     private static bool _countWritten;
     private static bool _overrideLogged;
+    private static string? _chainState;
 
     /// <summary>
     /// Starts the cross-save read once a save slot is loaded and writes the automatic
@@ -31,8 +32,8 @@ internal static class OfferGateRuntime
     }
 
     /// <summary>
-    /// True when the maid chain may run now. The greeting calls this once per approach,
-    /// so each call leaves one <c>[GATE]</c> line with the numbers it decided on.
+    /// True when the maid chain may run now. The greeting polls this every frame, so a
+    /// <c>[GATE]</c> line is written only when the decision or its numbers change.
     /// </summary>
     internal static bool ShouldRunChain()
     {
@@ -45,17 +46,15 @@ internal static class OfferGateRuntime
         bool ignoreOffered = Plugin.IgnoreAlreadyOffered.Value;
         OfferGateReason reason = OfferGate.Reason(saveCrests, unlockedHere, introDone,
             offered && !ignoreOffered);
-        if (reason == OfferGateReason.Ok)
+        string line = reason == OfferGateReason.Ok
+            ? $"enabled saveCrests={saveCrests} unlockedHere={unlockedHere}" +
+              $" reason={reason} alreadyOffered ignored={ignoreOffered}"
+            : $"disabled reason={reason} saveCrests={saveCrests}" +
+              $" unlockedHere={unlockedHere}";
+        if (line != _chainState)
         {
-            Plugin.Log.LogInfo(
-                $"[GATE] chain enabled saveCrests={saveCrests} unlockedHere={unlockedHere}" +
-                $" reason={reason} alreadyOffered ignored={ignoreOffered}");
-        }
-        else
-        {
-            Plugin.Log.LogInfo(
-                $"[GATE] chain disabled reason={reason} saveCrests={saveCrests}" +
-                $" unlockedHere={unlockedHere}");
+            _chainState = line;
+            Plugin.Log.LogInfo($"[GATE] chain {line}");
         }
 
         return reason == OfferGateReason.Ok;
