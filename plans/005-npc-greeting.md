@@ -357,3 +357,12 @@ verify: pending
   sprite animator, все FSM с состояниями, trigger responder). Ничего не чинится,
   только логи. Сборка 0 предупреждений, тесты 126/126, DLL скопирован в plugins.
   Коммит `5ecbff0`. Статус: сделано.
+- Периодическое приветствие (вне списка задач): цепочка `GreetClip` -> `GreetClipEnd`
+  (новый ключ `GreetClipEnd`, по умолчанию `Pray End`; пусто — только основной клип),
+  повтор каждые `GreetCooldown` секунд, пока дистанция <= `GreetRadius`; гистерезис
+  `_armed`/`ShouldArm` убран, вместо него `GreetingPolicy.ShouldRepeat(distance, radius,
+  elapsed, cooldown)`; `tk2dLookAnimNPC` деактивирован всю цепочку и включается обратно
+  только когда герой дальше `max(GreetRadius, GreetExitRadius)`. Логи:
+  `[GREET] cycle (dist=…, clip=Pray -> Pray End, n=<n>)` и `[GREET] idle restored (dist=…)`.
+  Сборка 0 предупреждений, тесты 126/126, DLL скопирован в plugins. Коммит `7c76f79`.
+  Статус: сделано.
