@@ -53,14 +53,14 @@ public sealed class Plugin : BaseUnityPlugin
     /// <summary>Distance the hero must leave by before the maid may greet again, in world units.</summary>
     internal static ConfigEntry<float> GreetExitRadius = null!;
 
-    /// <summary>Seconds between two greeting cycles while the hero stays near.</summary>
-    internal static ConfigEntry<float> GreetCooldown = null!;
-
     /// <summary>Sprite animation clip played as the wave.</summary>
     internal static ConfigEntry<string> GreetClip = null!;
 
-    /// <summary>Clip played right after the wave; empty keeps the wave only.</summary>
+    /// <summary>Kept for old configs; the prayer loop no longer plays a second clip.</summary>
     internal static ConfigEntry<string> GreetClipEnd = null!;
+
+    /// <summary>Every Nth repeat of the prayer clip the maid sings a line.</summary>
+    internal static ConfigEntry<int> SingEveryLoops = null!;
 
     /// <summary>When true, the picker offers every normal crest regardless of save state.</summary>
     internal static ConfigEntry<bool> IgnoreUnlockState = null!;
@@ -157,16 +157,16 @@ public sealed class Plugin : BaseUnityPlugin
         GreetRadius = Config.Bind("General", "GreetRadius", 7f,
             "Радиус приветствия прислужницы в мировых единицах. Читается на лету.");
         GreetExitRadius = Config.Bind("General", "GreetExitRadius", 9f,
-            "Радиус выхода: дальше этого расстояния повторы прекращаются и прислужница " +
-            "возвращается в Idle. Если меньше GreetRadius, берётся GreetRadius. Читается на лету.");
-        GreetCooldown = Config.Bind("General", "GreetCooldown", 12f,
-            "Секунд между повторами приветствия, пока Хорнет стоит в GreetRadius. " +
+            "Радиус, за которым сбрасывается оклик: чтобы прислужница снова окликнула, " +
+            "нужно отойти дальше этого расстояния. Если меньше GreetRadius, берётся GreetRadius. " +
             "Читается на лету.");
         GreetClip = Config.Bind("General", "GreetClip", "Pray",
-            "Клип аниматора прислужницы для волны. Читается на лету.");
+            "Клип аниматора прислужницы для молитвы. Читается на лету.");
         GreetClipEnd = Config.Bind("General", "GreetClipEnd", "Pray End",
-            "Клип, который проигрывается сразу после GreetClip. Пусто — только основной клип. " +
-            "Читается на лету.");
+            "Не используется: молитва идёт повтором GreetClip. Ключ оставлен для старых конфигов.");
+        SingEveryLoops = Config.Bind("General", "SingEveryLoops", 2,
+            "Каждый N-й повтор клипа молитвы прислужница поёт (CM_sing_01/02 по кругу). " +
+            "1 — каждый повтор. Читается на лету.");
         if (GreetClip.Value == "Bonking")
         {
             GreetClip.Value = "Pray";

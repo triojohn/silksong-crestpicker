@@ -11,7 +11,7 @@ using UnityEngine.SceneManagement;
 namespace CrestPicker;
 
 /// <summary>
-/// Waves and calls out when the hero walks up to the chapel maid after the first talk,
+/// Prays without pause while the hero stands near the chapel maid after the first talk,
 /// but only while <see cref="OfferGate"/> finds more crests in the saves than unlocked here.
 /// The component lives on the maid object and is attached by <see cref="Tick"/> once the
 /// Bonetown scene is loaded. Nothing is sent to any PlayMaker FSM.
@@ -21,16 +21,22 @@ internal sealed class ChurchkeeperGreeting : MonoBehaviour
     private const string SceneName = "Bonetown";
     private const string ObjectName = "Churchkeeper";
 
-    /// <summary>FSM on the maid whose state changes are logged during the wave window.</summary>
+    /// <summary>FSM on the maid whose state changes are logged during the first prayer loop.</summary>
     private const string FsmName = "Conversation";
+
+    /// <summary>Voice table the maid calls out with when the hero walks in.</summary>
+    private const string NoticeTableName = "CM_notice";
+
+    /// <summary>Voice table used when a sung clip cannot be found by name.</summary>
+    private const string SingTableName = "CM_sing";
+
+    /// <summary>Sung clips, played in this order round-robin so the two never repeat back to back.</summary>
+    private static readonly string[] SingClipNames = { "CM_sing_01", "CM_sing_02" };
 
     /// <summary>Seconds between two scene searches for the maid.</summary>
     private const float FindInterval = 1f;
 
-    /// <summary>Last greet time used before the first greeting, so the cooldown never blocks it.</summary>
-    private const float NeverGreeted = float.NegativeInfinity;
-
-    /// <summary>Longest wait for the look animator's own turn clip before the wave starts.</summary>
+    /// <summary>Longest wait for the look animator's own turn clip before the prayer starts.</summary>
     private const float TurnSettle = 0.15f;
 
     /// <summary>Extra time after a clip ends during which the animator and the FSM are watched.</summary>
@@ -41,9 +47,16 @@ internal sealed class ChurchkeeperGreeting : MonoBehaviour
 
     private static float _nextFind;
 
+    private readonly Dictionary<string, AudioClip> _clips = new();
+    private readonly HashSet<string> _missing = new();
+
     private tk2dSpriteAnimator? _animator;
     private tk2dLookAnimNPC? _look;
-    private RandomAudioClipTable? _voice;
+    private AudioSource? _source;
+    private RandomAudioClipTable? _notice;
+    private RandomAudioClipTable? _sing;
+    private bool _noticeSearched;
+    private bool _singSearched;
     private PlayMakerNPC? _npc;
     private PlayMakerFSM? _fsm;
     private Action<FsmState>? _fsmHandler;
@@ -52,12 +65,12 @@ internal sealed class ChurchkeeperGreeting : MonoBehaviour
     private string? _lastClip;
     private float _diagStart;
     private float _diagUntil = float.NegativeInfinity;
-    private float _lastGreetTime = NeverGreeted;
-    private bool _cycleRunning;
-    private int _cycleIndex;
+    private bool _praying;
+    private int _loopCount;
+    private int _singIndex;
+    private bool _noticed;
     private bool _lookOff;
     private bool _skipLogged;
-    private bool _voiceMissingLogged;
 
     /// <summary>Finds the maid in Bonetown and attaches the greeting once. Never throws.</summary>
     internal static void Tick()
@@ -114,8 +127,12 @@ internal sealed class ChurchkeeperGreeting : MonoBehaviour
         _npc = GetComponent<PlayMakerNPC>();
         _look = GetComponent<tk2dLookAnimNPC>();
         _animator = GetComponent<tk2dSpriteAnimator>();
-        NPCSpeakingAudio? audio = GetComponent<NPCSpeakingAudio>();
-        _voice = audio != null ? audio.Table : null;
+        _source = GetComponent<AudioSource>();
+        if (_source == null)
+        {
+            _source = GetComponentInChildren<AudioSource>(true);
+        }
+
         FindFsm();
         DumpActors();
         DumpClipEvents();
@@ -289,7 +306,7 @@ internal sealed class ChurchkeeperGreeting : MonoBehaviour
         _animator?.Play(clip);
     }
 
-    /// <summary>One frame: leaves the greeting zone, then decides whether a cycle is due.</summary>
+    /// <summary>One frame: keeps the prayer running while the hero stands near, stops it otherwise.</summary>
     private void Step()
     {
         if (!DistanceToHero(out float distance, out float dx))
@@ -299,67 +316,89 @@ internal sealed class ChurchkeeperGreeting : MonoBehaviour
 
         float radius = Plugin.GreetRadius.Value;
         float exitRadius = Mathf.Max(radius, Plugin.GreetExitRadius.Value);
+        bool dialogue = _npc != null && _npc.IsRunningDialogue;
 
-        if (!Plugin.GreetEnabled.Value || distance > exitRadius)
+        if (distance > exitRadius)
         {
-            _lastGreetTime = NeverGreeted;
+            _noticed = false;
             _skipLogged = false;
+        }
+
+        if (!CanPray(distance, dialogue, out string reason))
+        {
+            if (_praying)
+            {
+                StopPray(dialogue ? "dialogue" : "far");
+            }
+
+            if (distance <= radius)
+            {
+                Skip(reason);
+            }
+
             return;
         }
 
-        if (_cycleRunning)
+        _skipLogged = false;
+        if (!_praying)
         {
-            return;
+            BeginPray(dx, distance);
+        }
+    }
+
+    /// <summary>True while the prayer may run: hero near, no talk, no menu, chain still pending.</summary>
+    private static bool CanPray(float distance, bool dialogue, out string reason)
+    {
+        if (!Plugin.GreetEnabled.Value)
+        {
+            reason = "greet disabled";
+            return false;
         }
 
-        if (!OfferGateRuntime.ShouldRunChain())
+        if (distance > Plugin.GreetRadius.Value)
         {
-            return;
+            reason = "far";
+            return false;
         }
 
-        if (!Plugin.EnableSnailChoice)
+        if (dialogue)
         {
-            Skip("snail choice off");
-            return;
+            reason = "dialogue running";
+            return false;
         }
 
         if (CrestSelectMenu.IsOpen)
         {
-            Skip("menu open");
-            return;
+            reason = "menu open";
+            return false;
+        }
+
+        if (!Plugin.EnableSnailChoice)
+        {
+            reason = "snail choice off";
+            return false;
         }
 
         PlayerData? data = PlayerData.instance;
         if (data == null || !data.churchKeeperIntro)
         {
-            Skip("intro not done");
-            return;
+            reason = "intro not done";
+            return false;
         }
 
-        if (_npc != null && _npc.IsRunningDialogue)
+        if (!OfferGateRuntime.ShouldRunChain())
         {
-            Skip("dialogue running");
-            return;
+            reason = "chain done";
+            return false;
         }
 
-        float elapsed = Time.unscaledTime - _lastGreetTime;
-        float cooldown = Plugin.GreetCooldown.Value;
-        if (!GreetingPolicy.ShouldRepeat(distance, radius, elapsed, cooldown))
-        {
-            Skip($"cooldown {cooldown - elapsed:F1}s (elapsed={elapsed:F1}s, need={cooldown:F1}s)");
-            return;
-        }
-
-        StartCycle(dx, distance);
+        reason = string.Empty;
+        return true;
     }
 
-    /// <summary>Turns to the hero, then plays the wave and its tail clip in the background.</summary>
-    private void StartCycle(float dx, float distance)
+    /// <summary>Starts the prayer loop: turns to the hero, calls out once, dumps the audio on the first loop.</summary>
+    private void BeginPray(float dx, float distance)
     {
-        _lastGreetTime = Time.unscaledTime;
-        _skipLogged = false;
-        FindFsm();
-
         tk2dSpriteAnimationClip? clip = FindClip(Plugin.GreetClip.Value);
         if (clip == null)
         {
@@ -367,33 +406,30 @@ internal sealed class ChurchkeeperGreeting : MonoBehaviour
             return;
         }
 
-        tk2dSpriteAnimationClip? end = FindClip(Plugin.GreetClipEnd.Value);
-        _cycleIndex++;
-        Plugin.Log.LogInfo(
-            $"[GREET] cycle (dist={distance:F1}, clip={clip.name} -> {end?.name ?? "none"}, n={_cycleIndex})");
-        _cycleRunning = true;
-        StartCoroutine(Cycle(GreetingPolicy.FacingLeft(dx), clip, end));
-        DumpAudio();
+        _praying = true;
+        _loopCount = 0;
+        _singIndex = 0;
+        _noticeSearched = _notice == null;
+        _singSearched = _sing == null;
+        FindFsm();
+        Plugin.Log.LogInfo($"[GREET] pray start (dist={distance:F1}, clip={clip.name})");
+        StartCoroutine(Pray(GreetingPolicy.FacingLeft(dx), clip));
 
-        if (_voice != null)
+        if (!_noticed)
         {
-            NPCSpeakingAudio.PlayVoice(_voice, transform.position);
-            Plugin.Log.LogInfo($"[GREET] voice played table='{_voice.name}'");
+            _noticed = true;
+            PlayNotice();
         }
-        else if (!_voiceMissingLogged)
-        {
-            _voiceMissingLogged = true;
-            Plugin.Log.LogWarning("[GREET] skipped: no voice table");
-        }
+
+        DumpAudio();
     }
 
     /// <summary>
-    /// Turns to the hero, lets the look animator finish its own turn clip, then holds the look
-    /// animator off while the wave and its tail clip play, so nothing falls back to Idle
-    /// between them. Deactivating the component alone would not stop its running coroutines,
-    /// hence the public call.
+    /// Turns to the hero, lets the look animator finish its own turn clip, then repeats the prayer
+    /// clip while <see cref="_praying"/> holds. The look animator stays off for the whole loop:
+    /// deactivating the component alone would not stop its running coroutines, hence the public call.
     /// </summary>
-    private IEnumerator Cycle(bool left, tk2dSpriteAnimationClip clip, tk2dSpriteAnimationClip? end)
+    private IEnumerator Pray(bool left, tk2dSpriteAnimationClip clip)
     {
         if (_look != null)
         {
@@ -409,40 +445,62 @@ internal sealed class ChurchkeeperGreeting : MonoBehaviour
 
         if (_animator == null)
         {
-            _cycleRunning = false;
+            _praying = false;
             yield break;
         }
 
         HoldIdle();
 
-        yield return PlayAndWait(clip);
-        if (end != null && end.name != clip.name)
+        int every = Mathf.Max(1, Plugin.SingEveryLoops.Value);
+        while (_praying)
         {
-            yield return PlayAndWait(end);
-        }
+            _loopCount++;
+            if (_loopCount % every == 0)
+            {
+                Sing();
+            }
 
-        _cycleRunning = false;
-        IdleAfterCycle();
+            yield return PlayAndWait(clip, _loopCount == 1);
+        }
+    }
+
+    /// <summary>Stops the loop, hands the maid back to her idle animator and names the reason.</summary>
+    private void StopPray(string reason)
+    {
+        _praying = false;
+        ReleaseIdle();
+        Plugin.Log.LogInfo($"[GREET] pray stopped (reason={reason})");
     }
 
     /// <summary>Plays one clip, restarts it if something overrides it, and waits for its end.</summary>
-    private IEnumerator PlayAndWait(tk2dSpriteAnimationClip clip)
+    private IEnumerator PlayAndWait(tk2dSpriteAnimationClip clip, bool log)
     {
-        OpenWindow(clip);
-        PlayLogged(clip);
+        if (log)
+        {
+            OpenWindow(clip);
+            PlayLogged(clip);
+        }
+        else
+        {
+            _animator?.Play(clip);
+        }
 
         int restarts = 0;
         float until = Time.unscaledTime + clip.Duration;
-        while (_animator != null && Time.unscaledTime < until)
+        while (_praying && _animator != null && Time.unscaledTime < until)
         {
             tk2dSpriteAnimationClip? current = _animator.CurrentClip;
-            if (_animator.Playing && (current == null || current.name != clip.name))
+            if (_animator.Playing && (current == null || current.name != clip.name) && restarts < MaxRestarts)
             {
-                if (restarts < MaxRestarts)
+                restarts++;
+                if (log)
                 {
-                    restarts++;
                     PlayLogged(clip);
                     Plugin.Log.LogInfo($"[GREET] clip restarted (was='{current?.name ?? "none"}')");
+                }
+                else
+                {
+                    _animator.Play(clip);
                 }
             }
 
@@ -467,7 +525,7 @@ internal sealed class ChurchkeeperGreeting : MonoBehaviour
         return true;
     }
 
-    /// <summary>Turns the look animator off for the whole greeting cycle.</summary>
+    /// <summary>Turns the look animator off for the whole prayer.</summary>
     private void HoldIdle()
     {
         if (_lookOff || _look == null)
@@ -479,8 +537,8 @@ internal sealed class ChurchkeeperGreeting : MonoBehaviour
         _lookOff = true;
     }
 
-    /// <summary>Turns the look animator back on once the chain is done, so the maid stands idle between cycles.</summary>
-    private void IdleAfterCycle()
+    /// <summary>Hands the maid back to her idle animator after the prayer.</summary>
+    private void ReleaseIdle()
     {
         if (!_lookOff)
         {
@@ -492,11 +550,107 @@ internal sealed class ChurchkeeperGreeting : MonoBehaviour
         {
             _look.Activate();
         }
-
-        Plugin.Log.LogInfo("[GREET] idle after cycle");
     }
 
-    /// <summary>Logs the audio sources under the maid and the voice table once per cycle.</summary>
+    /// <summary>One call-out when the hero walks into the radius.</summary>
+    private void PlayNotice()
+    {
+        RandomAudioClipTable? table = FindTable(NoticeTableName, ref _notice, ref _noticeSearched);
+        if (table == null)
+        {
+            Missing(NoticeTableName);
+            return;
+        }
+
+        NPCSpeakingAudio.PlayVoice(table, transform.position);
+        Plugin.Log.LogInfo("[GREET] notice sound");
+    }
+
+    /// <summary>
+    /// One sung line. The two clips are played by name and in turn, so the maid never sings the
+    /// same line twice in a row; the table stays as a fallback when a clip is not loaded.
+    /// </summary>
+    private void Sing()
+    {
+        string name = SingClipNames[_singIndex % SingClipNames.Length];
+        _singIndex++;
+
+        AudioClip? clip = FindAudio(name);
+        if (clip != null && _source != null)
+        {
+            _source.PlayOneShot(clip);
+            Plugin.Log.LogInfo($"[GREET] sing '{clip.name}'");
+            return;
+        }
+
+        Missing(name);
+        RandomAudioClipTable? table = FindTable(SingTableName, ref _sing, ref _singSearched);
+        if (table == null)
+        {
+            Missing(SingTableName);
+            return;
+        }
+
+        NPCSpeakingAudio.PlayVoice(table, transform.position);
+        Plugin.Log.LogInfo($"[GREET] sing table='{table.name}'");
+    }
+
+    /// <summary>Searches the loaded tables by name once and keeps the hit.</summary>
+    private static RandomAudioClipTable? FindTable(string name, ref RandomAudioClipTable? cache, ref bool searched)
+    {
+        if (cache != null)
+        {
+            return cache;
+        }
+
+        if (searched)
+        {
+            return null;
+        }
+
+        searched = true;
+        foreach (RandomAudioClipTable table in Resources.FindObjectsOfTypeAll<RandomAudioClipTable>())
+        {
+            if (table != null && table.name == name)
+            {
+                cache = table;
+                return table;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>Loaded clip by name; a miss is retried, so a late load is still picked up.</summary>
+    private AudioClip? FindAudio(string name)
+    {
+        if (_clips.TryGetValue(name, out AudioClip? cached) && cached != null)
+        {
+            return cached;
+        }
+
+        foreach (AudioClip clip in Resources.FindObjectsOfTypeAll<AudioClip>())
+        {
+            if (clip != null && clip.name == name)
+            {
+                _clips[name] = clip;
+                return clip;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>Logs a missing table or clip once per name.</summary>
+    private void Missing(string name)
+    {
+        if (_missing.Add(name))
+        {
+            Plugin.Log.LogWarning($"[GREET] sound missing '{name}'");
+        }
+    }
+
+    /// <summary>Logs the audio sources under the maid and the voice table once per approach.</summary>
     private void DumpAudio()
     {
         foreach (AudioSource source in GetComponentsInChildren<AudioSource>(true))
@@ -512,7 +666,8 @@ internal sealed class ChurchkeeperGreeting : MonoBehaviour
                 $" clip='{clip}' vol={source.volume:F2}");
         }
 
-        Plugin.Log.LogInfo($"[GREET] voice {TableDump(_voice)}");
+        Plugin.Log.LogInfo($"[GREET] voice {TableDump(_notice)}");
+        Plugin.Log.LogInfo($"[GREET] sing {TableDump(_sing)}");
     }
 
     /// <summary>Table name and its readable fields; anything unreadable is reported as n/a.</summary>
