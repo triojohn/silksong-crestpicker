@@ -33,6 +33,9 @@ internal sealed class ChurchkeeperGreeting : MonoBehaviour
     /// <summary>Sung clips, played in this order round-robin so the two never repeat back to back.</summary>
     private static readonly string[] SingClipNames = { "CM_sing_01", "CM_sing_02" };
 
+    /// <summary>Clips tried for the call-out when the <see cref="NoticeTableName"/> table is not loaded.</summary>
+    private static readonly string[] NoticeClipNames = { "CM_startle_short_01", "CM_startle_04" };
+
     /// <summary>Child object holding the maid's own voice source.</summary>
     private const string VoiceObjectName = "CrestPicker Voice";
 
@@ -70,7 +73,16 @@ internal sealed class ChurchkeeperGreeting : MonoBehaviour
     private float _diagUntil = float.NegativeInfinity;
     private bool _praying;
     private int _loopCount;
-    private int _singIndex;
+
+    /// <summary>
+    /// Round-robin position in <see cref="SingClipNames"/>. Static on purpose: the maid object
+    /// is rebuilt with the scene, so an instance field started over on every walk-in.
+    /// </summary>
+    private static int _singIndex;
+
+    /// <summary>Running number of sung lines over all visits, logged as <c>n</c>.</summary>
+    private static int _singCount;
+
     private bool _noticed;
     private bool _lookOff;
     private bool _skipLogged;
@@ -407,7 +419,6 @@ internal sealed class ChurchkeeperGreeting : MonoBehaviour
 
         _praying = true;
         _loopCount = 0;
-        _singIndex = 0;
         _noticeSearched = _notice == null;
         _singSearched = _sing == null;
         FindFsm();
@@ -563,14 +574,32 @@ internal sealed class ChurchkeeperGreeting : MonoBehaviour
         AudioSource source = go.AddComponent<AudioSource>();
         source.playOnAwake = false;
         source.loop = false;
-        source.spatialBlend = 1f;
+        source.mute = false;
+        source.volume = 1f;
+        source.priority = 128;
+        source.bypassEffects = true;
+        source.spatialBlend = 0f;
         return source;
+    }
+
+    /// <summary>Plays a clip on the dedicated voice source, replacing whatever it held.</summary>
+    private void PlayVoiceClip(AudioClip clip)
+    {
+        if (_voice == null)
+        {
+            return;
+        }
+
+        _voice.enabled = true;
+        _voice.Stop();
+        _voice.clip = clip;
+        _voice.Play();
     }
 
     /// <summary>Stops the sung line, so nothing keeps sounding after the prayer ends.</summary>
     private void StopSing()
     {
-        if (_voice == null)
+        if (_voice == null || !_voice.isPlaying)
         {
             return;
         }
@@ -583,14 +612,37 @@ internal sealed class ChurchkeeperGreeting : MonoBehaviour
     private void PlayNotice()
     {
         RandomAudioClipTable? table = FindTable(NoticeTableName, ref _notice, ref _noticeSearched);
-        if (table == null)
+        if (table != null)
         {
-            Missing(NoticeTableName);
+            NPCSpeakingAudio.PlayVoice(table, transform.position);
+            Plugin.Log.LogInfo("[GREET] notice sound");
             return;
         }
 
-        NPCSpeakingAudio.PlayVoice(table, transform.position);
-        Plugin.Log.LogInfo("[GREET] notice sound");
+        Missing(NoticeTableName);
+        PlayNoticeClip();
+    }
+
+    /// <summary>
+    /// The notice table is not reachable by name, so the call-out falls back to a clip the maid
+    /// already uses and goes through the same source as the singing.
+    /// </summary>
+    private void PlayNoticeClip()
+    {
+        foreach (string name in NoticeClipNames)
+        {
+            AudioClip? clip = FindAudio(name);
+            if (clip == null || _voice == null)
+            {
+                continue;
+            }
+
+            PlayVoiceClip(clip);
+            Plugin.Log.LogInfo($"[GREET] notice clip '{clip.name}'");
+            return;
+        }
+
+        Plugin.Log.LogWarning("[GREET] notice unavailable");
     }
 
     /// <summary>
@@ -605,16 +657,17 @@ internal sealed class ChurchkeeperGreeting : MonoBehaviour
             return;
         }
 
-        string name = SingClipNames[_singIndex % SingClipNames.Length];
-        _singIndex++;
+        string name = SingClipNames[_singIndex];
+        _singIndex = (_singIndex + 1) % SingClipNames.Length;
+        _singCount++;
 
         AudioClip? clip = FindAudio(name);
         if (clip != null)
         {
-            _voice.clip = clip;
-            _voice.Stop();
-            _voice.Play();
-            Plugin.Log.LogInfo($"[GREET] sing '{clip.name}' n={_singIndex}");
+            PlayVoiceClip(clip);
+            Plugin.Log.LogInfo(
+                $"[GREET] sing '{clip.name}' n={_singCount} playing={_voice != null && _voice.isPlaying}" +
+                $" time={clip.length:F2} isActive={_voice != null && _voice.isActiveAndEnabled}");
             return;
         }
 
@@ -627,7 +680,7 @@ internal sealed class ChurchkeeperGreeting : MonoBehaviour
         }
 
         NPCSpeakingAudio.PlayVoice(table, transform.position);
-        Plugin.Log.LogInfo($"[GREET] sing table='{table.name}' n={_singIndex}");
+        Plugin.Log.LogInfo($"[GREET] sing table='{table.name}' n={_singCount}");
     }
 
     /// <summary>Searches the loaded tables by name once and keeps the hit.</summary>
