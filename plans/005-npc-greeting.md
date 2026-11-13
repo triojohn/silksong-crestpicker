@@ -336,3 +336,8 @@ verify: pending
 - T1 — `ChurchkeeperDiag.cs`: рантайм-дамп прислужницы по `F5` (F6 занят DebugMod),
   маркеры `[NPC]`, `[NPC-FSM]`, `[NPC-ANIM]`, `[NPC-TRIGGER]`, `[NPC-PD]`, только чтение;
   сборка 0 предупреждений, тесты 126/126. Коммит `00e0d7c`. Статус: сделано.
+- T4 (урезанная версия: только волна и оклик, без реплик и окна выбора) —
+  `Pure/GreetingPolicy.cs`, `ChurchkeeperGreeting.cs` (MonoBehaviour на объекте
+  прислужницы, привязка по сцене `Bonetown`), ключи `GreetEnabled/GreetRadius/
+  GreetCooldown/GreetClip`, маркер `[GREET]`, FSM не трогается; сборка 0 предупреждений,
+  тесты 126/126. Статус: сделано.

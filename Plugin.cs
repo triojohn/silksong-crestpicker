@@ -38,6 +38,18 @@ public sealed class Plugin : BaseUnityPlugin
     /// </summary>
     internal static bool UseLiveShop;
 
+    /// <summary>When true, the maid waves and calls out when the hero comes close.</summary>
+    internal static ConfigEntry<bool> GreetEnabled = null!;
+
+    /// <summary>Distance at which the maid greets the hero, in world units.</summary>
+    internal static ConfigEntry<float> GreetRadius = null!;
+
+    /// <summary>Minimum seconds between two greetings of the same approach.</summary>
+    internal static ConfigEntry<float> GreetCooldown = null!;
+
+    /// <summary>Sprite animation clip played as the wave.</summary>
+    internal static ConfigEntry<string> GreetClip = null!;
+
     /// <summary>When true, the picker offers every normal crest regardless of save state.</summary>
     internal static ConfigEntry<bool> IgnoreUnlockState = null!;
 
@@ -109,6 +121,15 @@ public sealed class Plugin : BaseUnityPlugin
             "Клавиша спавна собственного окна магазина (клон префаба, ничего не открывает)");
         _npcDumpHotkey = Config.Bind("General", "NpcDumpHotkey", new KeyboardShortcut(KeyCode.F5),
             "Клавиша дампа прислужницы Bonetown (объекты, FSM, клипы, флаги)");
+        GreetEnabled = Config.Bind("General", "GreetEnabled", true,
+            "Прислужница машет и окликает Хорнет при подходе после первого разговора. " +
+            "Читается на лету.");
+        GreetRadius = Config.Bind("General", "GreetRadius", 7f,
+            "Радиус приветствия прислужницы в мировых единицах. Читается на лету.");
+        GreetCooldown = Config.Bind("General", "GreetCooldown", 12f,
+            "Минимум секунд между приветствиями при повторном подходе. Читается на лету.");
+        GreetClip = Config.Bind("General", "GreetClip", "Hail",
+            "Клип аниматора прислужницы для волны. Читается на лету.");
         _useLiveShop = Config.Bind("General", "UseLiveShop", true,
             "Показывать выбор знака в настоящем окне магазина (сток и позиция восстанавливаются)");
         _showCrestSchema = Config.Bind("General", "ShowCrestSchema", true,
@@ -225,6 +246,7 @@ public sealed class Plugin : BaseUnityPlugin
         InventoryDiag.Poll();
         UpdatePendingOffer();
         OwnShopWindow.Tick();
+        ChurchkeeperGreeting.Tick();
         ShopCrestMenu.TickOpenRetry();
 
         if (_shopDumpHotkey.Value.IsDown())
