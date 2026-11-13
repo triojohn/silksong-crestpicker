@@ -336,6 +336,13 @@ verify: pending
 - T1 — `ChurchkeeperDiag.cs`: рантайм-дамп прислужницы по `F5` (F6 занят DebugMod),
   маркеры `[NPC]`, `[NPC-FSM]`, `[NPC-ANIM]`, `[NPC-TRIGGER]`, `[NPC-PD]`, только чтение;
   сборка 0 предупреждений, тесты 126/126. Коммит `00e0d7c`. Статус: сделано.
+- Фикс вне списка задач: клип `Pray` обрывался при движении героя — в `Wave`
+  `_look.enabled = false` заменён на `_look.Deactivate()`/`_look.Activate()` (гасит
+  `talkRoutine` и ставит `State=Disabled`), добавлен сторож клипа: на окне
+  `clip.Duration + 0.3 с` каждый кадр сверяется `CurrentClip.name`, при подмене —
+  `_animator.Play(clip)` и `[GREET] clip restarted (was='…')`, не больше двух раз;
+  по концу окна `[GREET] wave done restarts=<n>`. Сборка 0 предупреждений, тесты
+  126/126, DLL скопирован в plugins. Коммит `3f874eb`. Статус: сделано.
 - T4 (урезанная версия: только волна и оклик, без реплик и окна выбора) —
   `Pure/GreetingPolicy.cs`, `ChurchkeeperGreeting.cs` (MonoBehaviour на объекте
   прислужницы, привязка по сцене `Bonetown`), ключи `GreetEnabled/GreetRadius/
