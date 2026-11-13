@@ -59,11 +59,12 @@ internal sealed class OfferTalkFlow
     }
 
     /// <summary>
-    /// True when the talk must be skipped because the crest offer was already made and the
-    /// ignore-offered override is off. With the override on the talk runs anyway, so the
-    /// lines and the window can be tested on a slot whose flag is already set.
+    /// True when the offer must be skipped because the crest offer was already made and the
+    /// ignore-offered override is off. With the override on the talk and the window run
+    /// anyway, so the lines and the picker can be tested on a slot whose flag is already set.
+    /// Shared by the greeting and the offer request so the rule is one.
     /// </summary>
-    internal static bool ShouldSkipTalk(bool alreadyOffered, bool ignoreAlreadyOffered)
+    internal static bool ShouldSkipOffer(bool alreadyOffered, bool ignoreAlreadyOffered)
     {
         return alreadyOffered && !ignoreAlreadyOffered;
     }

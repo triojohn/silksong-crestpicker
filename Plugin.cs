@@ -386,10 +386,17 @@ public sealed class Plugin : BaseUnityPlugin
                 return;
             }
 
-            if (CrestOfferState.IsOffered(slot))
+            bool alreadyOffered = CrestOfferState.IsOffered(slot);
+            bool ignoreOffered = IgnoreAlreadyOffered.Value;
+            if (OfferTalkFlow.ShouldSkipOffer(alreadyOffered, ignoreOffered))
             {
                 Log.LogInfo($"[CREST] Offer skipped: already used in slot {slot}.");
                 return;
+            }
+
+            if (alreadyOffered)
+            {
+                Log.LogInfo("[CREST] Offer alreadyUsed ignored=True");
             }
 
             QueueOpen(fromDialogue: true);

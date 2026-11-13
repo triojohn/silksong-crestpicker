@@ -512,7 +512,7 @@ internal sealed class ChurchkeeperGreeting : MonoBehaviour
     {
         bool alreadyOffered = CrestOfferState.IsOffered(Plugin.CurrentSlotId());
         bool ignoreOffered = Plugin.IgnoreAlreadyOffered.Value;
-        if (OfferTalkFlow.ShouldSkipTalk(alreadyOffered, ignoreOffered))
+        if (OfferTalkFlow.ShouldSkipOffer(alreadyOffered, ignoreOffered))
         {
             _flow.Abort();
             Plugin.RequestOffer();
