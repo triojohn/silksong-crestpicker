@@ -50,6 +50,9 @@ public sealed class Plugin : BaseUnityPlugin
     /// <summary>Distance at which the maid greets the hero, in world units.</summary>
     internal static ConfigEntry<float> GreetRadius = null!;
 
+    /// <summary>Distance the hero must leave by before the maid may greet again, in world units.</summary>
+    internal static ConfigEntry<float> GreetExitRadius = null!;
+
     /// <summary>Minimum seconds between two greetings of the same approach.</summary>
     internal static ConfigEntry<float> GreetCooldown = null!;
 
@@ -148,8 +151,11 @@ public sealed class Plugin : BaseUnityPlugin
             "Общий выключатель цепочки прислужницы: машет и окликает Хорнет при подходе, " +
             "если мод нашёл в сейвах больше гребней, чем открыто в текущем прохождении. " +
             "По умолчанию включено. Читается на лету.");
-        GreetRadius = Config.Bind("General", "GreetRadius", 12f,
+        GreetRadius = Config.Bind("General", "GreetRadius", 7f,
             "Радиус приветствия прислужницы в мировых единицах. Читается на лету.");
+        GreetExitRadius = Config.Bind("General", "GreetExitRadius", 9f,
+            "Радиус выхода: приветствие повторяется, только когда Хорнет отойдёт дальше этого " +
+            "расстояния и войдёт в GreetRadius снова. Читается на лету.");
         GreetCooldown = Config.Bind("General", "GreetCooldown", 12f,
             "Минимум секунд между приветствиями при повторном подходе. Читается на лету.");
         GreetClip = Config.Bind("General", "GreetClip", "Pray",
@@ -160,10 +166,10 @@ public sealed class Plugin : BaseUnityPlugin
             Logger.LogInfo("[GREET] GreetClip migrated Bonking -> Pray");
         }
 
-        if (Mathf.Approximately(GreetRadius.Value, 7f))
+        if (Mathf.Approximately(GreetRadius.Value, 12f))
         {
-            GreetRadius.Value = 12f;
-            Logger.LogInfo("[GREET] GreetRadius migrated 7 -> 12");
+            GreetRadius.Value = 7f;
+            Logger.LogInfo("[GREET] GreetRadius migrated 12 -> 7");
         }
 
         if (!GreetEnabled.Value)

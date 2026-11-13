@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using CrestPicker.Pure;
 using UnityEngine;
 using UnityEngine.SceneManagement;
@@ -22,14 +23,21 @@ internal sealed class ChurchkeeperGreeting : MonoBehaviour
     /// <summary>Last greet time used before the first greeting, so the cooldown never blocks it.</summary>
     private const float NeverGreeted = -9999f;
 
+    /// <summary>Longest wait for the look animator's own turn clip before the wave starts.</summary>
+    private const float TurnSettle = 0.15f;
+
+    /// <summary>Extra time the look animator stays off after the wave clip ends.</summary>
+    private const float ClipTail = 0.1f;
+
     private static float _nextFind;
 
     private tk2dSpriteAnimator? _animator;
     private tk2dLookAnimNPC? _look;
     private RandomAudioClipTable? _voice;
     private PlayMakerNPC? _npc;
-    private bool _wasInRange;
+    private bool _armed = true;
     private float _lastGreet = NeverGreeted;
+    private Coroutine? _wave;
     private bool _skipLogged;
     private bool _voiceMissingLogged;
 
@@ -115,18 +123,18 @@ internal sealed class ChurchkeeperGreeting : MonoBehaviour
         HeroController? hero = HeroController.instance;
         if (hero == null)
         {
-            _wasInRange = false;
+            _armed = true;
             return;
         }
 
         Vector3 heroPos = hero.transform.position;
         float dx = heroPos.x - transform.position.x;
         float distance = Vector2.Distance(heroPos, transform.position);
-        bool inRange = distance <= Plugin.GreetRadius.Value;
-        bool wasInRange = _wasInRange;
-        _wasInRange = inRange;
+        float enterRadius = Plugin.GreetRadius.Value;
+        bool armed = _armed;
+        _armed = GreetingPolicy.ShouldArm(armed, distance, enterRadius, Plugin.GreetExitRadius.Value);
 
-        if (!inRange || wasInRange)
+        if (!armed)
         {
             _skipLogged = false;
             return;
@@ -154,7 +162,7 @@ internal sealed class ChurchkeeperGreeting : MonoBehaviour
         bool talking = _npc != null && _npc.IsRunningDialogue;
         float since = Time.unscaledTime - _lastGreet;
 
-        if (!GreetingPolicy.ShouldGreet(inRange, wasInRange, introDone, talking, since,
+        if (!GreetingPolicy.ShouldGreet(armed, distance, enterRadius, introDone, talking, since,
                 Plugin.GreetCooldown.Value))
         {
             Skip(!introDone ? "intro not done"
@@ -169,15 +177,14 @@ internal sealed class ChurchkeeperGreeting : MonoBehaviour
     /// <summary>Turns to the hero, plays the wave clip and the voice.</summary>
     private void Greet(float dx, float distance)
     {
+        if (_wave != null)
+        {
+            Plugin.Log.LogInfo("[GREET] skipped: wave in progress");
+            return;
+        }
+
         _lastGreet = Time.unscaledTime;
         _skipLogged = false;
-
-        bool left = GreetingPolicy.FacingLeft(dx);
-        if (_look != null)
-        {
-            _look.ForceTurn(left);
-            _look.UnlockTurn();
-        }
 
         string clipName = Plugin.GreetClip.Value;
         tk2dSpriteAnimationClip? clip = _animator != null ? _animator.GetClipByName(clipName) : null;
@@ -185,16 +192,13 @@ internal sealed class ChurchkeeperGreeting : MonoBehaviour
         {
             Plugin.Log.LogWarning($"[GREET] skipped: clip '{clipName}' not found");
         }
+        else if (IsPlaying(clip))
+        {
+            Plugin.Log.LogInfo($"[GREET] wave (dist={distance:F1}, clip={clip.name}, already playing)");
+        }
         else
         {
-            tk2dSpriteAnimationClip? current = _animator!.CurrentClip;
-            bool alreadyPlaying = _animator.Playing && current != null && current.name == clipName;
-            if (!alreadyPlaying)
-            {
-                _animator.Play(clip);
-            }
-
-            Plugin.Log.LogInfo($"[GREET] wave (dist={distance:F1}, clip={clip.name})");
+            _wave = StartCoroutine(Wave(GreetingPolicy.FacingLeft(dx), clip, distance));
         }
 
         if (_voice != null)
@@ -206,6 +210,59 @@ internal sealed class ChurchkeeperGreeting : MonoBehaviour
             _voiceMissingLogged = true;
             Plugin.Log.LogWarning("[GREET] skipped: no voice table");
         }
+    }
+
+    /// <summary>
+    /// Turns to the hero, lets the look animator finish its own turn clip, then plays the wave
+    /// with the look animator disabled so nothing overrides the clip.
+    /// </summary>
+    private IEnumerator Wave(bool left, tk2dSpriteAnimationClip clip, float distance)
+    {
+        if (_look != null)
+        {
+            _look.ForceTurn(left);
+            _look.UnlockTurn();
+        }
+
+        float settle = Time.unscaledTime + TurnSettle;
+        while (_animator != null && _animator.Playing && Time.unscaledTime < settle)
+        {
+            yield return null;
+        }
+
+        if (_animator == null || IsPlaying(clip))
+        {
+            _wave = null;
+            yield break;
+        }
+
+        if (_look != null)
+        {
+            _look.enabled = false;
+        }
+
+        _animator.Play(clip);
+        Plugin.Log.LogInfo($"[GREET] wave (dist={distance:F1}, clip={clip.name})");
+
+        float until = Time.unscaledTime + clip.Duration + ClipTail;
+        while (_animator != null && _animator.Playing && IsPlaying(clip) && Time.unscaledTime < until)
+        {
+            yield return null;
+        }
+
+        if (_look != null)
+        {
+            _look.enabled = true;
+        }
+
+        _wave = null;
+    }
+
+    /// <summary>True when the animator runs exactly this clip right now.</summary>
+    private bool IsPlaying(tk2dSpriteAnimationClip clip)
+    {
+        return _animator != null && _animator.Playing && _animator.CurrentClip != null
+            && _animator.CurrentClip.name == clip.name;
     }
 
     /// <summary>Logs a skip reason once per approach.</summary>
