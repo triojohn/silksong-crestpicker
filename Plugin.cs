@@ -158,9 +158,11 @@ public sealed class Plugin : BaseUnityPlugin
             "Предлагать выбор знака после диалога с прислужницей капеллы");
         _testKey = Config.Bind("General", "TestKey", new KeyboardShortcut(KeyCode.F9),
             "Тестовая клавиша: проиграть последовательность получения знака для надетого гребня");
-        _testKeyMode = Config.Bind("General", "TestKeyMode", TestKeyMode.Cutscene,
-            "Что делает тестовая клавиша: cutscene — пробный клип сцены получения гребня, " +
-            "ability — цепочка анимации получения способности, " +
+        _testKeyMode = Config.Bind("General", "TestKeyMode", TestKeyMode.Full,
+            "Что делает тестовая клавиша: full — цепочка получения способности и окно " +
+            "ToolCrestUIMsg для надетого гребня (по умолчанию), " +
+            "ability — только цепочка анимации получения способности, " +
+            "cutscene — пробный клип сцены получения гребня, " +
             "pickup — прежняя последовательность пикапа для надетого гребня. Читается на лету.");
         SaveCrestCount = Config.Bind("General", "SaveCrestCount", 0,
             "Сколько нормальных гребней мод нашёл в сейвах. Значение пишет мод сам при старте " +
@@ -378,8 +380,7 @@ public sealed class Plugin : BaseUnityPlugin
             return;
         }
 
-        if (_testKeyMode.Value == TestKeyMode.Cutscene
-            || _testKeyMode.Value == TestKeyMode.Ability)
+        if (_testKeyMode.Value != TestKeyMode.Pickup)
         {
             Log.LogInfo($"[TEST] key pressed: probe {_testKeyMode.Value}");
             CrestGetCutscene.Run(_testKeyMode.Value);

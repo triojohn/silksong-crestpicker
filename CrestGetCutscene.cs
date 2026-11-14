@@ -17,6 +17,9 @@ internal enum TestKeyMode
 
     /// <summary>Probe that plays the whole ability-get chain next to the hero.</summary>
     Ability,
+
+    /// <summary>Ability-get chain, then the vanilla crest message window.</summary>
+    Full,
 }
 
 /// <summary>
@@ -43,6 +46,9 @@ internal sealed class CrestGetCutscene : MonoBehaviour
 
     /// <summary>Hero collection dependency shared by both sets.</summary>
     private const string HeroCollections = "herocollections_assets_shared";
+
+    /// <summary>Bundle that holds the crest message window prefab.</summary>
+    private const string PromptsBundle = "prompts_assets_all";
 
     /// <summary>Crest shrine: GameObject that carries the shrine sprite collection.</summary>
     private const string ShrineCollectionAsset = "Crest Get Cln";
@@ -86,6 +92,9 @@ internal sealed class CrestGetCutscene : MonoBehaviour
     /// <summary>Set the running probe plays; null until <see cref="Run"/> picks one.</summary>
     private ProbeSet _set = ShrineSet;
 
+    /// <summary>True when the run also opens the vanilla crest message window at the end.</summary>
+    private bool _showMessage;
+
     /// <summary>
     /// Starts the probe on the hero object for the mode's set. A second call while one is
     /// running is ignored, so a repeated key press cannot stack sprites.
@@ -108,7 +117,8 @@ internal sealed class CrestGetCutscene : MonoBehaviour
             }
 
             CrestGetCutscene probe = hero.gameObject.AddComponent<CrestGetCutscene>();
-            probe._set = mode == TestKeyMode.Ability ? AbilitySet : ShrineSet;
+            probe._set = mode == TestKeyMode.Cutscene ? ShrineSet : AbilitySet;
+            probe._showMessage = mode == TestKeyMode.Full;
             probe.StartCoroutine(probe.GuardedPlay());
         }
         catch (Exception ex)
@@ -144,6 +154,16 @@ internal sealed class CrestGetCutscene : MonoBehaviour
             {
                 Plugin.Log.LogWarning("[CUT] failed at 'load animation bundle': bundle unavailable");
                 yield break;
+            }
+
+            GameObject? msgPrefab = null;
+            if (_showMessage)
+            {
+                AssetBundle? prompts = Load(dir, PromptsBundle);
+                if (prompts != null)
+                {
+                    msgPrefab = FindMsgPrefab(prompts);
+                }
             }
 
             tk2dSpriteCollectionData? collection = Find<tk2dSpriteCollectionData>(
@@ -187,6 +207,11 @@ internal sealed class CrestGetCutscene : MonoBehaviour
                 yield return new WaitForSeconds(clip.Duration);
             }
 
+            if (msgPrefab != null)
+            {
+                yield return ShowMessage(msgPrefab);
+            }
+
             Plugin.Log.LogInfo("[CUT] done");
         }
         finally
@@ -198,6 +223,84 @@ internal sealed class CrestGetCutscene : MonoBehaviour
 
             UnloadAll();
             Destroy(this);
+        }
+    }
+
+    /// <summary>Finds the crest message window prefab in the prompts bundle by its component.</summary>
+    private static GameObject? FindMsgPrefab(AssetBundle bundle)
+    {
+        GameObject[] objects = bundle.LoadAllAssets<GameObject>();
+        Plugin.Log.LogInfo($"[CUT] {bundle.name}: {objects.Length} object(s)");
+
+        foreach (GameObject obj in objects)
+        {
+            if (obj != null && obj.GetComponent<ToolCrestUIMsg>() != null)
+            {
+                Plugin.Log.LogInfo($"[CUT] msg prefab '{obj.name}'");
+                return obj;
+            }
+        }
+
+        Plugin.Log.LogWarning($"[CUT] msg prefab missing in '{bundle.name}'");
+        return null;
+    }
+
+    /// <summary>
+    /// Opens the vanilla crest message window for the equipped crest: the wrapper the game
+    /// itself does around <c>ToolCrestUIMsg.Spawn</c> (HUD out, input blocker), undone when
+    /// the window closes. Bundles stay loaded until this returns.
+    /// </summary>
+    private IEnumerator ShowMessage(GameObject prefab)
+    {
+        ToolCrest? crest = EquippedCrest();
+        if (crest == null)
+        {
+            Plugin.Log.LogWarning("[CUT] msg skipped: no equipped crest");
+            yield break;
+        }
+
+        HeroController? hero = HeroController.instance;
+        bool closed = false;
+        try
+        {
+            if (GameCameras.instance != null)
+            {
+                GameCameras.instance.HUDOut();
+            }
+
+            hero?.AddInputBlocker(this);
+            Plugin.Log.LogInfo($"[CUT] msg spawn '{crest.name}'");
+            ToolCrestUIMsg.Spawn(crest, prefab, () => closed = true);
+
+            while (!closed)
+            {
+                yield return null;
+            }
+
+            Plugin.Log.LogInfo("[CUT] msg closed");
+        }
+        finally
+        {
+            hero?.RemoveInputBlocker(this);
+            if (GameCameras.instance != null)
+            {
+                GameCameras.instance.HUDIn();
+            }
+        }
+    }
+
+    /// <summary>The crest the hero wears, null when it cannot be read.</summary>
+    private static ToolCrest? EquippedCrest()
+    {
+        try
+        {
+            string? name = CrestPickerService.EquippedCrestName();
+            return name == null ? null : ToolItemManager.GetCrestByName(name);
+        }
+        catch (Exception ex)
+        {
+            Plugin.Log.LogWarning($"[CUT] equipped crest failed: {ex.Message}");
+            return null;
         }
     }
 
