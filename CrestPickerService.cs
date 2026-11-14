@@ -199,6 +199,11 @@ internal static class CrestPickerService
             ToolItemManager.SetEquippedCrest(crest.name);
             ToolItemManager.SendEquippedChangedEvent(force: true);
 
+            if (unlockedNow)
+            {
+                PlayGetReaction(crest);
+            }
+
             Plugin.Log.LogInfo(
                 $"[CREST] Applied '{crest.name}' (unlockedNow={unlockedNow}, " +
                 $"isUnlocked={crest.IsUnlocked}, isEquipped={crest.IsEquipped}).");
@@ -208,6 +213,35 @@ internal static class CrestPickerService
         {
             Plugin.Log.LogError($"[CREST] ApplyCrest('{crest.name}') failed: {ex}");
             return false;
+        }
+    }
+
+    /// <summary>
+    /// Plays the vanilla item-get reaction (flash, effect, sound) for a crest the player
+    /// has just unlocked. Failures are logged and never propagate to <see cref="ApplyCrest"/>.
+    /// </summary>
+    /// <param name="crest">Crest that was just unlocked; must not be null.</param>
+    private static void PlayGetReaction(ToolCrest crest)
+    {
+        try
+        {
+            if (!Plugin.GetReactionEnabled.Value)
+            {
+                return;
+            }
+
+            if (UnityEngine.Object.FindFirstObjectByType<CollectableItemHeroReaction>() == null)
+            {
+                Plugin.Log.LogWarning("[CREST] reaction unavailable: component missing");
+                return;
+            }
+
+            CollectableItemHeroReaction.DoReaction();
+            Plugin.Log.LogInfo($"[CREST] reaction played for '{crest.name}'");
+        }
+        catch (Exception ex)
+        {
+            Plugin.Log.LogWarning($"[CREST] reaction failed for '{crest.name}': {ex.Message}");
         }
     }
 }

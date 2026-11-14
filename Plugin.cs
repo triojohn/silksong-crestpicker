@@ -77,6 +77,9 @@ public sealed class Plugin : BaseUnityPlugin
     /// <summary>When true, the currently equipped crest stays in the picker list.</summary>
     internal static ConfigEntry<bool> IncludeEquippedCrest = null!;
 
+    /// <summary>When true, a newly unlocked crest plays the vanilla item-get reaction.</summary>
+    internal static ConfigEntry<bool> GetReactionEnabled = null!;
+
     /// <summary>
     /// When true, the chain runs even if the offer was already used in this save slot;
     /// the flag from <c>state.json</c> is ignored. For testing.
@@ -136,6 +139,10 @@ public sealed class Plugin : BaseUnityPlugin
         IncludeEquippedCrest = Config.Bind("General", "IncludeEquippedCrest", true,
             "Оставлять надетый знак в списке выбора. true — знак не вырезается, " +
             "false — прежнее поведение (надетый знак исключён). Читается на лету.");
+        GetReactionEnabled = Config.Bind("General", "GetReactionEnabled", true,
+            "Проигрывать ванильную реакцию получения (вспышка, эффект, звук) при первой " +
+            "разблокировке знака через окно мода. true — реакция есть, false — выключена. " +
+            "Читается на лету.");
         IgnoreAlreadyOffered = Config.Bind("General", "IgnoreAlreadyOffered", false,
             "Игнорировать отметку «уже предлагали в этом слоте» из state.json: false — " +
             "предложение один раз на слот, true — цепочка срабатывает при каждом подходе " +
@@ -206,6 +213,11 @@ public sealed class Plugin : BaseUnityPlugin
         if (!GreetEnabled.Value)
         {
             Logger.LogInfo("[GREET] disabled by config");
+        }
+
+        if (!GetReactionEnabled.Value)
+        {
+            Logger.LogInfo("[CREST] reaction disabled by config");
         }
         _useLiveShop = Config.Bind("General", "UseLiveShop", true,
             "Показывать выбор знака в настоящем окне магазина (сток и позиция восстанавливаются)");
