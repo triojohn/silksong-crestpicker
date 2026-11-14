@@ -14,46 +14,83 @@ internal enum TestKeyMode
 
     /// <summary>Probe that loads the crest shrine bundles and plays one clip.</summary>
     Cutscene,
+
+    /// <summary>Probe that plays the whole ability-get chain next to the hero.</summary>
+    Ability,
 }
 
 /// <summary>
-/// Probe for the vanilla crest-get shrine. Loads the shrine bundles straight from
-/// StreamingAssets and plays one clip on a scratch sprite next to the hero. The scene
-/// itself is not rebuilt yet: this only proves the clips load and animate.
+/// Probe for a vanilla clip chain loaded straight from StreamingAssets. The scene itself
+/// is not rebuilt yet: this only proves the clips load and animate. Each set is a data
+/// row, so the crest shrine and the ability-get probes share one code path.
 /// </summary>
 internal sealed class CrestGetCutscene : MonoBehaviour
 {
-    /// <summary>Clip played by the probe.</summary>
-    private const string ClipName = "Stab Antic";
+    /// <summary>Crest shrine: collection bundle that holds the shrine sprite collection.</summary>
+    private const string ShrineCollections = "tk2dcollections_assets_crestshrine";
 
-    /// <summary>Seconds the probe sprite stays alive.</summary>
-    private const float Lifetime = 2f;
+    /// <summary>Crest shrine: animation bundle that holds the shrine clip library.</summary>
+    private const string ShrineAnimations = "tk2danimations_assets_crestshrine";
 
-    /// <summary>Collection bundle that holds the shrine sprite collection.</summary>
-    private const string BundleCollectionsShrine = "tk2dcollections_assets_crestshrine";
+    /// <summary>Crest shrine: collection dependency of the shrine clips.</summary>
+    private const string ShrineWeaverCollections = "tk2dcollections_assets_areaweaver";
 
-    /// <summary>Animation bundle that holds the shrine clip library.</summary>
-    private const string BundleAnimationsShrine = "tk2danimations_assets_crestshrine";
+    /// <summary>Ability get: collection bundle that holds the ability sprite collection.</summary>
+    private const string AbilityCollections = "tk2dcollections_assets_silkshared";
 
-    /// <summary>Collection dependency of the shrine clips.</summary>
-    private const string BundleCollectionsWeaver = "tk2dcollections_assets_areaweaver";
+    /// <summary>Ability get: animation bundle that holds the ability clip library.</summary>
+    private const string AbilityAnimations = "tk2danimations_assets_silkshared";
 
-    /// <summary>Hero collection dependency of the shrine clips.</summary>
-    private const string BundleCollectionsHero = "herocollections_assets_shared";
+    /// <summary>Hero collection dependency shared by both sets.</summary>
+    private const string HeroCollections = "herocollections_assets_shared";
 
-    /// <summary>GameObject that carries the shrine sprite collection.</summary>
-    private const string ObjectCollection = "Crest Get Cln";
+    /// <summary>Crest shrine: GameObject that carries the shrine sprite collection.</summary>
+    private const string ShrineCollectionAsset = "Crest Get Cln";
 
-    /// <summary>GameObject that carries the shrine clip library.</summary>
-    private const string ObjectAnimation = "Crest Get Anim";
+    /// <summary>Crest shrine: GameObject that carries the shrine clip library.</summary>
+    private const string ShrineAnimationAsset = "Crest Get Anim";
+
+    /// <summary>Ability get: asset that carries the ability sprite collection.</summary>
+    private const string AbilityCollectionAsset = "Ability Get Thread Cln";
+
+    /// <summary>Ability get: asset that carries the ability clip library.</summary>
+    private const string AbilityAnimationAsset = "Ability Get Thread Anim";
+
+    /// <summary>Crest shrine probe: one clip, as before.</summary>
+    private static readonly ProbeSet ShrineSet = new ProbeSet
+    {
+        CollectionBundle = ShrineCollections,
+        ExtraBundles = new[] { ShrineWeaverCollections, HeroCollections },
+        AnimationBundle = ShrineAnimations,
+        CollectionAsset = ShrineCollectionAsset,
+        AnimationAsset = ShrineAnimationAsset,
+        Clips = new[] { "Stab Antic" },
+    };
+
+    /// <summary>Ability get probe: the vanilla chain, played in order.</summary>
+    private static readonly ProbeSet AbilitySet = new ProbeSet
+    {
+        CollectionBundle = AbilityCollections,
+        ExtraBundles = new[] { HeroCollections },
+        AnimationBundle = AbilityAnimations,
+        CollectionAsset = AbilityCollectionAsset,
+        AnimationAsset = AbilityAnimationAsset,
+        Clips = new[]
+        {
+            "Init", "Full", "First Weaver Bind", "Final Burst", "Shrink",
+        },
+    };
 
     private readonly List<AssetBundle> _bundles = new List<AssetBundle>();
 
+    /// <summary>Set the running probe plays; null until <see cref="Run"/> picks one.</summary>
+    private ProbeSet _set = ShrineSet;
+
     /// <summary>
-    /// Starts the probe on the hero object. A second call while one is running is
-    /// ignored, so a repeated key press cannot stack sprites.
+    /// Starts the probe on the hero object for the mode's set. A second call while one is
+    /// running is ignored, so a repeated key press cannot stack sprites.
     /// </summary>
-    internal static void Run()
+    internal static void Run(TestKeyMode mode)
     {
         try
         {
@@ -71,6 +108,7 @@ internal sealed class CrestGetCutscene : MonoBehaviour
             }
 
             CrestGetCutscene probe = hero.gameObject.AddComponent<CrestGetCutscene>();
+            probe._set = mode == TestKeyMode.Ability ? AbilitySet : ShrineSet;
             probe.StartCoroutine(probe.GuardedPlay());
         }
         catch (Exception ex)
@@ -79,7 +117,7 @@ internal sealed class CrestGetCutscene : MonoBehaviour
         }
     }
 
-    /// <summary>Loads the bundles, plays the clip, then cleans up on every path.</summary>
+    /// <summary>Loads the bundles, plays every clip in turn, then cleans up on every path.</summary>
     private IEnumerator Play()
     {
         GameObject? probe = null;
@@ -89,17 +127,19 @@ internal sealed class CrestGetCutscene : MonoBehaviour
                 "StandaloneWindows64");
             Plugin.Log.LogInfo($"[CUT] bundle dir '{dir}'");
 
-            AssetBundle? collections = Load(dir, BundleCollectionsShrine);
+            AssetBundle? collections = Load(dir, _set.CollectionBundle);
             if (collections == null)
             {
                 Plugin.Log.LogWarning("[CUT] failed at 'load collection bundle': bundle unavailable");
                 yield break;
             }
 
-            Load(dir, BundleCollectionsWeaver);
-            Load(dir, BundleCollectionsHero);
+            foreach (string extra in _set.ExtraBundles)
+            {
+                Load(dir, extra);
+            }
 
-            AssetBundle? animations = Load(dir, BundleAnimationsShrine);
+            AssetBundle? animations = Load(dir, _set.AnimationBundle);
             if (animations == null)
             {
                 Plugin.Log.LogWarning("[CUT] failed at 'load animation bundle': bundle unavailable");
@@ -107,38 +147,46 @@ internal sealed class CrestGetCutscene : MonoBehaviour
             }
 
             tk2dSpriteCollectionData? collection = Find<tk2dSpriteCollectionData>(
-                collections, ObjectCollection);
+                collections, _set.CollectionAsset);
             if (collection == null)
             {
                 Plugin.Log.LogWarning(
-                    $"[CUT] failed at 'collection': '{ObjectCollection}' not found");
+                    $"[CUT] failed at 'collection': '{_set.CollectionAsset}' not found");
                 yield break;
             }
 
             tk2dSpriteAnimation? library = Find<tk2dSpriteAnimation>(
-                animations, ObjectAnimation);
+                animations, _set.AnimationAsset);
             if (library == null)
             {
                 Plugin.Log.LogWarning(
-                    $"[CUT] failed at 'animation': '{ObjectAnimation}' not found");
+                    $"[CUT] failed at 'animation': '{_set.AnimationAsset}' not found");
                 yield break;
             }
 
             probe = CreateProbe(collection, library);
             tk2dSpriteAnimator? animator = probe.GetComponent<tk2dSpriteAnimator>();
-            tk2dSpriteAnimationClip? clip = animator != null
-                ? animator.GetClipByName(ClipName)
-                : null;
-            if (animator == null || clip == null)
+            if (animator == null)
             {
-                Plugin.Log.LogWarning(
-                    $"[CUT] failed at 'clip': '{ClipName}' not found in '{library.name}'");
+                Plugin.Log.LogWarning("[CUT] failed at 'animator': component missing");
                 yield break;
             }
 
-            animator.Play(clip);
-            Plugin.Log.LogInfo($"[CUT] playing '{clip.name}' length={clip.Duration:0.###}s");
-            yield return new WaitForSeconds(Lifetime);
+            foreach (string name in _set.Clips)
+            {
+                tk2dSpriteAnimationClip? clip = animator.GetClipByName(name);
+                if (clip == null)
+                {
+                    Plugin.Log.LogWarning(
+                        $"[CUT] clip '{name}' missing in '{library.name}'");
+                    yield break;
+                }
+
+                Plugin.Log.LogInfo($"[CUT] clip '{clip.name}' dur={clip.Duration:0.###}");
+                animator.Play(clip);
+                yield return new WaitForSeconds(clip.Duration);
+            }
+
             Plugin.Log.LogInfo("[CUT] done");
         }
         finally
@@ -154,17 +202,15 @@ internal sealed class CrestGetCutscene : MonoBehaviour
     }
 
     /// <summary>
-    /// Creates the scratch object next to the hero and wires the sprite and animator;
-    /// both are absent on the source assets, so the probe adds them.
+    /// Creates the scratch object on the hero and wires the sprite and animator; both are
+    /// absent on the source assets, so the probe adds them.
     /// </summary>
     private static GameObject CreateProbe(tk2dSpriteCollectionData collection,
         tk2dSpriteAnimation library)
     {
         GameObject probe = new GameObject("CrestGetProbe");
         HeroController? hero = HeroController.instance;
-        probe.transform.position = hero != null
-            ? hero.transform.position + new Vector3(1.5f, 1f, 0f)
-            : Vector3.zero;
+        probe.transform.position = hero != null ? hero.transform.position : Vector3.zero;
 
         tk2dSprite sprite = probe.AddComponent<tk2dSprite>();
         sprite.Collection = collection;
@@ -211,7 +257,8 @@ internal sealed class CrestGetCutscene : MonoBehaviour
 
     /// <summary>
     /// Logs the objects and typed assets of one bundle and returns the component named
-    /// after the wanted GameObject, falling back to a typed asset with that name.
+    /// after the wanted GameObject, falling back to a typed asset with that name, then to
+    /// the only typed asset of the bundle.
     /// </summary>
     private static T? Find<T>(AssetBundle bundle, string objectName) where T : Component
     {
@@ -235,12 +282,29 @@ internal sealed class CrestGetCutscene : MonoBehaviour
             }
         }
 
+        T? only = null;
+        int count = 0;
         foreach (T component in components)
         {
-            if (component != null && component.name == objectName)
+            if (component == null)
+            {
+                continue;
+            }
+
+            if (component.name == objectName)
             {
                 return component;
             }
+
+            count++;
+            only = component;
+        }
+
+        if (count == 1)
+        {
+            Plugin.Log.LogInfo(
+                $"[CUT] fallback: using the only {typeof(T).Name} '{only!.name}'");
+            return only;
         }
 
         return null;
@@ -322,5 +386,27 @@ internal sealed class CrestGetCutscene : MonoBehaviour
             // here: that is what runs Play's finally and releases the bundles.
             (steps as IDisposable)?.Dispose();
         }
+    }
+
+    /// <summary>Bundles and asset names one probe run needs.</summary>
+    private sealed class ProbeSet
+    {
+        /// <summary>Bundle that holds the sprite collection.</summary>
+        internal string CollectionBundle = "";
+
+        /// <summary>Dependency bundles loaded right after the collection bundle.</summary>
+        internal string[] ExtraBundles = Array.Empty<string>();
+
+        /// <summary>Bundle that holds the clip library.</summary>
+        internal string AnimationBundle = "";
+
+        /// <summary>Asset name of the sprite collection.</summary>
+        internal string CollectionAsset = "";
+
+        /// <summary>Asset name of the clip library.</summary>
+        internal string AnimationAsset = "";
+
+        /// <summary>Clips to play, in order.</summary>
+        internal string[] Clips = Array.Empty<string>();
     }
 }

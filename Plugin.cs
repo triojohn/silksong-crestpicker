@@ -160,6 +160,7 @@ public sealed class Plugin : BaseUnityPlugin
             "Тестовая клавиша: проиграть последовательность получения знака для надетого гребня");
         _testKeyMode = Config.Bind("General", "TestKeyMode", TestKeyMode.Cutscene,
             "Что делает тестовая клавиша: cutscene — пробный клип сцены получения гребня, " +
+            "ability — цепочка анимации получения способности, " +
             "pickup — прежняя последовательность пикапа для надетого гребня. Читается на лету.");
         SaveCrestCount = Config.Bind("General", "SaveCrestCount", 0,
             "Сколько нормальных гребней мод нашёл в сейвах. Значение пишет мод сам при старте " +
@@ -353,7 +354,7 @@ public sealed class Plugin : BaseUnityPlugin
     }
 
     /// <summary>
-    /// Test key: runs the mode picked by <c>TestKeyMode</c> — the cutscene probe, or the
+    /// Test key: runs the mode picked by <c>TestKeyMode</c> — one of the clip probes, or the
     /// get sequence for the crest the hero wears. Runs only while the game is playable
     /// and the hero exists; every other case is logged.
     /// </summary>
@@ -377,10 +378,11 @@ public sealed class Plugin : BaseUnityPlugin
             return;
         }
 
-        if (_testKeyMode.Value == TestKeyMode.Cutscene)
+        if (_testKeyMode.Value == TestKeyMode.Cutscene
+            || _testKeyMode.Value == TestKeyMode.Ability)
         {
-            Log.LogInfo("[TEST] key pressed: probe crest cutscene");
-            CrestGetCutscene.Run();
+            Log.LogInfo($"[TEST] key pressed: probe {_testKeyMode.Value}");
+            CrestGetCutscene.Run(_testKeyMode.Value);
             return;
         }
 
