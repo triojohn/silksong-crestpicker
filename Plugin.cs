@@ -101,11 +101,7 @@ public sealed class Plugin : BaseUnityPlugin
     private ConfigEntry<CrestPoolMode> _crestPool = null!;
     private ConfigEntry<bool> _enableSnailChoice = null!;
     private ConfigEntry<bool> _useLiveShop = null!;
-    private ConfigEntry<KeyboardShortcut> _testHotkey = null!;
-    private ConfigEntry<KeyboardShortcut> _shopDumpHotkey = null!;
-    private ConfigEntry<KeyboardShortcut> _spriteDumpHotkey = null!;
-    private ConfigEntry<KeyboardShortcut> _ownWindowHotkey = null!;
-    private ConfigEntry<KeyboardShortcut> _npcDumpHotkey = null!;
+    private ConfigEntry<KeyboardShortcut> _testKey = null!;
     private ConfigEntry<bool> _showCrestSchema = null!;
     private ConfigEntry<SchemaRenderMode> _schemaRender = null!;
     private ConfigEntry<float> _crestSchemaScale = null!;
@@ -159,16 +155,8 @@ public sealed class Plugin : BaseUnityPlugin
             "(для тестов). Читается на лету.");
         _enableSnailChoice = Config.Bind("General", "EnableSnailChoice", true,
             "Предлагать выбор знака после диалога с прислужницей капеллы");
-        _testHotkey = Config.Bind("General", "TestHotkey", new KeyboardShortcut(KeyCode.F9),
-            "Клавиша тестового выбора знака");
-        _shopDumpHotkey = Config.Bind("General", "ShopDumpHotkey", new KeyboardShortcut(KeyCode.F8),
-            "Клавиша дампа живого магазина (объекты, FSM, строки)");
-        _spriteDumpHotkey = Config.Bind("General", "SpriteDumpHotkey", new KeyboardShortcut(KeyCode.F10),
-            "Клавиша дампа спрайтов гребней в PNG (C:\\Users\\trioj\\Downloads\\silksong_sprites)");
-        _ownWindowHotkey = Config.Bind("General", "OwnWindowHotkey", new KeyboardShortcut(KeyCode.F7),
-            "Клавиша спавна собственного окна магазина (клон префаба, ничего не открывает)");
-        _npcDumpHotkey = Config.Bind("General", "NpcDumpHotkey", new KeyboardShortcut(KeyCode.F5),
-            "Клавиша дампа прислужницы Bonetown (объекты, FSM, клипы, флаги)");
+        _testKey = Config.Bind("General", "TestKey", new KeyboardShortcut(KeyCode.F9),
+            "Тестовая клавиша: проиграть последовательность получения знака для надетого гребня");
         SaveCrestCount = Config.Bind("General", "SaveCrestCount", 0,
             "Сколько нормальных гребней мод нашёл в сейвах. Значение пишет мод сам при старте " +
             "после чтения слотов; править вручную не нужно (см. SaveCrestCountOverride).");
@@ -354,43 +342,45 @@ public sealed class Plugin : BaseUnityPlugin
         ChurchkeeperGreeting.Tick();
         ShopCrestMenu.TickOpenRetry();
 
-        if (_shopDumpHotkey.Value.IsDown())
+        if (_testKey.Value.IsDown())
         {
-            Log.LogInfo($"[CREST] Hotkey {_shopDumpHotkey.Value} pressed: shop dump.");
-            ShopDiag.DumpShopNpc();
-            ShopDiag.DumpLiveShop();
-            ShopTrace.Begin("hotkey");
-            ShopRenderDiag.Capture("hotkey", null);
+            PlayTestGetSequence();
         }
+    }
 
-        if (_ownWindowHotkey.Value.IsDown())
+    /// <summary>
+    /// Test key: replays the crest get sequence for the crest the hero wears. Runs only
+    /// while the game is playable and the hero exists; every other case is logged.
+    /// </summary>
+    private static void PlayTestGetSequence()
+    {
+        if (!IsInGame())
         {
-            Log.LogInfo($"[OWN] Hotkey {_ownWindowHotkey.Value} pressed: spawn shop window clone.");
-            OwnShopWindow.TrySpawn();
-        }
-
-        if (_npcDumpHotkey.Value.IsDown())
-        {
-            Log.LogInfo($"[NPC] Hotkey {_npcDumpHotkey.Value} pressed: churchkeeper dump.");
-            ChurchkeeperDiag.Dump();
-        }
-
-        if (_spriteDumpHotkey.Value.IsDown())
-        {
-            Log.LogInfo($"[DUMP] Hotkey {_spriteDumpHotkey.Value} pressed: crest sprite dump.");
-            SpriteDump.DumpAll();
-        }
-
-        if (!IsInGame() || CrestSelectMenu.IsOpen)
-        {
+            Log.LogInfo($"[TEST] skipped: game state {DescribeGameState()}");
             return;
         }
 
-        if (_testHotkey.Value.IsDown())
+        if (HeroController.instance == null)
         {
-            Log.LogInfo($"[CREST] Hotkey {_testHotkey.Value} pressed.");
-            QueueOpen(fromDialogue: false);
+            Log.LogInfo("[TEST] skipped: hero unavailable");
+            return;
         }
+
+        if (CrestSelectMenu.IsOpen)
+        {
+            Log.LogInfo("[TEST] skipped: picker open");
+            return;
+        }
+
+        string? crest = CrestPickerService.EquippedCrestName();
+        if (crest == null)
+        {
+            Log.LogInfo("[TEST] skipped: no equipped crest");
+            return;
+        }
+
+        Log.LogInfo($"[TEST] key pressed: play get sequence '{crest}'");
+        CrestGetSequence.Run(crest);
     }
 
     /// <summary>

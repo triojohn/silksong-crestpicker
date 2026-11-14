@@ -256,6 +256,27 @@ internal static class CrestPickerService
         }
     }
 
+    /// <summary>Name of the crest the hero wears, null when it cannot be read.</summary>
+    internal static string? EquippedCrestName()
+    {
+        try
+        {
+            foreach (ToolCrest? crest in ToolItemManager.GetAllCrests())
+            {
+                if (crest != null && SafeIsEquipped(crest))
+                {
+                    return crest.name;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Plugin.Log.LogWarning($"[CREST] equipped crest read failed: {ex.Message}");
+        }
+
+        return null;
+    }
+
     /// <summary>
     /// Starts the get sequence that <see cref="ApplyCrest"/> deferred, if any. Called once
     /// the window that granted the crest has closed; the pending crest is consumed here,
