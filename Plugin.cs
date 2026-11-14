@@ -102,6 +102,7 @@ public sealed class Plugin : BaseUnityPlugin
     private ConfigEntry<bool> _enableSnailChoice = null!;
     private ConfigEntry<bool> _useLiveShop = null!;
     private ConfigEntry<KeyboardShortcut> _testKey = null!;
+    private static ConfigEntry<TestKeyMode> _testKeyMode = null!;
     private ConfigEntry<bool> _showCrestSchema = null!;
     private ConfigEntry<SchemaRenderMode> _schemaRender = null!;
     private ConfigEntry<float> _crestSchemaScale = null!;
@@ -157,6 +158,9 @@ public sealed class Plugin : BaseUnityPlugin
             "Предлагать выбор знака после диалога с прислужницей капеллы");
         _testKey = Config.Bind("General", "TestKey", new KeyboardShortcut(KeyCode.F9),
             "Тестовая клавиша: проиграть последовательность получения знака для надетого гребня");
+        _testKeyMode = Config.Bind("General", "TestKeyMode", TestKeyMode.Cutscene,
+            "Что делает тестовая клавиша: cutscene — пробный клип сцены получения гребня, " +
+            "pickup — прежняя последовательность пикапа для надетого гребня. Читается на лету.");
         SaveCrestCount = Config.Bind("General", "SaveCrestCount", 0,
             "Сколько нормальных гребней мод нашёл в сейвах. Значение пишет мод сам при старте " +
             "после чтения слотов; править вручную не нужно (см. SaveCrestCountOverride).");
@@ -349,8 +353,9 @@ public sealed class Plugin : BaseUnityPlugin
     }
 
     /// <summary>
-    /// Test key: replays the crest get sequence for the crest the hero wears. Runs only
-    /// while the game is playable and the hero exists; every other case is logged.
+    /// Test key: runs the mode picked by <c>TestKeyMode</c> — the cutscene probe, or the
+    /// get sequence for the crest the hero wears. Runs only while the game is playable
+    /// and the hero exists; every other case is logged.
     /// </summary>
     private static void PlayTestGetSequence()
     {
@@ -369,6 +374,13 @@ public sealed class Plugin : BaseUnityPlugin
         if (CrestSelectMenu.IsOpen)
         {
             Log.LogInfo("[TEST] skipped: picker open");
+            return;
+        }
+
+        if (_testKeyMode.Value == TestKeyMode.Cutscene)
+        {
+            Log.LogInfo("[TEST] key pressed: probe crest cutscene");
+            CrestGetCutscene.Run();
             return;
         }
 
