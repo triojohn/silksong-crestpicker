@@ -513,6 +513,10 @@ internal sealed class CrestSelectMenu : MonoBehaviour
 
         UnblockHero();
         Destroy(gameObject);
+
+        // The overlay is gone now: a crest applied above plays its get sequence here,
+        // where the hero is visible again.
+        CrestPickerService.StartPendingGetSequence();
     }
 
     private void BlockHero()

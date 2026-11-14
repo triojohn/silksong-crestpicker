@@ -18,6 +18,13 @@ internal static class CrestPickerService
     internal static CrestPoolMode PoolMode = CrestPoolMode.All;
 
     /// <summary>
+    /// Crest whose long get sequence waits for the window to close; null when none is
+    /// pending. Written by <see cref="ApplyCrest"/>, consumed by
+    /// <see cref="StartPendingGetSequence"/>.
+    /// </summary>
+    private static string? _pendingGetCrest;
+
+    /// <summary>
     /// Returns the crests the player may pick: base versions that are not hidden.
     /// <see cref="CrestPoolMode.FromSaves"/> builds the pool from crests unlocked in the
     /// other save slots, starting that read on first use, and reports
@@ -199,9 +206,18 @@ internal static class CrestPickerService
             ToolItemManager.SetEquippedCrest(crest.name);
             ToolItemManager.SendEquippedChangedEvent(force: true);
 
-            if (unlockedNow)
+            if (unlockedNow && Plugin.GetReactionEnabled.Value)
             {
-                PlayGetReaction(crest);
+                if (Plugin.GetSequenceEnabled.Value)
+                {
+                    // The window that granted the crest is still open: the hero and the
+                    // effect would be behind it, so the sequence waits for the close.
+                    _pendingGetCrest = crest.name;
+                }
+                else
+                {
+                    PlayGetReaction(crest.name);
+                }
             }
 
             Plugin.Log.LogInfo(
@@ -218,18 +234,13 @@ internal static class CrestPickerService
 
     /// <summary>
     /// Plays the vanilla item-get reaction (flash, effect, sound) for a crest the player
-    /// has just unlocked. Failures are logged and never propagate to <see cref="ApplyCrest"/>.
+    /// has just unlocked. Failures are logged and never propagate to the caller.
     /// </summary>
-    /// <param name="crest">Crest that was just unlocked; must not be null.</param>
-    private static void PlayGetReaction(ToolCrest crest)
+    /// <param name="crestName">Name of the crest that was just unlocked, for the log lines.</param>
+    internal static void PlayGetReaction(string crestName)
     {
         try
         {
-            if (!Plugin.GetReactionEnabled.Value)
-            {
-                return;
-            }
-
             if (UnityEngine.Object.FindFirstObjectByType<CollectableItemHeroReaction>() == null)
             {
                 Plugin.Log.LogWarning("[CREST] reaction unavailable: component missing");
@@ -237,11 +248,28 @@ internal static class CrestPickerService
             }
 
             CollectableItemHeroReaction.DoReaction();
-            Plugin.Log.LogInfo($"[CREST] reaction played for '{crest.name}'");
+            Plugin.Log.LogInfo($"[CREST] reaction played for '{crestName}'");
         }
         catch (Exception ex)
         {
-            Plugin.Log.LogWarning($"[CREST] reaction failed for '{crest.name}': {ex.Message}");
+            Plugin.Log.LogWarning($"[CREST] reaction failed for '{crestName}': {ex.Message}");
         }
+    }
+
+    /// <summary>
+    /// Starts the get sequence that <see cref="ApplyCrest"/> deferred, if any. Called once
+    /// the window that granted the crest has closed; the pending crest is consumed here,
+    /// so a second close event does not replay it.
+    /// </summary>
+    internal static void StartPendingGetSequence()
+    {
+        string? crestName = _pendingGetCrest;
+        if (crestName == null)
+        {
+            return;
+        }
+
+        _pendingGetCrest = null;
+        CrestGetSequence.Run(crestName);
     }
 }

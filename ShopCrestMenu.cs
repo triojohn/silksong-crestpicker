@@ -1604,6 +1604,10 @@ internal static class ShopCrestMenu
             OwnShopWindow.RestoreVanilla();
             OwnShopWindow.Hide();
         }
+
+        // The window is closed now: a crest granted while it was up plays its get
+        // sequence here, where the hero is visible again.
+        CrestPickerService.StartPendingGetSequence();
     }
 
     /// <summary>

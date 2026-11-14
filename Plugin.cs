@@ -81,6 +81,12 @@ public sealed class Plugin : BaseUnityPlugin
     internal static ConfigEntry<bool> GetReactionEnabled = null!;
 
     /// <summary>
+    /// When true, a newly unlocked crest plays the full vanilla stand pickup (animation,
+    /// then reaction) once the window that granted it has closed.
+    /// </summary>
+    internal static ConfigEntry<bool> GetSequenceEnabled = null!;
+
+    /// <summary>
     /// When true, the chain runs even if the offer was already used in this save slot;
     /// the flag from <c>state.json</c> is ignored. For testing.
     /// </summary>
@@ -143,6 +149,10 @@ public sealed class Plugin : BaseUnityPlugin
             "Проигрывать ванильную реакцию получения (вспышка, эффект, звук) при первой " +
             "разблокировке знака через окно мода. true — реакция есть, false — выключена. " +
             "Читается на лету.");
+        GetSequenceEnabled = Config.Bind("General", "GetSequenceEnabled", true,
+            "Проигрывать длинную ванильную последовательность получения знака (анимация " +
+            "пикапа, затем реакция) после закрытия окна мода. false — только короткая " +
+            "реакция, как раньше. Читается на лету.");
         IgnoreAlreadyOffered = Config.Bind("General", "IgnoreAlreadyOffered", false,
             "Игнорировать отметку «уже предлагали в этом слоте» из state.json: false — " +
             "предложение один раз на слот, true — цепочка срабатывает при каждом подходе " +
@@ -218,6 +228,11 @@ public sealed class Plugin : BaseUnityPlugin
         if (!GetReactionEnabled.Value)
         {
             Logger.LogInfo("[CREST] reaction disabled by config");
+        }
+
+        if (!GetSequenceEnabled.Value)
+        {
+            Logger.LogInfo("[GET] sequence disabled by config");
         }
         _useLiveShop = Config.Bind("General", "UseLiveShop", true,
             "Показывать выбор знака в настоящем окне магазина (сток и позиция восстанавливаются)");
