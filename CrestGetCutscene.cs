@@ -328,13 +328,25 @@ internal sealed class CrestGetCutscene : MonoBehaviour
         return probe;
     }
 
-    /// <summary>Loads one bundle from the streaming directory; missing file is a warning.</summary>
+    /// <summary>
+    /// Loads one bundle from the streaming directory. A bundle the game already opened is
+    /// reused: Unity returns null for a second instance of the same file, and unloading the
+    /// game's copy would break it.
+    /// </summary>
     private AssetBundle? Load(string dir, string name)
     {
         string path = Path.Combine(dir, name + ".bundle");
         try
         {
-            if (!File.Exists(path))
+            AssetBundle? loaded = FindLoaded(name);
+            if (loaded != null)
+            {
+                Plugin.Log.LogInfo($"[CUT] bundle already loaded: {name}");
+                return loaded;
+            }
+
+            bool exists = File.Exists(path);
+            if (!exists)
             {
                 Plugin.Log.LogWarning($"[CUT] bundle missing: {path}");
                 return null;
@@ -343,7 +355,8 @@ internal sealed class CrestGetCutscene : MonoBehaviour
             AssetBundle? bundle = AssetBundle.LoadFromFile(path);
             if (bundle == null)
             {
-                Plugin.Log.LogWarning($"[CUT] bundle load returned null: {name}");
+                Plugin.Log.LogWarning(
+                    $"[CUT] bundle unavailable: {name} (file exists={exists})");
                 return null;
             }
 
@@ -356,6 +369,23 @@ internal sealed class CrestGetCutscene : MonoBehaviour
             Plugin.Log.LogWarning($"[CUT] failed at 'load {name}': {ex.Message}");
             return null;
         }
+    }
+
+    /// <summary>
+    /// The already loaded bundle with this name, or null. Unity strips the file extension
+    /// from the name for some builds, so both spellings match.
+    /// </summary>
+    private static AssetBundle? FindLoaded(string name)
+    {
+        foreach (AssetBundle bundle in AssetBundle.GetAllLoadedAssetBundles())
+        {
+            if (bundle != null && (bundle.name == name || bundle.name == name + ".bundle"))
+            {
+                return bundle;
+            }
+        }
+
+        return null;
     }
 
     /// <summary>
