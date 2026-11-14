@@ -164,6 +164,12 @@ public sealed class Plugin : BaseUnityPlugin
             "ability — только цепочка анимации получения способности, " +
             "cutscene — пробный клип сцены получения гребня, " +
             "pickup — прежняя последовательность пикапа для надетого гребня. Читается на лету.");
+        if (_testKeyMode.Value == TestKeyMode.Cutscene)
+        {
+            _testKeyMode.Value = TestKeyMode.Full;
+            Logger.LogInfo("[CONFIG] TestKeyMode migrated Cutscene -> Full");
+        }
+
         SaveCrestCount = Config.Bind("General", "SaveCrestCount", 0,
             "Сколько нормальных гребней мод нашёл в сейвах. Значение пишет мод сам при старте " +
             "после чтения слотов; править вручную не нужно (см. SaveCrestCountOverride).");

@@ -167,7 +167,7 @@ internal sealed class CrestGetCutscene : MonoBehaviour
             }
 
             tk2dSpriteCollectionData? collection = Find<tk2dSpriteCollectionData>(
-                collections, _set.CollectionAsset);
+                collections, _set.CollectionAsset, "collections");
             if (collection == null)
             {
                 Plugin.Log.LogWarning(
@@ -176,7 +176,7 @@ internal sealed class CrestGetCutscene : MonoBehaviour
             }
 
             tk2dSpriteAnimation? library = Find<tk2dSpriteAnimation>(
-                animations, _set.AnimationAsset);
+                animations, _set.AnimationAsset, "animations");
             if (library == null)
             {
                 Plugin.Log.LogWarning(
@@ -359,73 +359,51 @@ internal sealed class CrestGetCutscene : MonoBehaviour
     }
 
     /// <summary>
-    /// Logs the objects and typed assets of one bundle and returns the component named
-    /// after the wanted GameObject, falling back to a typed asset with that name, then to
-    /// the only typed asset of the bundle.
+    /// Collects the <typeparamref name="T"/> component of every GameObject of the bundle and
+    /// returns the one whose object is named after the wanted asset, falling back to the only
+    /// candidate. A typed load is useless here: tk2d types are MonoBehaviours with the data
+    /// inside, so <c>LoadAllAssets&lt;T&gt;()</c> finds nothing.
     /// </summary>
-    private static T? Find<T>(AssetBundle bundle, string objectName) where T : Component
+    private static T? Find<T>(AssetBundle bundle, string objectName, string label)
+        where T : Component
     {
-        GameObject[] objects = bundle.LoadAllAssets<GameObject>();
-        Plugin.Log.LogInfo(
-            $"[CUT] {bundle.name}: {objects.Length} object(s): {Names(objects)}");
-
-        T[] components = bundle.LoadAllAssets<T>();
-        Plugin.Log.LogInfo(
-            $"[CUT] {bundle.name}: {components.Length} {typeof(T).Name}: {Names(components)}");
-
-        foreach (GameObject obj in objects)
+        List<T> found = new List<T>();
+        List<string> names = new List<string>();
+        foreach (GameObject obj in bundle.LoadAllAssets<GameObject>())
         {
-            if (obj != null && obj.name == objectName)
+            if (obj == null)
             {
-                T? found = obj.GetComponent<T>();
-                if (found != null)
-                {
-                    return found;
-                }
+                continue;
             }
-        }
 
-        T? only = null;
-        int count = 0;
-        foreach (T component in components)
-        {
+            T? component = obj.GetComponent<T>();
             if (component == null)
             {
                 continue;
             }
 
+            found.Add(component);
+            names.Add(obj.name);
+        }
+
+        Plugin.Log.LogInfo($"[CUT] {label} found: {string.Join(", ", names)}");
+
+        foreach (T component in found)
+        {
             if (component.name == objectName)
             {
                 return component;
             }
-
-            count++;
-            only = component;
         }
 
-        if (count == 1)
+        if (found.Count == 1)
         {
             Plugin.Log.LogInfo(
-                $"[CUT] fallback: using the only {typeof(T).Name} '{only!.name}'");
-            return only;
+                $"[CUT] fallback: using the only {typeof(T).Name} '{found[0].name}'");
+            return found[0];
         }
 
         return null;
-    }
-
-    /// <summary>Comma-separated names of the assets, for one log line.</summary>
-    private static string Names<T>(T[] assets) where T : UnityEngine.Object
-    {
-        List<string> names = new List<string>();
-        foreach (T asset in assets)
-        {
-            if (asset != null)
-            {
-                names.Add(asset.name);
-            }
-        }
-
-        return string.Join(", ", names);
     }
 
     /// <summary>Unloads every bundle the probe opened, keeping loaded objects alive.</summary>
